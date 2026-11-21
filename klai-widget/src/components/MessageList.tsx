@@ -6,7 +6,7 @@ import { chatState, setMessageRating } from "../store/chat";
 import { sendTurnFeedback } from "../api/feedback";
 import { activityCountLabel, answerBasedOnSourcesLabel, sourceCountLabel, t } from "../i18n/labels";
 import type { Message, MessageRating, MessageSource } from "../api/chat-stream";
-import { normalizeSourceUrl } from "../api/chat-stream";
+import { normalizeSourceUrl, resolveBookingUrl } from "../api/chat-stream";
 
 const MALFORMED_CITATION_RE = /(^|[^\[])\b(\d+)\((https?:\/\/[^)\s]+)\)/g;
 const CITATION_MARKER_TEST_RE = /\(\d+(?:,\d+)*\)/;
@@ -158,7 +158,10 @@ interface MessageListProps {
    * Undefined when this widget has no in-chat booking route, and then the
    * button is not rendered at all — an offer with nowhere to go is worse
    * than no button. */
-  onAppointment?: () => void;
+  onAppointment?: (url: string) => void;
+  /** The widget config's booking link: used for answers whose escalation
+   * carries none of its own. */
+  bookingUrl?: string;
 }
 
 export function MessageList(props: MessageListProps) {
@@ -268,21 +271,29 @@ export function MessageList(props: MessageListProps) {
                 when={
                   message.role === "assistant" &&
                   message.escalation?.appointment === true &&
-                  props.onAppointment
+                  props.onAppointment &&
+                  resolveBookingUrl(message.escalation, props.bookingUrl)
                 }
               >
                 <div class="klai-appointment-offer">
                   <button
                     type="button"
                     class="klai-appointment-btn"
-                    onClick={() => props.onAppointment?.()}
+                    onClick={() => props.onAppointment?.(resolveBookingUrl(message.escalation, props.bookingUrl)!)}
                   >
                     {t().bookingButton}
                   </button>
                 </div>
               </Show>
               <Show when={message.role === "assistant" && message.turnId}>
-                <div class="klai-feedback" role="group" aria-label={t().feedbackGroupLabel}>
+                <div
+                  class="klai-feedback"
+                  role="group"
+                  aria-labelledby={`klai-feedback-label-${message.turnId}`}
+                >
+                  <span class="klai-feedback-label" id={`klai-feedback-label-${message.turnId}`}>
+                    {t().feedbackGroupLabel}
+                  </span>
                   <button
                     type="button"
                     class={

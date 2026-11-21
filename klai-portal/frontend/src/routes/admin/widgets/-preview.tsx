@@ -27,7 +27,7 @@ import {
 import type { WidgetDetailResponse } from './-types'
 
 
-export type WidgetPreviewScope = 'details' | 'appearance'
+export type WidgetPreviewScope = 'details' | 'appearance' | 'contact'
 
 // Deliberately primitive-only (the three starter fields travel newline-joined
 // as one string) so the publish effect can compare by value and no fresh
@@ -102,6 +102,7 @@ export function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes = {}
   const config = widget.widget_config
   const details = scopes.details ?? {}
   const appearance = scopes.appearance ?? {}
+  const contact = scopes.contact ?? {}
   const name = details.name ?? widget.name
   const cssVariables = appearance.cssVariablesJson !== undefined
     ? JSON.parse(appearance.cssVariablesJson) as Record<string, string>
@@ -133,7 +134,7 @@ export function resolvePreview(widget: WidgetDetailResponse, scopes: Scopes = {}
         ? appearance.footerText
         : config.footer_text ?? undefined,
     footerLinksInWidget: appearance.footerLinksInWidget ?? config.footer_links_in_widget ?? false,
-    modelBehaviorDirty: details.modelBehaviorDirty ?? false,
+    modelBehaviorDirty: (details.modelBehaviorDirty || contact.modelBehaviorDirty) ?? false,
     cssVariables,
   }
 }

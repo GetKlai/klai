@@ -1,5 +1,7 @@
 # Crawl failures
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > Procedure for the alerts in `deploy/grafana/provisioning/alerting/crawl-rules.yaml`:
 > `crawl_crawler_errors`, `crawl_fleet_signature`, `crawl_success_below_baseline`
 > and `crawl_jobs_silent`.
@@ -20,7 +22,6 @@ Per job the view carries `fetch_total`, `crawler_side_failures`, `top_signature`
 ## Query 1: what happened to one knowledge base
 
 ```bash
-ssh core-01
 docker exec klai-core-postgres-1 psql -U klai -d klai -c "
   SELECT status, reason, fetch_total, crawler_side_failures, top_signature,
          top_signature_share, pages_total, pages_done, to_timestamp(updated_at) AS finished
@@ -33,7 +34,7 @@ docker exec klai-core-postgres-1 psql -U klai -d klai -c "
 
 | reason | Meaning |
 |---|---|
-| `crawler_config_rejected` | crawl4ai refused our own request (a 4xx raised by the crawl4ai API); the job ends `failed`. A deployment bug, every knowledge base fails at once. See below. |
+| `crawler_config_rejected` | crawl4ai refused our own request (a 4xx raised by the crawl4ai API); the job ends `failed`. A deployment bug, every knowledge base fails at once. See `crawler_config_rejected` below. |
 | `fetch_failure_dominant` | The crawler ran and most pages failed to fetch: the site, DNS, a timeout. Per knowledge base. |
 | `boilerplate_or_authwall_dominant` | Pages were fetched but are login walls or boilerplate. Cookies expired or missing. |
 
@@ -51,15 +52,10 @@ docker exec klai-core-postgres-1 psql -U klai -d klai -c "
 
 The same signature on several unrelated sources is the crawler or our request to it, not the sites.
 
-## The 2026-10-23 cause, and what would have caught it
+## crawler_config_rejected: the 2026-10-23 incident
 
-From 2026-10-23 02:01 every nightly crawl of every knowledge base fetched 0 pages, six nights in a row. crawl4ai 0.9.5 answered HTTP 400 `Rejected config: a JavaScript wait_for is not permitted from an untrusted request` to the `wait_for` built in `klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py`. The jobs were recorded as `failed_partial` with `fetch_failure_dominant` ("the site may be blocking automated access"), and no rule read crawl jobs. Since then a refusal by the crawler's own config check ends the job as `failed` with reason `crawler_config_rejected`, and `deploy/tests/crawl4ai-config-contract.sh` posts the real config to the pinned image in CI.
-
-Against that night:
-
-- `crawl_crawler_errors` and `crawl_fleet_signature` on the first night, 2026-10-23, as soon as the first evaluation after the jobs finished ran. The failures were raised 400s from crawl4ai (`httpx.HTTPStatusError:400`) on every knowledge base. Condition for the first: the jobs recorded 20 or more outcomes. The second has no such floor but needs 3 sources.
-- `crawl_success_below_baseline` on the first night too: every source had completed jobs before 2026-10-23, so a baseline existed and the 0 pages fell under 70% of it. It would have stayed firing on every following night, because only completed jobs form the baseline.
-- `crawl_jobs_silent` would NOT have fired: the scheduler kept creating jobs, they just failed. It exists for the opposite failure, a scheduler that no longer starts anything; it fires 30 h after the last job of a daily-scheduled source.
+The incident, six nights of crawls that fetched 0 pages, is recorded in §6 of
+`docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md` (Indexincidenten, "Crawler stil van 23 tot 28 oktober 2026").
 
 For `crawler_config_rejected`: check the crawl4ai image tag in `deploy/docker-compose.yml`, run `sh deploy/tests/crawl4ai-config-contract.sh` and read the body it prints, and compare against the crawl4ai release notes for the version the image runs.
 

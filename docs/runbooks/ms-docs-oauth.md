@@ -1,5 +1,7 @@
 # Runbook: Microsoft 365 OAuth — app registration & rotation
 
+> Commands are given as they run on core-01, from the deploy directory unless a step says otherwise. See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > Setup and operational runbook for the `ms_docs` connector (SPEC-KB-MS-DOCS-001).
 > Covers Azure AD app registration, SOPS secret provisioning, verification and rotation.
 
@@ -71,37 +73,37 @@ in the tenant. Unverified apps trigger a warning banner during user consent.
 
 Add the three values to the core-01 encrypted env file:
 
-```bash
-# 1. SSH to core-01 and set up a working directory matching .sops.yaml path_regex
-ssh core-01 "mkdir -p /tmp/klai-sops/core-01 && chmod 700 /tmp/klai-sops"
-scp klai-infra/core-01/.env.sops core-01:/tmp/klai-sops/core-01/.env.sops
-scp klai-infra/.sops.yaml core-01:/tmp/klai-sops/.sops.yaml
+Steps 1 and 3 move files between your machine and core-01; how they are copied is in the private infrastructure runbooks.
 
-# 2. Decrypt → append 3 new vars → re-encrypt, all on the server (sops/age runs there)
-ssh core-01 bash <<'EOF'
-  cd /tmp/klai-sops
-  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env
-  cat >> core-01/.new.env <<'INNER'
+```bash
+# 1. On core-01: create a working directory matching the .sops.yaml path_regex
+mkdir -p /tmp/klai-sops/core-01 && chmod 700 /tmp/klai-sops
+# Then copy klai-infra/core-01/.env.sops from your machine to /tmp/klai-sops/core-01/.env.sops
+# and klai-infra/.sops.yaml to /tmp/klai-sops/.sops.yaml on core-01.
+
+# 2. On core-01: decrypt → append 3 new vars → re-encrypt (sops/age runs there)
+cd /tmp/klai-sops
+SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt --input-type dotenv --output-type dotenv core-01/.env.sops > core-01/.new.env
+cat >> core-01/.new.env <<'INNER'
 MS_DOCS_CLIENT_ID=<application-client-id>
 MS_DOCS_CLIENT_SECRET=<client-secret-value>
 MS_DOCS_TENANT_ID=common
 INNER
-  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --encrypt --in-place --input-type dotenv --output-type dotenv core-01/.new.env
-  mv core-01/.new.env core-01/.env.sops
-EOF
+SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --encrypt --in-place --input-type dotenv --output-type dotenv core-01/.new.env
+mv core-01/.new.env core-01/.env.sops
 
-# 3. Retrieve + cleanup
-scp core-01:/tmp/klai-sops/core-01/.env.sops klai-infra/core-01/.env.sops
-ssh core-01 "rm -rf /tmp/klai-sops"
+# 3. Copy /tmp/klai-sops/core-01/.env.sops from core-01 back to klai-infra/core-01/.env.sops
+#    on your machine, then clean up on core-01:
+rm -rf /tmp/klai-sops
 
-# 4. Commit + push — GitHub Action auto-syncs to /opt/klai/.env (but see gotcha below)
+# 4. On your machine: commit + push — GitHub Action auto-syncs to .env in the deploy directory (but see gotcha below)
 cd klai-infra && git add core-01/.env.sops && git commit -m "feat(infra): add MS_DOCS_* for SPEC-KB-MS-DOCS-001" && git push
 ```
 
 ### Gotcha: sync-env.yml refuses removals (HIGH)
 
 The `sync-env.yml` GitHub Action aborts when the new `.env.sops` has fewer
-keys than the current `/opt/klai/.env`. The error message says "use
+keys than the current `.env` in the deploy directory. The error message says "use
 workflow_dispatch with confirmation" but the current workflow **does not**
 actually bypass the check on manual dispatch — the removal guard is
 unconditional (verified 2026-04-24). If a prior commit removed keys
@@ -110,18 +112,16 @@ unconditional (verified 2026-04-24). If a prior commit removed keys
 unrelated pushes like adding MS_DOCS_*.
 
 **Emergency-only workaround** (documented in `sops-env.md`): direct-append
-to `/opt/klai/.env` on the server while the sync pipeline is blocked:
+to `.env` in the deploy directory on core-01 while the sync pipeline is blocked:
 
 ```bash
-ssh core-01 "sudo cp /opt/klai/.env /opt/klai/.env.bak.pre-ms-docs.$(date +%s)"
-ssh core-01 bash <<'EOF'
-sudo tee -a /opt/klai/.env >/dev/null <<'INNER'
+sudo cp .env .env.bak.pre-ms-docs.$(date +%s)
+sudo tee -a .env >/dev/null <<'INNER'
 MS_DOCS_CLIENT_ID=<client-id>
 MS_DOCS_CLIENT_SECRET=<secret>
 MS_DOCS_TENANT_ID=common
 INNER
-EOF
-ssh core-01 "cd /opt/klai && docker compose up -d portal-api klai-connector"
+docker compose up -d portal-api klai-connector
 ```
 
 **Permanent fix** (separate follow-up): patch
@@ -129,20 +129,20 @@ ssh core-01 "cd /opt/klai && docker compose up -d portal-api klai-connector"
 input like `allow_removal: true` so removals can be explicitly approved
 through the Actions UI.
 
-GitHub Action auto-syncs to `/opt/klai/.env` (unless blocked per above). Verify after sync:
+GitHub Action auto-syncs to `.env` in the deploy directory (unless blocked per above). Verify after sync:
 
 ```bash
-ssh core-01 "sudo grep '^MS_DOCS_' /opt/klai/.env | sed 's/=.*/=***/'"
+sudo grep '^MS_DOCS_' .env | sed 's/=.*/=***/'
 # Expected: MS_DOCS_CLIENT_ID=*** / MS_DOCS_CLIENT_SECRET=*** / MS_DOCS_TENANT_ID=***
 ```
 
 ## Container rollout
 
 ```bash
-ssh core-01 "cd /opt/klai && docker compose up -d portal-api klai-connector"
+docker compose up -d portal-api klai-connector
 # Wait ~10s, then verify:
-ssh core-01 "docker logs --tail 30 klai-core-portal-api-1 2>&1 | grep -i ms_docs || true"
-ssh core-01 "docker logs --tail 30 klai-core-klai-connector-1 2>&1 | grep -i ms_docs"
+docker logs --tail 30 klai-core-portal-api-1 2>&1 | grep -i ms_docs || true
+docker logs --tail 30 klai-core-klai-connector-1 2>&1 | grep -i ms_docs
 # Connector should log either: "ms_docs adapter registered" (implicit)
 # or: "ms_docs adapter not registered — MS_DOCS_CLIENT_ID unset" (if env didn't propagate)
 ```
@@ -186,8 +186,8 @@ rotation. Add a calendar event for that date.
 1. Azure Portal → Certificates & secrets → New client secret
 2. Copy the new Value
 3. Update SOPS: MS_DOCS_CLIENT_SECRET=<new-value>
-4. Push; GitHub Action syncs /opt/klai/.env
-5. ssh core-01 "docker compose up -d portal-api klai-connector"
+4. Push; GitHub Action syncs .env in the deploy directory
+5. On core-01: docker compose up -d portal-api klai-connector
 6. Verify via end-to-end step 6 — new bearer tokens flowing
 7. Delete the OLD secret in Azure AD (Certificates & secrets → Delete)
 ```

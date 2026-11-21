@@ -63,7 +63,6 @@ async def test_document_entity_graph_data_accumulates_entities_across_episode_pa
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         for body in ("Part one", "Part two"):
             await graph_module.ingest_episode(
                 artifact_id="art-1",
@@ -106,7 +105,6 @@ async def test_document_entity_graph_data_computes_pagerank_once_after_all_parts
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         for body in ("Part one", "Part two"):
             await graph_module.ingest_episode(
                 artifact_id="art-1",
@@ -172,7 +170,6 @@ async def test_ingest_episode_success():
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         result = await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello world",
@@ -203,7 +200,6 @@ async def test_ingest_episode_retry_success():
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         result = await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello",
@@ -229,7 +225,6 @@ async def test_ingest_episode_all_retries_fail():
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         result = await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello",
@@ -254,7 +249,6 @@ async def test_ingest_episode_reference_time_matches_belief_time_start():
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Hello",
@@ -311,7 +305,6 @@ async def test_ingest_episode_passes_extraction_instructions():
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="De Voys-app gebruikt de internetverbinding.",
@@ -381,7 +374,6 @@ async def test_ingest_episode_scopes_previous_episodes_to_the_same_document(
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         await graph_module.ingest_episode(
             artifact_id="art-1",
             document_text="Part text",

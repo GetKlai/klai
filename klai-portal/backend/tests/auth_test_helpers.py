@@ -22,6 +22,7 @@ import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 import respx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +51,10 @@ def respx_zitadel():
     that should not be hit (e.g. asserting ``/v2/sessions`` received zero calls).
     """
     with respx.mock(base_url=settings.zitadel_base_url, assert_all_called=False) as router:
+        # Sign-ins in these scenarios are for the portal's own OIDC client.
+        router.get(url__regex=r"/v2/oidc/auth_requests/.+").mock(
+            return_value=httpx.Response(200, json={"authRequest": {"clientId": settings.zitadel_portal_client_id}})
+        )
         yield router
 
 

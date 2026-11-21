@@ -238,12 +238,16 @@ async def submit_widget_feedback(
         },
     )
     if result.rowcount == 0:  # type: ignore[attr-defined]
+        # The audit row is written fire-and-forget, so a very fast click can
+        # land before it exists; this event is how that shows up in the logs.
+        logger.warning("widget_feedback_turn_not_found", org_id=auth.org_id, wgt_id=str(auth.key_id))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"type": "not_found", "message": "Feedback target not found"}},
         )
     await db.commit()
 
+    logger.info("widget_feedback_stored", org_id=auth.org_id, wgt_id=str(auth.key_id), rating=request.rating)
     return {"ok": True, "rating": request.rating}
 
 

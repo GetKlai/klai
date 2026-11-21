@@ -1,7 +1,10 @@
 """
 GET /health
 
-Returns scribe-api health and whisper-server reachability.
+Returns scribe-api health and reachability of the transcription backend: the
+same ``whisper_server_url`` that ``WhisperHttpProvider`` posts audio to, which in
+prod is the transcription service's load balancer on gpu-01, reached through the
+host tunnel. Its ``/health`` answers for the load balancer itself.
 No authentication required. Used by Docker healthcheck and Uptime Kuma.
 
 SPEC-SEC-HYGIENE-001 REQ-37.2 — error responses MUST NOT leak the internal

@@ -27,6 +27,16 @@ from app.services.chat_profile import ChatProfile
 _ORG = SimpleNamespace(id=7, slug="brightwater", zitadel_org_id="zorg-brightwater")
 
 
+@pytest.fixture(autouse=True)
+def _own_pending_tasks(monkeypatch):
+    # The replay waits up to 120 s for the background tasks the chat path keeps
+    # in partner._pending. A task an earlier test file left there belongs to a
+    # closed event loop and never finishes, so every replayed answer waited the
+    # full 120 s: this file after test_partner_chat_answer_judges.py ran past
+    # 420 s, and takes seconds with a set of its own.
+    monkeypatch.setattr(partner, "_pending", set())
+
+
 def _verdict(better: str, *, invented: bool = False) -> str:
     flags = {"refused": False, "asked": False, "invented": invented}
     return json.dumps({"better": better, "A": flags, "B": flags})
@@ -321,6 +331,46 @@ async def test_new_answer_names_the_error_frame_a_stream_ends_with_after_partial
 
     assert answer["text"] == "Zie het handboek"
     assert answer["stream_error"] == "Chat service unavailable"
+
+
+@pytest.mark.parametrize("named", [True, False], ids=["file-named", "no-file"])
+async def test_the_replay_sends_the_front_ends_tools_and_prompt_prefix_only_when_a_file_names_them(
+    monkeypatch, tmp_path, named
+):
+    """The internal chat's front-end sends its tool definitions and a system message with every turn;
+    a measurement round without them could not see the runaway reply of 17 November 2026."""
+    tool = {"type": "function", "function": {"name": "kennis_opslaan", "parameters": {"type": "object"}}}
+    frontend = tmp_path / "frontend.json"
+    frontend.write_text(json.dumps({"tools": [tool], "system": "Je bent de assistent van Voorbeeld BV."}))
+    monkeypatch.setattr(replay, "_frontend", {})
+    replay.use_frontend(frontend if named else None)
+
+    @asynccontextmanager
+    async def session(_org_id):
+        yield object()
+
+    requests = []
+
+    async def chat_completions(**kwargs):
+        requests.append(kwargs["request"])
+
+        async def body():
+            yield b"data: [DONE]\n\n"
+
+        return StreamingResponse(body(), media_type="text/event-stream")
+
+    monkeypatch.setattr(replay, "tenant_scoped_session", session)
+    monkeypatch.setattr(partner, "chat_completions", chat_completions)
+
+    await replay._new_answer(_ORG, _profile("sub-1"), [{"role": "user", "content": "Vraag 1"}])
+
+    (request,) = requests
+    if named:
+        assert request.tools == [tool]
+        assert request.messages[0] == {"role": "system", "content": "Je bent de assistent van Voorbeeld BV."}
+    else:
+        assert request.tools is None
+        assert [m["role"] for m in request.messages] == ["user"]
 
 
 def _resume_samples() -> list[replay.Sample]:

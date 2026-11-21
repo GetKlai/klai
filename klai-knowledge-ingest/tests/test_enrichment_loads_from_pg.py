@@ -46,6 +46,17 @@ def _install_procrastinate_stub() -> None:
 _install_procrastinate_stub()
 
 
+# procrastinate's own JobAborted (``real_procrastinate``), so an abandoned job is
+# asserted to be what the worker records as ``aborted`` and does not retry.
+JobAborted: type[BaseException]
+
+
+@pytest.fixture(autouse=True)
+def _job_aborted(real_procrastinate):
+    global JobAborted
+    JobAborted = real_procrastinate.exceptions.JobAborted
+
+
 def _make_mock_conn() -> MagicMock:
     conn = MagicMock()
     conn.execute = AsyncMock(return_value=None)
@@ -229,20 +240,25 @@ async def test_load_and_enrich_skips_when_artifact_missing():
         patch(
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
+        patch(
+            "knowledge_ingest.enrichment_tasks.qdrant_store.delete_points_of_artifact",
+            new_callable=AsyncMock,
+        ) as remove_points,
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
-        await _load_and_enrich("00000000-0000-0000-0000-000000000000")
+        with pytest.raises(JobAborted):
+            await _load_and_enrich("00000000-0000-0000-0000-000000000000")
 
     mock_enrich.assert_not_called()
+    remove_points.assert_awaited_once_with("00000000-0000-0000-0000-000000000000")
 
 
 @pytest.mark.asyncio
 async def test_load_and_enrich_skips_when_document_text_missing():
-    """Legacy artifact rows without document_text are not enrichable
-    via this path; rebuild_kb is the right tool. Soft-skip with a log
-    event, no exception.
-    """
+    """Legacy artifact rows without document_text are not enrichable via this
+    path (rebuild_kb is the tool): the document says failed and the job ends
+    failed without a retry."""
     fake_artifact = {
         "artifact_id": "11111111-2222-3333-4444-555555555555",
         "org_id": "org1",
@@ -268,16 +284,19 @@ async def test_load_and_enrich_skips_when_document_text_missing():
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
     ):
-        from knowledge_ingest.enrichment_tasks import _load_and_enrich
+        from knowledge_ingest.enrichment_tasks import _DerivedWorkFailed, _load_and_enrich
 
-        await _load_and_enrich("11111111-2222-3333-4444-555555555555")
+        with pytest.raises(_DerivedWorkFailed):
+            await _load_and_enrich("11111111-2222-3333-4444-555555555555")
 
     mock_enrich.assert_not_called()
-    mock_status.assert_awaited_once_with(fake_artifact, "failed")
+    mock_status.assert_awaited_once_with(
+        "enrichment", "11111111-2222-3333-4444-555555555555", "failed", "no_stored_text"
+    )
 
 
 @pytest.mark.asyncio
@@ -312,7 +331,7 @@ async def test_load_and_enrich_skips_docling_artifact_above_hard_ceiling():
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
     ):
@@ -321,7 +340,11 @@ async def test_load_and_enrich_skips_docling_artifact_above_hard_ceiling():
         await _load_and_enrich("11111111-2222-3333-4444-555555555555")
 
     mock_enrich.assert_not_called()
-    mock_status.assert_awaited_once_with(fake_artifact, "synced")
+    assert mock_status.await_args.args[:3] == (
+        "enrichment",
+        "11111111-2222-3333-4444-555555555555",
+        "not_applicable",
+    )
 
 
 @pytest.mark.asyncio
@@ -357,7 +380,7 @@ async def test_load_and_enrich_reindexes_small_truncated_docling_artifact():
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
     ):
@@ -367,65 +390,6 @@ async def test_load_and_enrich_reindexes_small_truncated_docling_artifact():
 
     mock_enrich.assert_awaited_once()
     mock_status.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_set_direct_upload_index_status_raises_when_update_returns_none():
-    """A worker may not report succeeded while a direct upload stays pending."""
-    conn = _make_mock_conn()
-    with (
-        patch(
-            "knowledge_ingest.enrichment_tasks.tenant_scoped_connection",
-            return_value=_AsyncContext(conn),
-        ),
-        patch(
-            "knowledge_ingest.enrichment_tasks.pg_store.set_artifact_index_status",
-            new_callable=AsyncMock,
-            return_value=None,
-        ) as mock_set_status,
-    ):
-        from knowledge_ingest.enrichment_tasks import (
-            ArtifactIndexStatusUpdateError,
-            _set_direct_upload_index_status,
-        )
-
-        with pytest.raises(ArtifactIndexStatusUpdateError):
-            await _set_direct_upload_index_status(
-                {
-                    "artifact_id": "11111111-2222-3333-4444-555555555555",
-                    "org_id": "org1",
-                    "extra": {"source_type": "docs"},
-                },
-                "synced",
-            )
-
-    mock_set_status.assert_awaited_once_with(
-        conn,
-        "11111111-2222-3333-4444-555555555555",
-        "org1",
-        "synced",
-    )
-
-
-@pytest.mark.asyncio
-async def test_set_direct_upload_index_status_skips_connector_artifacts():
-    """Connector artifacts do not use upload index_status rows."""
-    with patch(
-        "knowledge_ingest.enrichment_tasks.pg_store.set_artifact_index_status",
-        new_callable=AsyncMock,
-    ) as mock_set_status:
-        from knowledge_ingest.enrichment_tasks import _set_direct_upload_index_status
-
-        await _set_direct_upload_index_status(
-            {
-                "artifact_id": "11111111-2222-3333-4444-555555555555",
-                "org_id": "org1",
-                "extra": {"source_connector_id": "conn-1"},
-            },
-            "synced",
-        )
-
-    mock_set_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -547,9 +511,10 @@ async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
             new_callable=AsyncMock,
         ) as mock_upsert,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
+        pytest.raises(JobAborted),
     ):
         await _enrich_document(
             org_id="org-1",
@@ -611,7 +576,8 @@ async def test_load_and_enrich_skips_superseded_artifact():
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
-        await _load_and_enrich("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        with pytest.raises(JobAborted):
+            await _load_and_enrich("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
     enrich.assert_not_awaited()
 
@@ -621,15 +587,14 @@ async def test_load_and_enrich_skips_superseded_artifact():
 # ---------------------------------------------------------------------------
 
 
-def test_task_variants_only_carry_artifact_id_resource_key_and_batch_position():
-    """Content stays in PostgreSQL; the ownership fence and the position of a
-    large document's next batch are the only other args."""
+def test_task_variants_only_carry_artifact_id_and_batch_position():
+    """Content stays in PostgreSQL; the position of a large document's next
+    batch is the only other arg. No run key: the work belongs to the document."""
     import inspect
 
     from knowledge_ingest import enrichment_tasks
 
     sig = inspect.signature(enrichment_tasks._load_and_enrich)
     params = list(sig.parameters.values())
-    assert [param.name for param in params] == ["artifact_id", "resource_key", "batch_offset"]
-    assert params[1].default is None
-    assert params[2].default == 0
+    assert [param.name for param in params] == ["artifact_id", "batch_offset"]
+    assert params[1].default == 0

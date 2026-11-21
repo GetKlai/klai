@@ -12,7 +12,7 @@ or LLM calls.
 Usage (in a knowledge-ingest container):
 
     docker exec klai-core-knowledge-ingest-1 \
-        python -m scripts.backfill_document_titles --org-id <org_id> [--dry-run]
+        python -m scripts.backfill_document_titles --org-id <org_id> [--execute]
 
 Idempotent and resume-safe: only numeric stored titles are candidates, and
 Qdrant is updated before Postgres so an interrupted row remains selectable on
@@ -32,6 +32,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.routes.ingest import _extract_title
 
 logger = structlog.get_logger()
@@ -134,9 +135,15 @@ async def run(org_id: str, dry_run: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--org-id", required=True, help="Zitadel org id (one tenant per run)")
-    parser.add_argument("--dry-run", action="store_true", help="Report the plan, change nothing")
+    parser.add_argument("--execute", action="store_true", help="Write the titles; plan without it")
     args = parser.parse_args()
-    return asyncio.run(run(args.org_id, args.dry_run))
+    guard_cli("backfill_document_titles", args.execute)
+    return asyncio.run(_run_locked(args.org_id, args.execute))
+
+
+async def _run_locked(org_id: str, execute: bool) -> int:
+    async with kb_operation(org_id, None, execute=execute):
+        return await run(org_id, dry_run=not execute)
 
 
 if __name__ == "__main__":

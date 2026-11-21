@@ -4,116 +4,151 @@ paths: ["klai-website/src/content/**/*.md", "klai-website/src/content/**/*.mdoc"
 
 # Humanizer: Remove AI Writing Patterns
 
-Apply this protocol to all content before publishing. Remove signs of AI-generated text.
+Apply this protocol to all content before publishing. Remove signs of AI-generated text, keep what the text says.
 
-## Content Patterns to Remove
+AI text sounds the way it does because a model picks the choice that fits the widest range of readers. A writer picks for one reader and one subject. Every pattern below is one form of that default choice. Every sentence you keep must add something the reader did not already have. Patterns 1 to 5 justify an edit on one sighting; a pattern marked *weak alone* needs other tells in the same passage.
 
-### 1. Undue Emphasis on Significance
-**Words to remove:** stands/serves as, is a testament/reminder, a vital/significant/crucial/pivotal/key role/moment, underscores/highlights its importance, reflects broader, symbolizing its ongoing/enduring/lasting, represents a shift, key turning point, evolving landscape, indelible mark
+## How to work
 
-**Fix:** Replace puffed-up significance claims with specific facts.
+This protocol filters a draft that already exists and is not itself a way to write. Nothing in it licenses deleting a connective, replacing a comma with a full stop, or flattening a paragraph into a row of short sentences. If the rewrite reads as a telegram, pattern 2 applies to your own output as much as to the original.
 
-### 2. Superficial -ing Endings
-**Words to watch:** highlighting/underscoring/emphasizing..., ensuring..., reflecting/symbolizing..., contributing to..., cultivating/fostering..., encompassing..., showcasing...
+1. **Mark the tells.** Read the whole text once, strongest first. Look at paragraph shape too: a contrast split over two sentences, three parallel examples, or the same closer after every section is the same tell at a larger scale.
+2. **Rewrite.** Keep every supported claim; shorten dull parts, merge or split paragraphs.
+3. **Check.** Did the rewrite drop or change a fact, name, number, date, quote or ranking? That is an error unless a pattern calls for the cut. Then re-scan for the tells that survive most often: 1, 2, 6, 8 and 19.
+4. **Add no facts.** Do not add a detail, number or example that the draft or its source does not already contain. Where the text is generic, cut the generic claim or flag the gap for the writer (the proof rule in `klai-brand-voice.md` decides what may stay).
 
-**Fix:** Rewrite as separate sentences or remove entirely.
+Leave a watched phrase alone inside a quotation, a title, a proper name, or a passage that discusses the phrase. Keep details that carry the writer's voice: a specific unusual detail, mixed feelings, a genuine aside or self-correction.
 
-### 3. Promotional Language
-**Words to remove:** boasts a, vibrant, rich (figurative), profound, enhancing its, showcasing, exemplifies, commitment to, nestled, in the heart of, groundbreaking, renowned, breathtaking, stunning
+## A. Staging instead of stating
 
-**Fix:** Replace with specific, factual descriptions.
+### 1. Not X but Y
+**Watch for:** not X but Y; not just / not only / not merely X, but Y; it's not X, it's Y; X rather than Y; the same contrast split across sentences ("This does not mean X. It means Y."); a clipped negative tail ("..., no guessing"). The formula exists in every language: treat "niet X maar Y", "geen X, wel Y" and "het gaat niet om X, het gaat om Y" the same way.
+**Fix:** State the point directly. Keep a contrast only when the negative half corrects a belief the reader actually holds, or when both halves carry information.
 
-### 4. Vague Attributions
-**Words to watch:** Industry reports, Observers have cited, Experts argue, Some critics argue, several sources
+### 2. One-line closers and dramatic fragments
+**Watch for:** a one-sentence paragraph that restates the one before; "That is the real win."; "That distinction matters."; "Let that sink in."; the same closer after several sections; a sentence that explains an example the reader just saw ("The message was clear:"); a row of fragments ("No setup. No waiting."); one word in ALL CAPS or with periods between words (every. single. day.)
+**Fix:** Cut a closer that repeats. Keep a short sentence only when it carries a new fact. Merge a row of fragments into one sentence with a specific claim.
 
-**Fix:** Use specific sources with dates, or remove the attribution.
+### 3. Sayings that sound deep
+**Watch for:** the real question is, at its core, in reality, what really matters, fundamentally, the deeper issue, the heart of the matter, X is the Y of Z, X becomes a trap, the language of, the currency of, the architecture of
+**Fix:** Replace the saying with the specific claim.
 
-### 5. Challenges and Future Prospects Sections
-**Pattern:** "Despite its... faces several challenges..., Despite these challenges..."
+### 4. Staged run-up before the point
+**Watch for:** let's dive in, here's what you need to know, without further ado, Honestly?, Look, Here's the thing, Let's be honest, Real talk
+**Fix:** Remove the run-up. A casual "honestly" inside a sentence is fine; the tell is the standalone opener before a routine claim.
 
-**Fix:** Integrate challenges naturally into the narrative with specifics.
+### 5. Arguing with no one
+**Watch for:** This isn't about, I'm not saying, To be clear, Don't get me wrong, Some might say... but, A tempting approach would be, You might think... but
+**Fix:** Remove the defense or the fake alternative; if it holds a real claim, state the claim. Keep an objection the text attributes or answers in full.
 
-## Language Patterns to Remove
+## B. Rhythm by rule
 
-### 6. Overused AI Vocabulary
-**Remove or reduce:** Additionally, align with, crucial, delve, emphasizing, enduring, enhance, fostering, garner, highlight (verb), interplay, intricate/intricacies, key (adjective), landscape (abstract noun), pivotal, showcase, tapestry, testament, underscore, valuable, vibrant
+### 6. Forced triads
+**Pattern:** ideas in threes to sound complete: "innovation, inspiration, and industry insights", three parallel examples, three short facts and a lesson
+**Fix:** Keep the items the meaning has. Two or four is fine. Check that no fact was lost.
 
-### 7. Copula Avoidance
-**Pattern:** "serves as / stands as / marks / represents [a]", "boasts / features / offers [a]"
-**Fix:** Replace with "is" / "has" / "includes"
+### 7. Repeated sentence openings
+**Pattern:** several sentences in a row start with the same subject
+**Fix:** Merge them, change the subject, or begin with the action. A deliberate repeat stays.
 
-### 8. Negative Parallelisms
-**Pattern:** "Not only...but...", "It's not just about..., it's..."
-**Fix:** Make a direct statement instead.
+### 8. Dashes as the universal connector
+**Fix:** No em or en dashes in the final text, and no double hyphens (" -- ") used as dashes: use a comma, colon, parentheses or a new sentence, whichever fits the relation between the clauses. One dash is *weak alone*; a text full of them is not.
 
-### 9. Rule of Three Overuse
-**Pattern:** Lists forced into groups of three: "innovation, inspiration, and industry insights"
-**Fix:** Say only what needs to be said.
+### 9. Stacked qualifiers and filler
+**Pattern:** "could potentially possibly be argued", "to be fair", "it's also possible"; filler such as "in order to", "due to the fact that", "at this point in time", "the system has the ability to", "it is important to note that"
+**Fix:** "The policy may affect outcomes." / "To", "Because", "Now", "can"; remove the last one entirely. Filler goes on sight. Keep a qualifier only when the source supports it and the meaning needs it, and keep scope statements and legal or safety notices; a single qualifier is *weak alone*, and ordinary hedges such as "perhaps" or "tends to" are not tells.
 
-### 10. Elegant Variation (Synonym Cycling)
-**Pattern:** protagonist -> main character -> central figure -> hero (all referring to same person)
-**Fix:** Pick one term and use it consistently.
+### 10. Hyphenated pairs everywhere
+**Watch for:** high-quality, well-documented, long-term, real-time after the noun they describe
+**Fix:** Keep the hyphen before a noun ("a high-quality report"), drop it after ("the report is high quality"). Words always spelled with a hyphen keep it. *Weak alone.*
 
-## Style Patterns to Remove
+### 11. Passive voice and missing subjects
+**Fix:** Use the active voice where it makes the actor clear. *Weak alone.*
 
-### 11. Em Dash Overuse
-**Fix:** Replace em dashes with commas, periods, or parentheses where appropriate.
+## C. Inflation and borrowed authority
 
-### 12. Overuse of Boldface
-**Fix:** Bold only what is genuinely critical. When in doubt, remove.
+The fact underneath is usually sound. Keep it and remove the dressing.
 
-### 13. Inline-Header Vertical Lists
-**Pattern:** "* **User Experience:** The user experience has been..."
-**Fix:** Integrate into prose or use simpler list format.
+### 12. Overused AI words
+**Remove or reduce:** actually, additionally, align with, bolstered, crucial, deep dive, delve, enduring, enhance, garner, gate/gated (figurative), highlight (verb), interplay, intricate/intricacies, key (adjective), landscape (abstract noun), meticulous/meticulously, pivotal, quietly, robust (figurative), showcase, tapestry, testament, underscore, valuable, vibrant
+**Fix:** Use the plain word. One such word outside a group is *weak alone*.
 
-### 14. Title Case in Headings
-**Fix:** Sentence case only,"Strategic negotiations and global partnerships" not "Strategic Negotiations And Global Partnerships"
+### 13. Inflated significance
+**Watch for:** stands as a testament, a pivotal/crucial moment, plays a key role, underscores its importance, reflects a broader, enduring/lasting legacy, setting the stage for, evolving landscape, indelible mark; "Despite these challenges... continues to thrive"; "The future looks bright", "Exciting times lie ahead", "a step in the right direction"
+**Fix:** Keep the fact, drop the significance. Cut a stock challenges-and-outlook section or a bright-future closing paragraph; end on the last concrete fact.
 
-### 15. Excessive Emojis in Copy
-**Fix:** Remove all emojis from headings and bullet points. Allow max 1-2 per article in body text only.
+### 14. Vague connection or association
+**Watch for:** associated with, in connection with, linked to, tied to
+**Fix:** Name the relationship (founded, leads, advises). If it is unknown, keep the vague wording.
 
-### 16. Fake Contrast Emphasis
-**Pattern:** "That is not X. That is Y." or "This is not a preference. This is a fact." — where X and Y are not actually in conflict. Used to make a statement sound more dramatic or authoritative than it is.
+### 15. Shallow -ing phrases
+**Watch for:** highlighting, underscoring, emphasizing, ensuring, reflecting, symbolizing, contributing to, cultivating, fostering, encompassing, showcasing
+**Fix:** Keep the fact; drop the -ing phrase unless the source supports what it claims.
+
+### 16. Sales language
+**Watch for:** rich (figurative), profound, exemplifies, commitment to, natural beauty, nestled, in the heart of, groundbreaking, renowned, featuring, diverse array, breathtaking, stunning, must-visit
+**Fix:** State what the thing is, with specific facts.
+
+### 17. Borrowed authority
+**Watch for:** experts argue, observers have cited, industry reports, some critics, several sources; a list of outlets that "featured" someone; "active social media presence"
+**Fix:** Name the real source, with date, and what it said. Otherwise cut the claim or the list.
+
+### 18. Avoiding is, are and has
+**Watch for:** serves as, stands as, functions as, operates as, marks, represents; boasts, features, offers, maintains; refers to
+**Fix:** Use "is", "are", "has".
+
+## D. Formatting by rule
+
+### 19. Bold as decoration
+**Pattern:** bold on words with no reason; vertical lists where every item has a bold label and a colon ("* **User Experience:** The user experience has been...")
+**Fix:** Bold only what is genuinely critical. Turn a labeled list into prose when the labels carry no information of their own.
+
+### 20. Decorative headings
+**Pattern:** Title Case headings; emojis or arrows in headings and bullets; a horizontal rule between every section; an opening heading that repeats the title; a heading written for effect ("The decision, on one screen")
+**Fix:** Sentence case only: "Strategic negotiations and global partnerships". A heading names what the section holds ("How the six options compare"). No emojis in headings or bullets; at most 1-2 per article, in body text.
+
+### 21. Curly quotation marks
+**Fix:** Use straight quotes where the target format does. *Weak alone.*
+
+## E. Leftovers from the chat and the draft
+
+Remove these outright.
+
+### 22. Chatbot residue
+**Watch for:** I hope this helps, Of course!, Certainly!, Great question!, You're absolutely right, Would you like..., let me know
+**Fix:** Remove the wrapper, keep the content.
+
+### 23. Knowledge-limit disclaimers and guesses
+**Watch for:** as of my last training update, while specific details are limited, based on available information, not publicly available, "maintains a low profile" followed by a plausible guess
+**Fix:** State what the source does not show, or remove the sentence.
+
+### 24. A heading repeated in the first sentence
+**Pattern:** a heading followed by a one-line paragraph that restates it
+**Fix:** Remove the repeated sentence.
+
+### 25. Writing about the document instead of its subject
+**Watch for:** what the text replaced ("was added to replace"); how it was sourced ("compiled from", "anything unconfirmed is flagged"); a legend or order the reader can already see
+**Fix:** Mention a previous version only in change logs and release notes. Keep a source credit the reader can follow; cut the account of how you worked.
+
+## F. Writing for the wrong reader
+
+### 26. Re-explaining what the reader knows
+**Pattern:** a short reply that restates the problem and the diagnosis before it reaches the decision
+**Fix:** Lead with the decision and keep only the reasoning that would change whether the reader agrees. Applies to replies, not standalone articles.
+
+## G. Klai's own pattern
+
+### 27. Fake Contrast Emphasis
+**Pattern:** "That is not X. That is Y." or "This is not a preference. This is a fact." where X and Y are not actually in conflict. Used to make a statement sound more dramatic or authoritative than it is. (Pattern 1 covers the general contrast; this is the two-sentence staged form.)
 **Examples to remove:**
 - "That is not a preference. That is the measured behavior of the architecture."
 - "This is not optional. This is how it works."
 - "Not just X. Y."
-**Fix:** Make a single direct statement. "The model pays more attention to the beginning and end of a document" — full stop. No fake drama required.
-
-## Communication Patterns to Remove
-
-### 17. Collaborative Artifacts
-**Pattern:** "I hope this helps", "Of course!", "Certainly!", "Would you like...", "let me know"
-**Fix:** Remove entirely,these are chatbot phrases, not content.
-
-### 18. Knowledge-Cutoff Disclaimers
-**Pattern:** "as of my last training update", "While specific details are limited..."
-**Fix:** Remove or replace with verifiable facts.
-
-### 19. Sycophantic Tone
-**Pattern:** "Great question!", "You're absolutely right!", "That's an excellent point"
-**Fix:** Remove entirely.
-
-## Filler and Hedging
-
-### 19. Filler Phrases
-- "In order to achieve this goal" -> "To achieve this"
-- "Due to the fact that" -> "Because"
-- "At this point in time" -> "Now"
-- "The system has the ability to" -> "The system can"
-- "It is important to note that" -> Remove entirely
-
-### 20. Excessive Hedging
-**Pattern:** "It could potentially possibly be argued that the policy might have some effect..."
-**Fix:** "The policy may affect outcomes."
-
-### 21. Generic Positive Conclusions
-**Pattern:** "The future looks bright... Exciting times lie ahead... This represents a major step..."
-**Fix:** Replace with specific next actions or concrete facts.
+**Fix:** Make a single direct statement. "The model pays more attention to the beginning and end of a document", full stop. No fake drama required.
 
 ## Adding Soul (Anti-Soulless Writing)
 
-After removing AI patterns, add human voice:
+After removing AI patterns, add human voice. This is about voice, not about new facts (see "How to work", step 4):
 
 - **Have opinions**: React to facts, don't just report them
 - **Vary rhythm**: Short punchy sentences. Then longer ones that take their time.
@@ -126,9 +161,9 @@ After removing AI patterns, add human voice:
 
 ## Output
 
-- Return only the edited article in Markdown,no commentary
+- Return only the edited article in Markdown, no commentary
 - Match the language of the input: NL input -> NL output, EN input -> EN output
 
 ---
 
-*Last updated: 2026-03-20*
+*Last updated: 2026-11-18. Pattern catalogue follows humanizer v4.0.0.*

@@ -29,7 +29,6 @@ def _build_payload(
     content: str,
     source_connector_id: str,
     source_ref: str,
-    resource_generation: str | None = None,
     source_url: str = "",
     content_type: str = "unknown",
     image_urls: list[str] | None = None,
@@ -53,8 +52,6 @@ def _build_payload(
         "content_type": content_type,
         "source_type": source_type,
     }
-    if resource_generation:
-        payload["resource_generation"] = resource_generation
     # user_id: connector owner's Zitadel user_id. Required by knowledge-ingest's
     # personal-KB owner-binding check (personal_kb_owner_mismatch). Without it,
     # syncs to a personal-{user} KB return 403.
@@ -119,8 +116,7 @@ class KnowledgeIngestClient:
         connector_type: str = "",
         user_id: str | None = None,
         document_extra: dict[str, object] | None = None,
-        resource_generation: str | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Send a parsed document to knowledge-ingest for embedding.
 
         Args:
@@ -147,7 +143,9 @@ class KnowledgeIngestClient:
             empty document, connector deleting) and ``status: "ok"`` after a
             write. Any status other than ``skipped`` counts as a change, so an
             unexpected answer errs toward reanalysing rather than missing new
-            content.
+            content. None when knowledge-ingest held the version (``held``):
+            it kept under half of the stored text, so the stored version stays
+            until the same version arrives again 12 hours later.
 
         Raises:
             ValueError: If content exceeds the knowledge-ingest request contract.
@@ -177,7 +175,6 @@ class KnowledgeIngestClient:
             content=content,
             source_connector_id=source_connector_id,
             source_ref=source_ref,
-            resource_generation=resource_generation,
             source_url=source_url,
             content_type=content_type,
             image_urls=image_urls,
@@ -194,8 +191,11 @@ class KnowledgeIngestClient:
             headers=headers,
         )
         response.raise_for_status()
+        status = response.json().get("status")
+        if status == "held":
+            return None
         logger.info("Ingested document: %s", path)
-        return response.json().get("status") != "skipped"
+        return status != "skipped"
 
     async def delete_connector_document(
         self,
@@ -226,6 +226,43 @@ class KnowledgeIngestClient:
         response.raise_for_status()
         logger.info("Deleted stale connector document: %s", source_ref)
         return response.json()["artifacts_deleted"] > 0
+
+    async def list_connector_source_refs(
+        self,
+        *,
+        org_id: str,
+        kb_slug: str,
+        source_connector_id: str,
+    ) -> dict[str, set[str]]:
+        """Every source_ref knowledge-ingest stores for this connector, with its paths.
+
+        Follows the keyset cursor until a short page; any HTTP error raises, so
+        a failed read is never mistaken for an empty store.
+        """
+        refs: dict[str, set[str]] = {}
+        after = ""
+        while True:
+            response = await self._client.get(
+                "/ingest/v1/connector/source-refs",
+                params={
+                    "org_id": org_id,
+                    "kb_slug": kb_slug,
+                    "connector_id": source_connector_id,
+                    "after": after,
+                    "limit": 1000,
+                },
+                headers={
+                    "X-Internal-Secret": self._internal_secret,
+                    "X-Caller-Service": "connector",
+                },
+            )
+            response.raise_for_status()
+            page = response.json()
+            for stored in page["source_refs"]:
+                refs[stored["source_ref"]] = set(stored["paths"])
+            if not page.get("next_after"):
+                return refs
+            after = page["next_after"]
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
@@ -332,9 +369,10 @@ class CrawlSyncClient:
         down), not "session expired".
 
         Returns:
-            The raw JSON body — {"ok": bool, "reason": str | None}. ``reason``
-            is set whenever ``ok`` is False (e.g. "redirect_to_login",
-            "no_saved_credentials") so callers can log something actionable.
+            The raw JSON body — {"ok", "reason", "login_required"}.
+            ``reason`` is set whenever ``ok`` is False (e.g.
+            "login_required:redirect_to_login", "no_saved_credentials")
+            so callers can log something actionable.
 
         Raises:
             httpx.HTTPStatusError: on 4xx/5xx (transport/server failure, not a

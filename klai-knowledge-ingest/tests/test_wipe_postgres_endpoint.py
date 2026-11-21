@@ -32,6 +32,8 @@ _ENDPOINT_B = f"/internal/v1/orgs/{_ORG_B}/wipe-postgres"
 
 # All tables the route is expected to wipe (leaf tables + artifacts).
 _EXPECTED_WIPE_TABLES = set(_LEAF_TABLES) | {"artifacts"}
+# org_id-carrying children removed by ON DELETE CASCADE from artifacts and crawl_jobs.
+_CASCADE_CHILDREN = {"parent_chunks", "crawl_job_frontier"}
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +304,7 @@ class TestWipePostgresSchemaGuard:
             await conn.close()
 
         live_tables = {row["table_name"] for row in rows}
-        missing = live_tables - _EXPECTED_WIPE_TABLES
+        missing = live_tables - _EXPECTED_WIPE_TABLES - _CASCADE_CHILDREN
         assert not missing, (
             f"The following knowledge.* tables have an org_id column but are NOT "
             f"in the wipe list (_LEAF_TABLES + artifacts): {sorted(missing)}. "

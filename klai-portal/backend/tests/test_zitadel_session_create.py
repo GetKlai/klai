@@ -109,13 +109,13 @@ class TestLoginHandlerForwardsUserIdNotEmail:
             patch("app.api.auth.zitadel") as mock_zitadel,
             patch("app.api.auth.audit"),
             patch("app.api.auth.emit_event"),
-            patch("app.api.auth._resolve_and_enforce_mfa", new=AsyncMock(return_value=None)),
+            patch("app.api.auth._resolve_and_enforce_mfa", new=AsyncMock(return_value=(None, []))),
             patch("app.api.auth._finalize_and_set_cookie", new=AsyncMock()),
         ):
             # find_user_by_email resolves to the canonical id, even though
             # the user typed lower-case.
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("zitadel-uid-364818", "org-123"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(return_value={"sessionId": "s", "sessionToken": "t"})
 
             await login(body=body, response=response, request=request, db=db)
@@ -164,7 +164,7 @@ class TestLoginHandlerForwardsUserIdNotEmail:
             patch("app.api.auth.emit_event"),
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=None)
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(side_effect=zitadel_error)
             mock_audit.log_event = AsyncMock()
 

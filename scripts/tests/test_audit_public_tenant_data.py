@@ -115,6 +115,157 @@ def test_this_guards_own_tests_are_exempt():
     assert audit.check("+++ b/scripts/tests/test_other.py\n@@ -1,0 +1,3 @@\n" + leak + "\n")
 
 
+# ---- Rule 1 judges a table by its header row, not by a word in any cell ----
+#
+# On 2026-11-12 runbook and architecture tables that said "tenant" or "org" in an
+# ordinary cell were reported row by row (nine rows for one renumbered step
+# table), and writers reworded the docs to get past the guard.
+
+
+def test_a_per_tenant_header_with_a_count_is_blocked_without_outer_pipes():
+    assert audit.check(_diff("+Tenant | Chats | Cited", "+--- | --- | ---", "+acme-labs | 412 | 3")) == [
+        "docs/x.md:3: a per-tenant row carrying numbers"
+    ]
+
+
+def test_a_numbered_step_table_mentioning_tenant_in_a_cell_is_not_judged():
+    diff = _diff(
+        " | # | Step | Resource |",
+        " |---|---|---|",
+        " | 1 | `_delete_route` | Caddy tenant route |",
+        "-| 2 | `_delete_team` | Model team |",
+        "+| 2 | `_delete_images` | Images under the org prefix |",
+        "+| 3 | `_delete_team` | Model team |",
+    )
+
+    assert audit.check(diff) == []
+
+
+def test_a_neutral_header_is_not_judged_whatever_its_cells_say():
+    diff = _diff("+| Stap | Wat er gebeurt |", "+|---|---|", "+| 1 | Customers get 2 mails per org |", "+| 2 | Send 3 |")
+
+    assert audit.check(diff) == []
+
+
+def test_dutch_header_words_name_a_per_tenant_table():
+    for header in ("Klant", "Klanten", "Organisatie", "Organisaties", "Orgs"):
+        diff = _diff(f"+| {header} | Gesprekken |", "+|---|---|", "+| acme-labs | 12 |")
+        assert audit.check(diff) == ["docs/x.md:3: a per-tenant row carrying numbers"], header
+
+
+def test_a_per_tenant_row_without_a_digit_is_not_a_rule_1_finding():
+    assert audit.check(_diff("+| Tenant | Plan |", "+|---|---|", "+| acme-labs | basic |")) == []
+
+
+def test_text_mode_judges_each_table_by_its_own_header():
+    text = (
+        "# Report\n\n| # | Step |\n|---|---|\n| 1 | remove the tenant route |\n| 2 | wait 5 minutes |\n\n"
+        "| Tenant | Chats | Cited |\n|---|---|---|\n| acme-labs | 412 | 3 |\n"
+    )
+
+    assert audit.check(audit.as_diff(text, "pull-request")) == ["pull-request:10: a per-tenant row carrying numbers"]
+
+
+# The header of a long table is not in a diff with three lines of context. It is
+# read from the post-image: the blob named on the diff's ``index`` line, or the
+# working-tree file when its content hashes to that blob.
+
+
+@pytest.fixture(autouse=True)
+def _fresh_post_images():
+    audit._post_image.cache_clear()
+
+
+def _git(root, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def _table(header: str, rows: list[str]) -> str:
+    cols = header.count("|") - 1
+    return "intro\n\n" + header + "\n" + "|---" * cols + "|\n" + "".join(r + "\n" for r in rows) + "\nend\n"
+
+
+def _changed(root, monkeypatch, text: str, new_text: str, staged: bool = True) -> str:
+    """Commit ``text``, change it to ``new_text`` and return the staged or unstaged diff."""
+    _git(root, "init", "-q")
+    doc = root / "docs" / "x.md"
+    doc.parent.mkdir()
+    doc.write_text(text, encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "v1")
+    doc.write_text(new_text, encoding="utf-8")
+    monkeypatch.chdir(root)
+    if staged:
+        _git(root, "add", "-A")
+        return _git(root, "diff", "--cached", "--no-color", "-U3")
+    return _git(root, "diff", "--no-color", "-U3")
+
+
+_TENANT_ROWS = [f"| team-{i} | {i * 7} | {i} |" for i in range(1, 11)]
+_TENANT_HEADER = "| Tenant | Chats | Cited |"
+_LEAK = "| acme-labs | 412 | 3 |"
+
+
+@pytest.mark.parametrize(("at", "line"), [(10, 15), (2, 7)])
+def test_a_row_added_below_a_per_tenant_header_outside_the_diff_is_caught_from_the_blob(
+    tmp_path, monkeypatch, at, line
+):
+    """Staged, as in pre-commit; the working tree differs, so only the blob holds the header."""
+    rows = [*_TENANT_ROWS[:at], _LEAK, *_TENANT_ROWS[at:]]
+    diff = _changed(tmp_path, monkeypatch, _table(_TENANT_HEADER, _TENANT_ROWS), _table(_TENANT_HEADER, rows))
+    (tmp_path / "docs" / "x.md").write_text("unstaged edit\n", encoding="utf-8")
+    assert "Tenant" not in diff
+
+    assert audit.check(diff) == [f"docs/x.md:{line}: a per-tenant row carrying numbers"]
+
+
+def test_an_uncommitted_change_reads_the_header_from_the_working_tree(tmp_path, monkeypatch):
+    rows = [*_TENANT_ROWS, _LEAK]
+    diff = _changed(
+        tmp_path, monkeypatch, _table(_TENANT_HEADER, _TENANT_ROWS), _table(_TENANT_HEADER, rows), staged=False
+    )
+
+    assert audit.check(diff) == ["docs/x.md:15: a per-tenant row carrying numbers"]
+
+
+def test_a_renumbered_step_table_far_below_its_header_is_not_judged(tmp_path, monkeypatch):
+    steps = [f"| {i} | `_step_{i}` | Model team |" for i in range(1, 13)]
+    steps[9] = "| 10 | `_step_10` | Caddy tenant route |"
+    renumbered = steps[:10] + ["| 11 | `_delete_images` | Images |"]
+    renumbered += [f"| {i + 1} | `_step_{i}` | Model team |" for i in range(11, 13)]
+    header = "| # | Step | Resource |"
+    diff = _changed(tmp_path, monkeypatch, _table(header, steps), _table(header, renumbered))
+    assert "Step" not in diff.split("@@", 2)[2]
+
+    assert audit.check(diff) == []
+
+
+def test_an_unreadable_post_image_treats_the_table_as_per_tenant_and_says_so(tmp_path, monkeypatch):
+    """Unstaged, so the blob is not stored, and the working tree has moved on since."""
+    header = "| # | Step | Resource |"
+    rows = [f"| {i} | s | r |" for i in range(1, 12)]
+    diff = _changed(tmp_path, monkeypatch, _table(header, rows[:10]), _table(header, rows), staged=False)
+    (tmp_path / "docs" / "x.md").write_text(_table(header, rows) + "later edit\n", encoding="utf-8")
+
+    assert audit.check(diff) == [
+        "docs/x.md:15: a per-tenant row carrying numbers (header outside the diff, file unreadable: treated as per-tenant)"
+    ]
+
+
+def test_a_shell_pipe_in_a_code_block_is_not_a_table_row():
+    diff = "+++ b/docs/x.md\n@@ -10,2 +10,3 @@\n ```bash\n+journalctl -u app | tail -50\n ```\n"
+
+    assert audit.check(diff) == []
+
+
 # ---- A customer name, with or without a number ----
 #
 # Rule 3 let "Acme Telecom had 272 answers" through at first; rule 4 (2026-10-29)

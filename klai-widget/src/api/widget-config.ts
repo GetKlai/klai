@@ -51,6 +51,9 @@ export interface WidgetConfig {
   };
   theme?: "light" | "dark";
   collect_user_info?: boolean;
+  // Days the organisation keeps conversations; the pre-chat notice quotes it.
+  // Absent on a response cached from before the field existed.
+  retention_days?: number;
   widget_position?: "left" | "right";
 }
 

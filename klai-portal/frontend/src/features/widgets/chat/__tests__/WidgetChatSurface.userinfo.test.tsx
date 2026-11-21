@@ -15,8 +15,8 @@ vi.mock('@/paraglide/runtime', () => ({
   getLocale: () => 'nl',
 }))
 
-vi.mock('@/paraglide/messages', () =>
-  Object.fromEntries(
+vi.mock('@/paraglide/messages', () => ({
+  ...Object.fromEntries(
     [
       'widget_ai_disclaimer',
       'widget_chat_close',
@@ -32,14 +32,17 @@ vi.mock('@/paraglide/messages', () =>
       'widget_chat_status_online',
       'widget_chat_typing',
       'widget_chat_user_info_email',
-      'widget_chat_user_info_help',
       'widget_chat_user_info_name',
       'widget_chat_user_info_skip',
       'widget_chat_user_info_start',
       'widget_chat_user_info_title',
     ].map((key) => [key, () => key]),
   ),
-)
+  // The help message takes the retention term as its only parameter; echo it so
+  // the test can see what the surface passed. The mock cannot render the real
+  // sentence, so the wording itself lives only in the message files.
+  widget_chat_user_info_help: (params?: { term: string }) => `widget_chat_user_info_help[${params?.term}]`,
+}))
 
 import { WidgetChatSurface } from '../WidgetChatSurface'
 
@@ -104,8 +107,23 @@ describe('WidgetChatSurface pre-chat step', () => {
     renderSurface()
 
     expect(screen.getByText('widget_chat_user_info_title')).toBeTruthy()
-    expect(screen.getByText('widget_chat_user_info_help')).toBeTruthy()
+    expect(screen.getByText('widget_chat_user_info_help[]')).toBeTruthy()
     expect(screen.queryByPlaceholderText('widget_chat_input_placeholder')).toBeNull()
+  })
+
+  it('passes the organisation retention term to the notice, in the singular for one day', () => {
+    const { unmount } = renderSurface({ retentionDays: 90 })
+    expect(screen.getByText('widget_chat_user_info_help[ 90 dagen]')).toBeTruthy()
+    unmount()
+
+    renderSurface({ retentionDays: 1 })
+    expect(screen.getByText('widget_chat_user_info_help[ 1 dag]')).toBeTruthy()
+  })
+
+  it('passes an empty term when the config carries no retention, so no placeholder can show', () => {
+    renderSurface()
+
+    expect(screen.getByText('widget_chat_user_info_help[]')).toBeTruthy()
   })
 
   it('sends name and e-mail as their own fields, leaving the question untouched', async () => {

@@ -192,7 +192,7 @@ register and verify a new TOTP factor, then update `E2E_TOTP_SECRET`.
 CLI repair path used by agents with production access:
 
 1. Read `PORTAL_API_ZITADEL_PAT` and `ZITADEL_PORTAL_ORG_ID` from
-   `core-01:/opt/klai/.env`.
+   `.env` in the core-01 deploy directory.
 2. Find the user with `POST https://auth.getklai.com/v2/users` and
    `loginNameQuery` for `E2E_USER_EMAIL`.
 3. Remove stale TOTP with

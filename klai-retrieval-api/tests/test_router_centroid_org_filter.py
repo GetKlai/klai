@@ -231,7 +231,6 @@ class TestCentroidCacheKeyedByOrg:
 
         # First call for org-a: compute runs
         await route_to_sources(
-            "vague query",
             query_vector=[0.9, 0.1],
             org_id="org-a",
             source_label_catalog=catalog,
@@ -240,7 +239,6 @@ class TestCentroidCacheKeyedByOrg:
 
         # First call for org-b: compute runs again (different org)
         await route_to_sources(
-            "vague query",
             query_vector=[0.1, 0.9],
             org_id="org-b",
             source_label_catalog=catalog,
@@ -249,7 +247,6 @@ class TestCentroidCacheKeyedByOrg:
 
         # Second call for org-a: cache hit, compute NOT called again
         decision_a2 = await route_to_sources(
-            "another query",
             query_vector=[0.9, 0.1],
             org_id="org-a",
             source_label_catalog=catalog,
@@ -271,7 +268,6 @@ class TestCentroidCacheKeyedByOrg:
             return {label: [1.0, 0.0] for label in labels}
 
         await route_to_sources(
-            "query",
             [1.0, 0.0],
             "org-a",
             [KBEntry(source_label="sip", name="SIP")],
@@ -279,7 +275,6 @@ class TestCentroidCacheKeyedByOrg:
             kb_slugs=["sip"],
         )
         decision = await route_to_sources(
-            "query",
             [1.0, 0.0],
             "org-a",
             [KBEntry(source_label="sip", name="SIP")],
@@ -306,7 +301,6 @@ class TestCentroidCacheKeyedByOrg:
         ]
 
         decision_a = await route_to_sources(
-            "completely neutral query",
             query_vector=[1.0, 0.0, 0.0],  # close to org-a Notion
             org_id="org-a",
             source_label_catalog=catalog,
@@ -315,7 +309,6 @@ class TestCentroidCacheKeyedByOrg:
 
         # For org-b, the centroid for Notion is [0,1,0]; query [1,0,0] is orthogonal
         decision_b = await route_to_sources(
-            "completely neutral query",
             query_vector=[1.0, 0.0, 0.0],
             org_id="org-b",
             source_label_catalog=catalog,

@@ -1,6 +1,8 @@
 from typing import Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from knowledge_ingest.derived_state import STATE_KEYS
 
 AssertionMode = Literal["factual", "belief", "hypothesis", "procedural", "quoted", "unknown"]
 VALID_ASSERTION_MODES: frozenset[str] = frozenset(get_args(AssertionMode))
@@ -37,7 +39,6 @@ class IngestRequest(BaseModel):
     chunks: list[str] | None = None  # Pre-computed chunks (used with skip_chunking=True)
     content_hash: str | None = None  # Optional full-source hash for pre-chunked/truncated content
     source_connector_id: str | None = None  # ID of the connector that produced this document
-    resource_generation: str | None = None  # Caller-supplied connector sync generation
     source_ref: str | None = None  # Source reference (e.g. URL, Notion page ID, repo path)
     synthesis_depth: int | None = None  # Optional override (adapters set this explicitly)
     # Connector-level hint: expected modes for this source
@@ -46,6 +47,17 @@ class IngestRequest(BaseModel):
     kb_name: str | None = None  # Human-readable KB name (e.g. "Voys Helpdesk")
     connector_type: str | None = None  # Connector type slug (e.g. "partner-wiki", "webscrape")
     source_domain: str | None = None  # Domain for crawl sources (e.g. "help.mitel.nl")
+
+    @field_validator("extra")
+    @classmethod
+    def _extra_carries_no_product_state(cls, extra: dict) -> dict:
+        # The ingest merges ``extra`` into the artifact row, where these keys
+        # are the version's product states. A caller that sends one would
+        # overwrite the state the row was born with and get the job's real
+        # outcome refused, so the request is rejected at the boundary.
+        if reserved := STATE_KEYS & extra.keys():
+            raise ValueError(f"extra may not carry {sorted(reserved)}")
+        return extra
 
 
 class RetrieveRequest(BaseModel):

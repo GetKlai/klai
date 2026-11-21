@@ -16,6 +16,14 @@ from app.utils.response_sanitizer import sanitize_response_body  # SPEC-SEC-INTE
 
 logger = logging.getLogger(__name__)
 
+# Second factors the portal login can verify on a Zitadel session, in the order
+# it asks for them, paired with the Session API v2 ``checks`` key that verifies
+# each one (``session/v2/session_service.proto``: ``Checks.totp``, ``Checks.otp_email``).
+_LOGIN_SECOND_FACTOR_CHECKS = (
+    ("AUTHENTICATION_METHOD_TYPE_TOTP", "totp"),
+    ("AUTHENTICATION_METHOD_TYPE_OTP_EMAIL", "otpEmail"),
+)
+
 
 class ZitadelClient:
     @staticmethod
@@ -192,6 +200,18 @@ class ZitadelClient:
 
     async def get_user_by_id(self, user_id: str) -> dict:
         resp = await self._http.get(f"/management/v1/users/{user_id}")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_user_v2(self, user_id: str) -> dict:
+        """``GET /v2/users/{id}``: the user in any organisation of the instance.
+
+        The management read above is scoped to the service account's own
+        organisation and answers 404 for a user of another one (seen on the
+        pinned image in the login contract), so a 404 here means the user is
+        gone, not that it lives elsewhere.
+        """
+        resp = await self._http.get(f"/v2/users/{user_id}")
         resp.raise_for_status()
         return resp.json()
 
@@ -531,13 +551,55 @@ class ZitadelClient:
 
         Returns the ``callbackUrl`` the browser should be redirected to.
         Requires the service account to have the ``IAM_LOGIN_CLIENT`` role.
+        Every sign-in the portal completes passes here, so this is where a
+        sign-in to an organisation's chat application is held to an active
+        membership of that organisation (``_require_chat_membership``).
         """
+        await self._require_chat_membership(auth_request_id, session_id, session_token)
         resp = await self._http.post(
             f"/v2/oidc/auth_requests/{auth_request_id}",
             json={"session": {"sessionId": session_id, "sessionToken": session_token}},
         )
         resp.raise_for_status()
         return resp.json()["callbackUrl"]
+
+    async def _require_chat_membership(self, auth_request_id: str, session_id: str, session_token: str) -> None:
+        """403 unless the session's user is an active member of the organisation whose chat client asks.
+
+        ``GET /v2/oidc/auth_requests/{id}`` names the OIDC client the request
+        is for (``authRequest.clientId``, permission ``session.read``, part of
+        ``IAM_LOGIN_CLIENT``). Provisioning stores each organisation's chat
+        client in ``portal_orgs.zitadel_librechat_client_id``; a client that is
+        no organisation's chat (the portal itself) needs no membership here.
+        """
+        from fastapi import HTTPException, status
+        from sqlalchemy import select
+
+        from app.core.database import AsyncSessionLocal
+        from app.models.portal import PortalOrg, PortalUser
+
+        resp = await self._http.get(f"/v2/oidc/auth_requests/{auth_request_id}")
+        resp.raise_for_status()
+        client_id = resp.json()["authRequest"]["clientId"]
+        if client_id == settings.zitadel_portal_client_id:
+            return
+        # portal_orgs has no row-level policy and portal_users is Cat-A, so a
+        # fresh session without tenant context reads both by key.
+        async with AsyncSessionLocal() as db:
+            org_id = (
+                await db.execute(select(PortalOrg.id).where(PortalOrg.zitadel_librechat_client_id == client_id))
+            ).scalar_one_or_none()
+        if org_id is None:
+            return
+        user_id = (await self.get_session_details(session_id, session_token))["zitadel_user_id"]
+        async with AsyncSessionLocal() as db:
+            membership_status = (
+                await db.execute(
+                    select(PortalUser.status).where(PortalUser.org_id == org_id, PortalUser.zitadel_user_id == user_id)
+                )
+            ).scalar_one_or_none()
+        if membership_status != "active":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="no_active_membership")
 
     async def set_password_with_code(
         self,
@@ -778,27 +840,21 @@ class ZitadelClient:
         user = result[0]
         return user["userId"], user["details"]["resourceOwner"]
 
-    async def has_totp(self, user_id: str, org_id: str | None = None) -> bool:  # noqa: ARG002 — kept for the legacy caller; Zitadel v2 authentication methods are user-scoped
-        """Return True if the user has a verified TOTP factor registered."""
-        resp = await self._http.get(f"/v2/users/{user_id}/authentication_methods")
-        resp.raise_for_status()
-        methods = resp.json().get("authMethodTypes", [])
-        return "AUTHENTICATION_METHOD_TYPE_TOTP" in methods
+    async def login_second_factors(self, user_id: str) -> list[str]:
+        """Return the session-check keys of the registered second factors the portal login verifies.
 
-    async def has_any_mfa(self, user_id: str) -> bool:
-        """Return True if the user has any second factor registered (TOTP, passkey, email OTP)."""
+        The order is the order the login asks for them: TOTP first, then the
+        e-mail code. Passkeys, security keys (U2F) and SMS codes are left out
+        because the login has no step that verifies them, so they cannot count
+        as enrolment. Login, ``/api/me`` and the route guard all decide on this
+        one list, which keeps them from disagreeing.
+        """
         if settings.is_auth_dev_mode:
-            return False
+            return []
         resp = await self._http.get(f"/v2/users/{user_id}/authentication_methods")
         resp.raise_for_status()
-        methods = resp.json().get("authMethodTypes", [])
-        mfa_types = {
-            "AUTHENTICATION_METHOD_TYPE_TOTP",
-            "AUTHENTICATION_METHOD_TYPE_U2F",
-            "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL",
-            "AUTHENTICATION_METHOD_TYPE_OTP_SMS",
-        }
-        return bool(mfa_types & set(methods))
+        methods = set(resp.json().get("authMethodTypes", []))
+        return [check for method, check in _LOGIN_SECOND_FACTOR_CHECKS if method in methods]
 
     async def start_passkey_registration(self, user_id: str, domain: str) -> dict:
         """Start WebAuthn passkey registration for a user.
@@ -825,37 +881,67 @@ class ZitadelClient:
         resp.raise_for_status()
 
     async def register_email_otp(self, user_id: str) -> None:
-        """Register email OTP for a user. Zitadel sends a verification code to the user's email."""
+        """Add the e-mail code factor to a user with a verified e-mail address.
+
+        Zitadel v4 activates the factor at once and mails nothing; there is no
+        verify step (``user/v2`` AddOTPEmail). A 409 means the factor is
+        already there, which is the state this call is after.
+        """
         resp = await self._http.post(f"/v2/users/{user_id}/otp_email")
-        resp.raise_for_status()
+        if resp.status_code != 409:
+            resp.raise_for_status()
 
     async def remove_email_otp(self, user_id: str) -> None:
-        """Remove email OTP from a user. Used before re-registration to resend the code."""
+        """Remove the e-mail code factor; a 404 means it is already gone, the state this call is after."""
         resp = await self._http.delete(f"/v2/users/{user_id}/otp_email")
-        resp.raise_for_status()
+        if resp.status_code != 404:
+            resp.raise_for_status()
 
-    async def verify_email_otp(self, user_id: str, code: str) -> None:
-        """Verify and activate the email OTP registration using the code from the email."""
+    async def create_session_for_user(self, user_id: str, lifetime_seconds: int) -> dict:
+        """Create a Zitadel session that carries only the user check, expiring after ``lifetime_seconds``.
+
+        Lets the portal challenge a factor for a signed-in user (the e-mail code
+        enrolment) without asking for the password again. The session never
+        leaves the backend, and the lifetime bounds it to the challenge.
+        """
         resp = await self._http.post(
-            f"/v2/users/{user_id}/otp_email/_verify",
-            json={"code": code},
+            "/v2/sessions",
+            json={"checks": {"user": {"userId": user_id}}, "lifetime": f"{lifetime_seconds}s"},
         )
         resp.raise_for_status()
+        return resp.json()
 
-    async def update_session_with_totp(self, session_id: str, session_token: str, code: str) -> dict:
-        """Add a TOTP check to an existing session. Returns updated session dict."""
+    async def send_session_email_code(self, session_id: str, session_token: str) -> str:
+        """Ask Zitadel to mail a one-time code for this session; returns the new session token.
+
+        Session API v2 SetSession with ``challenges.otpEmail.sendCode`` (Zitadel
+        v4 ``session/v2/challenge.proto``). The response token replaces the
+        previous one, which Zitadel invalidates.
+        """
         resp = await self._http.patch(
             f"/v2/sessions/{session_id}",
             json={
                 "sessionToken": session_token,
-                "checks": {"totp": {"code": code}},
+                "challenges": {"otpEmail": {"sendCode": {}}},
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["sessionToken"]
+
+    async def update_session_with_otp(self, session_id: str, session_token: str, check: str, code: str) -> dict:
+        """Add a TOTP (``check="totp"``) or e-mail code (``check="otpEmail"``) check to a session."""
+        resp = await self._http.patch(
+            f"/v2/sessions/{session_id}",
+            json={
+                "sessionToken": session_token,
+                "checks": {check: {"code": code}},
             },
         )
         resp.raise_for_status()
         return resp.json()
 
     async def register_user_totp(self, user_id: str) -> dict:
-        """Start TOTP registration for a user. Returns {uri, totpSecret}."""
+        """Start TOTP registration for a user. Returns {uri, secret}."""
         resp = await self._http.post(f"/v2/users/{user_id}/totp")
         resp.raise_for_status()
         return resp.json()

@@ -44,8 +44,10 @@ from app.models.sync_run import SyncRun
 from app.services.crawl_sync_status import (
     is_completed_remote_crawl_status,
     is_failed_remote_crawl_status,
+    remote_crawl_coverage,
     remote_crawl_documents_changed,
     remote_crawl_failure_error,
+    remote_crawl_failure_status,
 )
 from app.services.portal_client import PortalClient
 
@@ -221,6 +223,7 @@ class SyncRunReaper:
                 pages_done=pages_done,
                 pages_total=pages_total,
                 documents_changed=remote_crawl_documents_changed(live),
+                coverage=remote_crawl_coverage(live),
             )
             return True
         if is_failed_remote_crawl_status(live_status):
@@ -251,6 +254,7 @@ class SyncRunReaper:
         pages_done: int,
         pages_total: int,
         documents_changed: int | None,
+        coverage: dict[str, Any] | None,
     ) -> None:
         completed_at = datetime.now(UTC)
         # Use tenant_scoped_session so the UPDATE passes the WITH CHECK
@@ -271,7 +275,11 @@ class SyncRunReaper:
             db_row.error_details = None
             db_row.quality_status = "healthy"
             existing_cursor = db_row.cursor_state if isinstance(db_row.cursor_state, dict) else {}
-            db_row.cursor_state = {**existing_cursor, "remote_status": "completed"}
+            db_row.cursor_state = {
+                **existing_cursor,
+                "remote_status": "completed",
+                **({"coverage": coverage} if coverage else {}),
+            }
             await session.commit()
         await self._portal_client.report_sync_status(
             connector_id=row.connector_id,
@@ -304,6 +312,7 @@ class SyncRunReaper:
         remote_status: str = "failed",
     ) -> None:
         completed_at = datetime.now(UTC)
+        status = remote_crawl_failure_status(error_code)
         cursor = row.cursor_state if isinstance(row.cursor_state, dict) else {}
         remote_job_id = cursor.get("remote_job_id")
         error_details: list[dict[str, Any]] = [
@@ -320,7 +329,7 @@ class SyncRunReaper:
             db_row = await session.get(SyncRun, row.id, with_for_update=True)
             if db_row is None or db_row.status != SyncStatus.RUNNING:
                 return
-            db_row.status = SyncStatus.FAILED
+            db_row.status = status
             db_row.completed_at = completed_at
             db_row.documents_total = documents_total
             db_row.documents_ok = documents_ok
@@ -333,7 +342,7 @@ class SyncRunReaper:
         await self._portal_client.report_sync_status(
             connector_id=row.connector_id,
             sync_run_id=row.id,
-            sync_status=SyncStatus.FAILED,
+            sync_status=status,
             completed_at=completed_at,
             documents_total=documents_total,
             documents_ok=documents_ok,

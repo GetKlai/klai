@@ -14,6 +14,7 @@ import json
 import sys
 import types
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -169,9 +170,7 @@ def _thread(full_id: str, asks: list[str]) -> meetlat.Thread:
     turns = []
     for ask in asks:
         turns += [{"role": "user", "content": ask}, {"role": "assistant", "content": f"earlier reply to {ask}"}]
-    return meetlat.Thread(
-        full_id, ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"), "open", turns
-    )
+    return meetlat.Thread(full_id, ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"), turns)
 
 
 def _run(tmp_path, cases_rows, overlay, *extra):
@@ -203,6 +202,50 @@ def test_run_replays_each_named_user_turn_with_its_history_and_writes_one_row_pe
     assert meta["org"] == "brightwater"
     assert meta["modules"]["app.services.internal_turn"].startswith(str(overlay))
     assert "app.services.internal_turn" in capsys.readouterr().out
+
+
+def test_run_answers_every_turn_of_a_case_in_the_mode_the_case_names(monkeypatch, tmp_path):
+    """The profile's mode today is not the mode the turn was answered in when the case was named."""
+    threads = {"aaaaaaaa": _thread("aaaaaaaa-1111", ["first", "second"])}
+    overlay = _stub_run_environment(monkeypatch, tmp_path, threads, [])
+    modes: list[str] = []
+
+    async def new_answer(_org, profile, messages, _conversation_id):
+        modes.append(profile.kb_mode)
+        return {"text": "an answer", "total_ms": 1000, "signals": {"decision": "answer"}}
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+
+    code = _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 1, "mode": "strict"}], overlay)
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert code == 0
+    assert modes == ["strict", "strict"], "the earlier turn that stores the case runs in the case's mode too"
+    assert rows[0]["mode"] == "strict"
+
+
+def test_run_answers_each_named_turn_of_one_conversation_in_its_own_mode(monkeypatch, tmp_path):
+    """One real conversation held an Open case and a Strict case; the Strict one was replayed in Open."""
+    threads = {"aaaaaaaa": _thread("aaaaaaaa-1111", ["first", "second"])}
+    overlay = _stub_run_environment(monkeypatch, tmp_path, threads, [])
+    modes: list[str] = []
+
+    async def new_answer(_org, profile, messages, _conversation_id):
+        modes.append(profile.kb_mode)
+        return {"text": "an answer", "total_ms": 1000, "signals": {"decision": "answer"}}
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+
+    code = _run(
+        tmp_path,
+        [{"cid": "aaaaaaaa", "turn": 0, "mode": "open"}, {"cid": "aaaaaaaa", "turn": 1, "mode": "strict"}],
+        overlay,
+    )
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert code == 0
+    assert modes == ["open", "strict"]
+    assert [row["mode"] for row in rows] == ["open", "strict"]
 
 
 def test_run_resumes_rows_already_in_the_output_and_replays_only_the_rest(monkeypatch, tmp_path):
@@ -665,6 +708,11 @@ def test_antwoord_algemeen_gelabeld_needs_a_general_knowledge_label(tmp_path, ca
         ("niet_gevonden", _row("w-1", 0, decision="answer"), False),
         ("doorverwijzing", _row("w-1", 0, decision="off_topic", sources=0, text="Please use the button below."), True),
         ("doorverwijzing", _row("w-1", 0, decision="answer"), False),
+        ("afsluiting", _row("w-1", 0, decision="closing", sources=0, text="Helder. Heb je nog een vraag?"), True),
+        ("afsluiting", _row("w-1", 0, decision="refusal", sources=0, text="Not in our help articles."), False),
+        # A closing is not an answer, and not a "not found" either.
+        ("antwoord", _row("w-1", 0, decision="closing", sources=0, text="All right. Ask again any time."), False),
+        ("niet_gevonden", _row("w-1", 0, decision="closing", sources=0, text="All right. Ask again any time."), False),
     ],
 )
 def test_widget_classes_read_the_kind_of_reply_the_visitor_got(tmp_path, capsys, klass, row, ok):
@@ -880,6 +928,8 @@ def _measuring_with_memory(monkeypatch, tmp_path) -> tuple[Path, list[str]]:
         (answer_grounding, "_INTERNAL_CHECK_TIMEOUT_SECONDS"),
     ):
         monkeypatch.setattr(owner, name, getattr(owner, name))
+    for name in ("extraction_model", "widget_writer_model", "answer_grounding_model", "retrieval_paraphrase_model"):
+        monkeypatch.setattr(replay.settings, name, getattr(replay.settings, name))
     monkeypatch.setattr(meetlat, "_internal_cases", {})
     monkeypatch.setattr(meetlat, "_widget_cases", {})
     monkeypatch.setattr(meetlat, "_make_database_read_only", lambda _db: None)
@@ -910,7 +960,7 @@ def test_a_named_internal_turn_reads_the_case_its_replayed_earlier_turns_stored(
     overlay, opened = _measuring_with_memory(monkeypatch, tmp_path)
     profile = ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee")
     thread = meetlat.Thread(
-        "aaaaaaaa-0000-4000-8000-000000000001", profile, "open", _thread("x", ["first", "second", "third"]).turns
+        "aaaaaaaa-0000-4000-8000-000000000001", profile, _thread("x", ["first", "second", "third"]).turns
     )
     org = type("Org", (), {"id": 7, "slug": "brightwater", "zitadel_org_id": "zorg"})()
     seen: list[dict | None] = []
@@ -1036,7 +1086,6 @@ def test_a_retried_internal_turn_reads_the_case_of_the_turn_before_not_its_own_f
     thread = meetlat.Thread(
         "aaaaaaaa-0000-4000-8000-000000000001",
         ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"),
-        "open",
         _thread("x", ["first", "second"]).turns,
     )
     org = type("Org", (), {"id": 7, "slug": "brightwater", "zitadel_org_id": "zorg"})()
@@ -1121,7 +1170,7 @@ def test_expected_articles_are_keyed_like_the_evidence_pack_keys_a_source():
 
 
 @pytest.mark.parametrize(
-    "klass", ["niet_gevonden", "vraag", "doorverwijzing", "weigering", "antwoord_algemeen_gelabeld"]
+    "klass", ["niet_gevonden", "vraag", "doorverwijzing", "afsluiting", "weigering", "antwoord_algemeen_gelabeld"]
 )
 def test_a_case_whose_answer_is_not_an_article_expects_none(klass):
     assert meetlat._expected_sources({"id": "w-1", "expect": klass, "articles": [f"{_ART}/a"]}) == []
@@ -1545,7 +1594,7 @@ async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeyp
     from tests.test_one_pipeline_answer_decision import _internal, _LiteLLM, _pack, _turn
 
     _measuring_with_memory(monkeypatch, tmp_path)
-    for name in ("extraction_model", "answer_grounding_model", "retrieval_paraphrase_model"):
+    for name in ("extraction_model", "widget_writer_model", "answer_grounding_model", "retrieval_paraphrase_model"):
         monkeypatch.setattr(replay.settings, name, getattr(replay.settings, name))
     monkeypatch.setattr(replay, "_REQUEST_MODEL", replay._REQUEST_MODEL)
     monkeypatch.setattr(partner, "_ALLOWED_MODELS", partner._ALLOWED_MODELS)
@@ -1572,3 +1621,74 @@ async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeyp
     assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)
     # The paraphrases run on first widget questions only, so the turn above may not have made that call.
     assert replay.settings.retrieval_paraphrase_model in _VIBE_ALLOWANCE
+    assert replay.settings.widget_writer_model in _VIBE_ALLOWANCE
+    if widget:
+        await _a_widget_contact_request_picks_its_route_on_the_vibe_allowance(monkeypatch, _turn, _LiteLLM)
+        await _a_widget_not_found_reads_its_exit_kind_on_the_vibe_allowance(monkeypatch, _turn, _LiteLLM)
+
+
+async def _a_widget_not_found_reads_its_exit_kind_on_the_vibe_allowance(monkeypatch, turn_of, litellm_of):
+    """A turn that ends in the fixed "not found" runs the exit call, on the same allowance and masking."""
+    from tests.test_one_pipeline_answer_decision import _pack
+
+    selection = {"need": "", "parts": [{"ask": "vraag", "evidence": []}], "must_ask_variant": False, "question": ""}
+    llm = litellm_of(selection=selection)
+
+    await turn_of(
+        monkeypatch,
+        llm,
+        profile=ChatProfile(surface="widget"),
+        question="Hoe stel ik de wachtmuziek in?",
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        key_id="wgt_acme",
+        request_body=meetlat._widget_body,
+        models_from_settings=True,
+    )
+
+    assert llm.of("exit_kind")
+    assert {body["model"] for body in llm.calls} <= _VIBE_ALLOWANCE
+    assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)
+
+
+async def _a_widget_contact_request_picks_its_route_on_the_vibe_allowance(monkeypatch, turn_of, litellm_of):
+    """A widget with several contact routes picks one on a turn that ends at a human: a call of its own."""
+    from app.api import partner
+    from app.services.contact_routes import ContactRoute
+
+    routes = (
+        ContactRoute(id="support", name="Support", is_default=True),
+        ContactRoute(id="billing", name="Facturen", email="facturen@example.com"),
+    )
+    monkeypatch.setattr(
+        partner, "_widget_settings", AsyncMock(return_value=partner.WidgetSettings(contact_routes=routes))
+    )
+    question = "Ik wil iemand spreken over mijn factuur"
+    case = {
+        "problem": "",
+        "product": "",
+        "variant": "",
+        "tried": [],
+        "wants_quote": question,
+        "wants": "human",
+        "out_of_scope_quote": "",
+        "out_of_scope": False,
+        "sentiment": "neutral",
+        "language": "nl",
+        "queries": [],
+    }
+    llm = litellm_of(case=case)
+
+    await turn_of(
+        monkeypatch,
+        llm,
+        profile=ChatProfile(surface="widget"),
+        question=question,
+        retrieval={"evidence_pack": {"items": [], "sources": []}},
+        key_id="wgt_acme",
+        request_body=meetlat._widget_body,
+        models_from_settings=True,
+    )
+
+    assert llm.of("contact_route_pick")
+    assert {body["model"] for body in llm.calls} <= _VIBE_ALLOWANCE
+    assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)

@@ -160,8 +160,6 @@ class TestOffboardEndpointHappyPath:
             _scalar_lookup(org),
             membership_delete,
         ]
-        mock_zitadel = AsyncMock()
-
         preview = OffboardPreview(
             org_kbs_solely_owned=[
                 OffboardPreviewKb(kb_id=7, slug="team-kb", name="Team KB", owner_type="org", role_count=1),
@@ -178,16 +176,13 @@ class TestOffboardEndpointHappyPath:
         with (
             patch("app.api.admin.users.compute_offboard_preview", AsyncMock(return_value=preview)),
             patch("app.api.admin.users.apply_dispositions", AsyncMock()) as mock_apply,
-            patch(
-                "app.api.admin.users.revoke_user_credentials",
-                AsyncMock(return_value=(2, 3)),
-            ) as mock_revoke,
+            patch("app.api.admin.users.check_api_keys_recipient", AsyncMock()) as mock_check,
+            patch("app.api.admin.users.transfer_user_api_keys", AsyncMock(return_value=2)) as mock_transfer,
+            patch("app.api.admin.users.revoke_user_mcp_tokens", AsyncMock(return_value=3)) as mock_revoke,
             patch("app.api.admin.users.forget_internal_cases", AsyncMock(return_value=1)) as mock_forget,
-            patch("app.api.admin.users.zitadel", mock_zitadel),
-            patch("app.api.admin.users.settings") as mock_settings,
+            patch("app.api.admin.users.sync_identity_login", AsyncMock()) as mock_sync,
             patch("app.api.admin.users.log_event", AsyncMock()) as mock_log,
         ):
-            mock_settings.zitadel_portal_org_id = "zitadel-portal-org-id"
             await offboard_user(
                 zitadel_user_id="uid-leaving",
                 body=OffboardRequest(
@@ -202,22 +197,92 @@ class TestOffboardEndpointHappyPath:
 
         # Both dispositions delegated to the orchestrator.
         mock_apply.assert_awaited_once()
-        # Token revoke runs in same tx.
-        mock_revoke.assert_awaited_once_with(target_user_id="uid-leaving", org_id=1, db=db)
+        # No recipient in the body: the keys go to the acting admin, checked first.
+        mock_check.assert_awaited_once_with("admin-1", "uid-leaving", 1, db)
+        mock_transfer.assert_awaited_once_with("uid-leaving", "admin-1", 1, db)
+        mock_revoke.assert_awaited_once_with("uid-leaving", 1, db)
         # The internal chat's stored cases of the employee go in the same tx.
         mock_forget.assert_awaited_once_with(db, org_id=1, user_id="uid-leaving")
         # User status flipped + commit.
         assert user.status == "offboarded"
         db.commit.assert_awaited_once()
-        # Zitadel deactivate called AFTER commit.
-        mock_zitadel.deactivate_user.assert_awaited_once_with("uid-leaving", "zitadel-portal-org-id")
+        # The identity follows the remaining memberships, AFTER commit.
+        mock_sync.assert_awaited_once_with("uid-leaving")
         # user.offboarded audit event includes the new metrics.
         offboard_calls = [c for c in mock_log.await_args_list if c.kwargs.get("action") == "user.offboarded"]
         assert len(offboard_calls) == 1
         details = offboard_calls[0].kwargs.get("details") or {}
         assert details.get("kb_dispositions_count") == 2
-        assert details.get("api_keys_deleted") == 2
+        assert details.get("api_keys_transferred") == 2
+        assert details.get("api_keys_transferred_to") == "admin-1"
+        assert "api_keys_deleted" not in details
         assert details.get("mcp_tokens_revoked") == 3
+
+
+class TestOffboardApiKeyRecipient:
+    """The admin may name another eligible member as the new owner of the keys."""
+
+    @staticmethod
+    def _preview(api_keys: int) -> OffboardPreview:
+        return OffboardPreview(org_kbs_solely_owned=[], personal_kbs=[], api_keys_count=api_keys, mcp_tokens_count=0)
+
+    @pytest.mark.asyncio
+    async def test_keys_go_to_the_member_named_in_the_request(self) -> None:
+        from app.api.admin.users import OffboardRequest, offboard_user
+
+        db = AsyncMock()
+        db.execute.side_effect = [_scalar_lookup(_user()), _scalar_lookup(_org()), MagicMock(rowcount=0)]
+        with (
+            patch("app.api.admin.users.compute_offboard_preview", AsyncMock(return_value=self._preview(2))),
+            patch("app.api.admin.users.apply_dispositions", AsyncMock()),
+            patch("app.api.admin.users.check_api_keys_recipient", AsyncMock()) as mock_check,
+            patch("app.api.admin.users.transfer_user_api_keys", AsyncMock(return_value=2)) as mock_transfer,
+            patch("app.api.admin.users.revoke_user_mcp_tokens", AsyncMock(return_value=0)),
+            patch("app.api.admin.users.forget_internal_cases", AsyncMock(return_value=0)),
+            patch("app.api.admin.users.sync_identity_login", AsyncMock()),
+            patch("app.api.admin.users.log_event", AsyncMock()),
+        ):
+            await offboard_user(
+                zitadel_user_id="uid-leaving",
+                body=OffboardRequest(api_keys_transfer_to="admin-2"),
+                perms=make_perms(role="admin", user_id="admin-1", org_id=1),
+                db=db,
+            )
+
+        mock_check.assert_awaited_once_with("admin-2", "uid-leaving", 1, db)
+        mock_transfer.assert_awaited_once_with("uid-leaving", "admin-2", 1, db)
+
+    @pytest.mark.asyncio
+    async def test_a_refused_recipient_leaves_the_user_and_the_kbs_untouched(self) -> None:
+        from app.api.admin.users import OffboardRequest, offboard_user
+
+        user = _user()
+        db = AsyncMock()
+        db.execute.side_effect = [_scalar_lookup(user), _scalar_lookup(_org())]
+        refused = HTTPException(status_code=400, detail={"error_code": "api_keys_recipient_not_admin"})
+        with (
+            patch("app.api.admin.users.compute_offboard_preview", AsyncMock(return_value=self._preview(1))),
+            patch("app.api.admin.users.apply_dispositions", AsyncMock()) as mock_apply,
+            patch("app.api.admin.users.check_api_keys_recipient", AsyncMock(side_effect=refused)),
+            patch("app.api.admin.users.transfer_user_api_keys", AsyncMock()) as mock_transfer,
+            patch("app.api.admin.users.revoke_user_mcp_tokens", AsyncMock()) as mock_revoke,
+            patch("app.api.admin.users.sync_identity_login", AsyncMock()) as mock_sync,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await offboard_user(
+                    zitadel_user_id="uid-leaving",
+                    body=OffboardRequest(api_keys_transfer_to="uid-member"),
+                    perms=make_perms(role="admin", user_id="admin-1", org_id=1),
+                    db=db,
+                )
+
+        assert exc.value.status_code == 400
+        assert user.status == "active"
+        mock_apply.assert_not_awaited()
+        mock_transfer.assert_not_awaited()
+        mock_revoke.assert_not_awaited()
+        mock_sync.assert_not_awaited()
+        db.commit.assert_not_awaited()
 
 
 class TestOffboardEndpointFailureRollsBack:
@@ -248,8 +313,8 @@ class TestOffboardEndpointFailureRollsBack:
                 "app.api.admin.users.apply_dispositions",
                 AsyncMock(side_effect=RuntimeError("docs-app down")),
             ),
-            patch("app.api.admin.users.revoke_user_credentials", AsyncMock()) as mock_revoke,
-            patch("app.api.admin.users.zitadel", AsyncMock()) as mock_zitadel,
+            patch("app.api.admin.users.transfer_user_api_keys", AsyncMock()) as mock_revoke,
+            patch("app.api.admin.users.sync_identity_login", AsyncMock()) as mock_sync,
         ):
             with pytest.raises(RuntimeError):
                 await offboard_user(
@@ -263,7 +328,7 @@ class TestOffboardEndpointFailureRollsBack:
 
         # Nothing past apply_dispositions ran.
         mock_revoke.assert_not_awaited()
-        mock_zitadel.deactivate_user.assert_not_awaited()
+        mock_sync.assert_not_awaited()
 
 
 class TestDeleteUserEndpoint:
@@ -296,8 +361,11 @@ class TestDeleteUserEndpoint:
         assert result is preview
         mock_preview.assert_awaited_once_with("uid-leaving", 1, db)
 
+    @pytest.mark.parametrize(("requested", "recipient"), [(None, "admin-1"), ("admin-2", "admin-2")])
     @pytest.mark.asyncio
-    async def test_delete_with_full_dispositions_uses_state_machine(self) -> None:
+    async def test_delete_with_full_dispositions_uses_state_machine(
+        self, requested: str | None, recipient: str
+    ) -> None:
         from app.api.admin.users import DeleteUserRequest, delete_user_with_dispositions
         from app.services.user_memberships import UserMembershipSummary
 
@@ -326,6 +394,7 @@ class TestDeleteUserEndpoint:
                 ),
             ),
             patch("app.api.admin.users.compute_user_delete_preview", AsyncMock(return_value=preview)),
+            patch("app.api.admin.users.check_api_keys_recipient", AsyncMock()) as mock_check,
             patch("app.api.admin.users.delete_user_with_state_machine", state_machine),
             patch("app.api.admin.users.fire_role_change_notification") as notify,
         ):
@@ -335,7 +404,8 @@ class TestDeleteUserEndpoint:
                     kb_dispositions=[
                         KbDisposition(kb_id=7, action="transfer", transfer_to="admin-1"),
                         KbDisposition(kb_id=11, action="delete"),
-                    ]
+                    ],
+                    api_keys_transfer_to=requested,
                 ),
                 perms=make_perms(role="admin", user_id="admin-1", org_id=1),
                 db=db,
@@ -347,6 +417,43 @@ class TestDeleteUserEndpoint:
         assert call_kwargs["partial_failure_audit_action"] == "user.delete_partial_failure"
         assert call_kwargs["delete_global_identity"] is True
         assert call_kwargs["kb_dispositions"][0].action == "transfer"
+        # Delete hands the keys over like offboard: the acting admin unless another is named.
+        mock_check.assert_awaited_once_with(recipient, "uid-leaving", 1, db)
+        assert call_kwargs["api_keys_transfer_to"] == recipient
         db.commit.assert_awaited_once()
         notify.assert_called_once_with("uid-leaving")
         assert response.message == "User deleted."
+
+    @pytest.mark.asyncio
+    async def test_delete_refuses_a_bad_recipient_before_the_identity_is_touched(self) -> None:
+        from app.api.admin.users import DeleteUserRequest, delete_user_with_dispositions
+        from app.services.user_memberships import UserMembershipSummary
+
+        db = AsyncMock()
+        db.execute.side_effect = [_scalar_lookup(_user()), _scalar_lookup(_org())]
+        preview = UserDeletePreview(org_kbs_created=[], personal_kbs=[], api_keys_count=1, mcp_tokens_count=0)
+        state_machine = AsyncMock(return_value=True)
+        refused = HTTPException(status_code=400, detail={"error_code": "transfer_recipient_not_member"})
+        with (
+            patch(
+                "app.api.admin.users.get_user_membership_summary",
+                AsyncMock(
+                    return_value=UserMembershipSummary(total_count=1, remaining_count=0, is_platform_admin=False)
+                ),
+            ),
+            patch("app.api.admin.users.compute_user_delete_preview", AsyncMock(return_value=preview)),
+            patch("app.api.admin.users.check_api_keys_recipient", AsyncMock(side_effect=refused)) as mock_check,
+            patch("app.api.admin.users.delete_user_with_state_machine", state_machine),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await delete_user_with_dispositions(
+                    zitadel_user_id="uid-leaving",
+                    body=DeleteUserRequest(api_keys_transfer_to="uid-foreign"),
+                    perms=make_perms(role="admin", user_id="admin-1", org_id=1),
+                    db=db,
+                )
+
+        assert exc.value.status_code == 400
+        mock_check.assert_awaited_once_with("uid-foreign", "uid-leaving", 1, db)
+        state_machine.assert_not_awaited()
+        db.commit.assert_not_awaited()

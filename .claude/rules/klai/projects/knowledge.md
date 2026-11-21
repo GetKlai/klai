@@ -34,23 +34,26 @@ connector and knowledge-ingest. A field's original purpose does not establish
 its current ownership: sync, image upload, deduplication, and ingest paths may
 all depend on the same shape. Change producer and consumer tests together.
 
-## chat system prompt — three locations, never duplicate (HIGH)
+## chat system prompt — two locations, never duplicate (HIGH)
 
-System-prompt content for chat lives in **three** canonical files,
+System-prompt content for chat lives in **two** canonical files,
 never two copies of the same content. Modifying one without considering
-the other two has been the recurring failure mode of
+the other has been the recurring failure mode of
 SPEC-RAG-MULTILINGUAL-CHAT-001.
 
 | Location | What lives here | Used by |
 |---|---|---|
-| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by paths B (`knowledge_prompts.py`) and C (`synthesis.py`) |
+| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by path B (`knowledge_prompts.py`) |
 | `klai-portal/backend/app/services/retrieval_context.py::_build_system_prompt` | Adds the chunks-as-context block to the shared base | path B — Widget + Partner API |
 
-**Why more than one:** chat traffic in Klai takes concurrent paths. (B)
-portal-api `/partner/v1/chat/completions` → LiteLLM → Mistral, which
-also serves the internal chat (LibreChat) since 13 October 2026; (C)
-retrieval-api `POST /chat` (dormant). Path A (LibreChat → LiteLLM hook)
-was removed on 21 October 2026. v1.0/v1.1 of the SPEC landed
+**Why this matters:** chat traffic in Klai used to take concurrent paths.
+Today there is one: (B) portal-api `/partner/v1/chat/completions` →
+LiteLLM → Mistral, which also serves the internal chat (LibreChat) since
+13 October 2026. Path A (LibreChat → LiteLLM hook) was removed on
+21 October 2026; path C (retrieval-api `POST /chat`, with its own
+`synthesis.py` prompt wiring) was removed in November 2026 after 30 days
+without a call. A new chat surface is a new path: import the prompt, never
+copy it. v1.0/v1.1 of the SPEC landed
 multilingual on B + C only, leaving A still hardcoded NL — that
 mistake cost a full audit cycle to detect.
 
@@ -70,8 +73,8 @@ mistake cost a full audit cycle to detect.
 - The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` enforces both
   rules. It checks two anchor sets — the GROUNDED prompt anchors and the
   KB prefix anchors (both canonical: `klai-libs/chat-prompts`).
-- Do NOT re-introduce explicit language allow-lists in any of the
-  three locations ("if the user writes Dutch", "if the user writes
+- Do NOT re-introduce explicit language allow-lists in either
+  location ("if the user writes Dutch", "if the user writes
   English"). The base prompt detects any language the LLM
   understands; the hook prefix and the chunks-context block must
   remain language-neutral. Hand-curated language lists break every
@@ -94,6 +97,8 @@ written. It now logs one JSON object per line from
 `klai_kb_citation_render._emit_chat_synthesis_complete`. On every path the query
 side measures the visitor's own text, never the conversation target; logging our
 own target under a field named `*_detected` would make the metric confirm itself.
+Since paths A and C were removed, the one emitter is the portal-api function at
+`klai-portal/backend/app/services/chat_prompting.py:274` (`_emit_language_correctness_log`).
 
 **One identifier, by decision (2026-09-15):** `lingua` was removed from
 klai-portal and klai-retrieval-api. It was only ever the telemetry detector,
@@ -151,7 +156,7 @@ and an audit trail of orphan rows lingers forever:
 | `knowledge.crawled_pages` + `knowledge.page_links` | `pg_store.delete_connector_artifacts` (scoped via artifact URL set — added post-SPEC-CRAWLER-005) |
 | `knowledge.crawl_jobs` | `pg_store.delete_connector_crawl_jobs` (filters on `config->>'connector_id'` — JSONB, no native column) |
 | `connector.sync_runs` | `klai_connector_client.delete_sync_runs` (interim app-level call until SPEC-CONNECTOR-CLEANUP-001 REQ-04 lands the cross-schema FK with `ON DELETE CASCADE`) |
-| Garage `klai-images/{org}/images/{kb_slug}/...` | **NOT YET CLEANED PER CONNECTOR** — image keys carry no `connector_id`, so per-connector cleanup needs an artifact↔image-key tracking table (separate SPEC). KB-level cleanup wipes the whole `{org}/images/{kb_slug}/` prefix on KB delete, but a partial KB still grows orphan images proportionally to the deleted connector. |
+| Object storage `{org}/images/{kb_slug}/...` | **NOT YET CLEANED PER CONNECTOR**: image keys carry no `connector_id`, so per-connector cleanup needs an artifact↔image-key tracking table (separate SPEC). KB delete (`delete_kb_route`) and organisation deprovisioning (`_delete_kb_images`) delete the whole `{org}/images/{kb_slug}/` or `{org}/images/` prefix through `ImageStore.delete_images` (`klai-libs/image-storage/klai_image_storage/storage.py:176-205`), but a partial KB still grows orphan images proportionally to the deleted connector, and deleting a single document does not remove its images. |
 
 **Prevention:** when adding a new data layer that is connector-scoped, immediately
 wire it into `delete_connector_artifacts` (or the Qdrant equivalent), add the call
@@ -164,40 +169,107 @@ stores.
 auto-clean on the current code path (after the 2026-04-30 fix). Garage images
 remain a known gap — see SPEC-CONNECTOR-CLEANUP-001 follow-up notes.
 
-## Connector-scoped async jobs require a resource key and fence (HIGH)
+## Single-document delete: replaced keeps history, deleted is gone (HIGH)
 
-Every Procrastinate job that can write connector-owned knowledge carries the
-same top-level authority key for its sync generation:
-`connector:{org_id}:{kb_slug}:{connector_id}:{generation}`. This applies to
-`crawl-jobs`, `enrich-bulk`, and `graphiti-bulk`. Artifact-scoped jobs keep
-`artifact_id` as their work item and also carry `resource_key`; the artifact
-row stores the key in `extra`.
+A replaced version (re-ingest of changed content) stays as a closed row linked by
+`superseded_by`. A deleted document must leave nothing: every single-document delete
+path calls `document_purge.purge_documents(conn, org_id, head_ids)`, which closes the
+active rows, walks `superseded_by` back to every version, deletes graph episodes and
+Qdrant points, then hard-deletes the rows (artifacts incl. `document_text`,
+`parent_chunks`, `artifact_images`, `embedding_queue`, `artifact_entities`,
+`derivations`, `crawled_pages`, `page_links`). Never add a delete path that only closes
+the row. The real-PostgreSQL proof is `tests/integration/test_document_purge_postgres.py`;
+a new delete path gets a case there.
 
-Delete/rebuild first changes the generation fence, then requests cancellation
-by exact `args->>'resource_key'` for live `todo`/`doing` jobs. Cancellation uses
-`abort=True, delete_job=False`; abort-requested running jobs remain `doing`
-until they cooperate and then become `aborted`. Never query or count the legacy
-`aborting` status. A one-deploy compatibility fallback may match old enrichment
-and Graphiti jobs by top-level `artifact_id`, but resource keys are the primary
-index.
+## Derived work belongs to the document version, not to a run (HIGH)
 
-Cancellation is best effort. Each writer must check the fence before expensive
-work and again immediately before Qdrant/Graphiti writes. Artifact existence is
-a secondary guard: an existing artifact can still belong to a stale generation.
-Fence lookup errors fail closed. Crawl per-page checks use the <=5 second cache
-to avoid a database roundtrip per page; enrichment and Graphiti pre-write checks
-are fresh.
+Enrichment (`enrich-interactive`, `enrich-bulk`) and graph (`graphiti-bulk`)
+jobs carry `artifact_id` as their work item and nothing that ties them to a
+sync or crawl run. A job stops only when its document version is no longer
+current (the artifact is replaced or deleted) or its connector is being
+deleted or is gone (`portal_connectors.state`). A new sync or crawl run never
+cancels, aborts or fences them: in 2026-11 tying them to the run id lost 353
+enrichment and 387 graph jobs of ~11,300, because the newer run skipped the
+unchanged pages and nothing queued the work again.
 
-Runbook query for one generation (Procrastinate 3.x vocabulary):
+A job ends in exactly one of three ways: it did the work (`succeeded`); its
+document is no longer current or its connector is going away, in which case it
+raises procrastinate's `JobAborted` through `enrichment_tasks._abandon` (status
+`aborted`, never retried, logged with `outcome=abandoned`); or it could not do
+the work or could not tell whether it may write (a failed artifact or
+connector lookup included), in which case it raises, is retried, and ends
+`failed` when retries run out. Never return early without having done the work.
 
-```sql
-SELECT status, count(*)
-FROM procrastinate_jobs
-WHERE args->>'resource_key' = 'connector:<org>:<kb>:<connector>:<generation>'
-  AND status IN ('todo', 'doing', 'cancelled', 'aborted', 'failed', 'succeeded')
-GROUP BY status
-ORDER BY status;
-```
+The document version says how each product ended, through
+`derived_state.set_product_state` (keys `enrichment_state` / `graph_state`,
+`_reason`, `_state_at` in `artifacts.extra`): `pending` when queued, `done`,
+`not_applicable` with a reason (policy skip, navigation page, switched off), or
+`failed` with a reason. Work that was needed and not done is `failed` and the
+job ends `failed`; an abandoned job sets nothing. A cancelled job (worker
+shutdown, user abort) is always retried, whatever its attempt count, so it never
+ends with the document pending. `set_product_state` is the only writer and
+enforces the legal moves in one UPDATE on the current row: to `pending` from
+anything (queueing is the deliberate act), and from `pending` or no state to
+`done`, `failed` or `not_applicable`; everything else is refused and logged
+(`derived_state_transition_refused`). Write outcomes through it, never by
+merging state keys into `extra`. Every reader goes through
+`derived_state.product_state`, which derives the state of rows written before
+it existed and says `unknown` where the old fields cannot tell, never `done`.
+Queue through `derived_state.queue_derived_work`: a defer that fails after the
+row is committed marks the product `failed (queue_unavailable)` and the
+request raises, because a retry of the request finds the content unchanged and
+queues nothing; ingest first marks the raw text `synced` and tries every
+product. The move to `failed` logs `derived_product_failed` once at
+error level (alert of the same name, runbook `docs/runbooks/derived-product-failed.md`);
+graph refresh holds a document that failed for a reason a new job would repeat
+(`no_stored_text`, `quarantined` for the current writer build), so a re-sync
+does not alert again. A stuck job is covered by a live job holding its queueing
+lock when that job builds the same product of the same artifact.
+Nothing scans for or re-queues failed or missing work; re-queueing is a manual,
+approved run. `index_status` means only whether the version's raw text is in
+the vector index (`pending` while written or rewritten by a reindex, `synced`,
+`failed` when that write failed, `deleting`),
+for every source alike; it says nothing about enrichment or the graph.
+
+Every writer checks the artifact is active and its connector is active before
+expensive work and again before each irreversible write (Qdrant upsert, each
+graph part); a part written after the document stopped being current is
+removed again before the job stops.
+
+Run-level ownership is for crawl runs only. A crawl job carries
+`resource_key` (`connector:{org}:{kb}:{connector}:{generation}`); a new crawl
+run moves `knowledge.connector_resource_fences` to its generation and cancels
+the older run's job on `crawl-jobs` only, and the crawler checks the fence per
+page (<=5 s cache) so a running older crawl stops. Connector delete marks the
+fences deleting, cancels crawl jobs by resource key, and cancels the live
+enrichment and graph jobs of the connector's documents by `artifact_id`.
+Cancellation uses `abort=True, delete_job=False`; never query or count the
+legacy `aborting` status.
+
+## Audit a run before it writes; a per-page verdict is not enough (CRIT)
+
+In 2026-11 a nightly crawl that ran without its login replaced 203 pages with
+versions missing 19% of their words. Logged out, the site left out protected
+sections without any login marker, so every per-page guard passed, and the
+run-level verdicts were computed after the pages had been written. No guard
+compared a new version with the stored one; hash inequality decided everything.
+
+- `run_crawl_job` judges the whole run in `_judge_run_before_write` before the
+  first write: session lost (saved cookies and any walled page), wall-dominant
+  (anonymous crawls), and a content regression against the stored text
+  (`content_retention.retention`). A run that fails the audit writes nothing.
+- `ingest_document` holds a version from an automated source that keeps under
+  half of the stored words until the same version arrives again on the next
+  run (12 to 36 hours). Uploads are never held.
+- A held or failed document must be offered again: keep it out of the sync
+  run's `synced_refs` and leave `crawled_pages` untouched, or the hold never ends.
+- A verdict that only sets the job status is not a guard. A guard that can stop
+  a write sits before the write loop, and its thresholds carry the measured
+  distribution in the comment next to the constant.
+
+**Rule:** before adding a path that replaces stored knowledge, name what
+compares the new version with the stored one. Hash inequality is not a
+comparison.
 
 ## Graph-first, content-second for bulk crawls (HIGH)
 
@@ -263,10 +335,30 @@ carrying the `database_id` key. Code that filtered on `parent.type` dropped ever
 page and the sync completed with zero documents and no error. Fixed 2026-09-10 by
 matching on `parent.database_id` alone, which is correct for both shapes.
 
+A `database_ids` entry is whatever was pasted into the portal. Until 2026-11-12
+it was compared verbatim, so a link (or an undashed ID) matched nothing and one
+connector completed 19 runs at zero documents. `_extract_config` now reduces
+every entry to the dashed ID, and `_require_databases` retrieves each database
+before the search, so the link of a page, or of a database not shared with the
+integration, fails the sync with Notion's error instead of completing empty.
+
 **Rule:** Never assume `notion_client` has a database-scoped query method, and
 never key off `parent.type` — match on `parent.database_id`. When a Notion
 behaviour looks wrong, check the default `Notion-Version` of the installed
 client first: it moves with the SDK, not with our code.
+
+## Connector source deletions depend on a complete listing (HIGH)
+
+`sync_engine` deletes a stored ref that a listing no longer contains,
+but only when `adapter.listing_is_complete(connector)` is True for that run. An
+adapter that swallows an error per item, stops at a cap, or reads a change feed
+must answer False, or every document it did not see is deleted from the KB.
+
+**Rule:** In `list_documents`, let any error that is not a definite "gone" (Notion
+`object_not_found`, Drive/Graph 404) raise; call `self._record_listing(connector,
+complete=...)` on every return path, False whenever a cap or truncation could
+have cut the listing. Table and guards: `docs/architecture/knowledge-ingest-flow.md`
+"Source deletions".
 - Spot-check `raw_words` on a known-good page after any crawl config change.
 
 ## crawl4ai usage
@@ -432,6 +524,15 @@ For `klai-fast`, route chat calls through
 `knowledge_ingest/llm_throttle.py::shared_klai_fast_limiter()`. Keep a drift-guard
 test that fails when a new `chat/completions` call bypasses that limiter, and alert
 on sustained 429/error events rather than relying on queue health.
+
+The rate is derived from the `klai-ingest` alias limits and the measured call
+size, with the derivation next to `litellm_klai_fast_rps` in `config.py`;
+`tests/test_llm_throttle.py` pins its share of the limits, so a changed rate or
+a changed alias limit fails until the other is revisited. A job that waits on
+an in-process semaphore (the graph's episode semaphore) gets its own worker
+lane sized to that semaphore: in a shared lane it holds a slot while it waits,
+and on 12 November 2026 that made enrichment wait 132 minutes (median) for 0.2
+minutes of work.
 
 ## Configuration requires a production reader
 

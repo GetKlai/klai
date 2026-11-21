@@ -38,6 +38,7 @@ from qdrant_client.models import FieldCondition, Filter, IsEmptyCondition, Match
 from knowledge_ingest import qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import _parse_dsn
+from knowledge_ingest.operations import guard_cli, kb_operation
 
 # Pause between mutation pages so a large backfill never saturates the
 # Qdrant instance that is serving live /retrieve traffic.
@@ -254,11 +255,14 @@ def _parse_args() -> argparse.Namespace:
 
 async def _main() -> None:
     args = _parse_args()
-    report = await run_backfill(
-        apply=args.apply,
-        clean_stale_taxonomy=args.clean_stale_taxonomy,
-        batch_size=args.batch_size,
-    )
+    guard_cli("backfill_crawl_source_identity", args.apply)
+    # Spans every org, so it holds the all-orgs key.
+    async with kb_operation(None, None, execute=args.apply):
+        report = await run_backfill(
+            apply=args.apply,
+            clean_stale_taxonomy=args.clean_stale_taxonomy,
+            batch_size=args.batch_size,
+        )
     print(report)
 
 

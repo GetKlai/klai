@@ -1667,3 +1667,18 @@ def test_an_allowed_url_survives_in_a_numbered_step_in_bold_and_with_a_link_titl
     assert "1. Gebruik https://api.example.com/clicktodial/ om te bellen." in cleaned
     assert "**https://api.example.com/clicktodial**." in cleaned
     assert '[de API](https://api.example.com/clicktodial/ "Documentatie")' in cleaned
+
+
+def test_an_answer_survives_an_article_address_that_cannot_be_parsed():
+    """A help article can hold an address with an unclosed bracket; the visitor still gets the answer.
+
+    On real traffic (November 2026) such an address among the passages made the
+    whole turn fail, so the visitor got no answer at all.
+    """
+    from klai_citations import strip_model_citation_artifacts
+
+    text = "Open het menu en kies Instellingen."
+
+    cleaned = strip_model_citation_artifacts(text, allowed_urls={"http://[IP-adres", "https://help.example.com/menu"})
+
+    assert cleaned == text

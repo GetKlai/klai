@@ -111,8 +111,8 @@ def stub_procrastinate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_starts_four_workers(stub_procrastinate):
-    """The three work lanes plus an unstarvable maintenance lane start."""
+async def test_lifecycle_starts_five_workers(stub_procrastinate):
+    """The four work lanes plus an unstarvable maintenance lane start."""
     from knowledge_ingest.worker import WorkerLifecycle
 
     async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
@@ -122,8 +122,8 @@ async def test_lifecycle_starts_four_workers(stub_procrastinate):
         await asyncio.sleep(0)
 
     calls = stub_procrastinate["run_worker_calls"]
-    assert len(calls) == 4, (
-        f"expected 4 worker calls (I/O + interactive + LLM + maintenance), got {len(calls)}"
+    assert len(calls) == 5, (
+        f"expected 5 worker calls (I/O + interactive + LLM + graph + maintenance), got {len(calls)}"
     )
 
 
@@ -137,7 +137,7 @@ async def test_all_workers_bound_shutdown_and_share_stalled_timeout(stub_procras
         await asyncio.sleep(0)
 
     calls = stub_procrastinate["run_worker_calls"]
-    assert len(calls) == 4
+    assert len(calls) == 5
     assert {call["shutdown_graceful_timeout"] for call in calls} == {
         WorkerLifecycle.SHUTDOWN_GRACEFUL_TIMEOUT_SECONDS
     }
@@ -235,6 +235,10 @@ async def test_lane_concurrency_values(stub_procrastinate):
     llm_call = by_queue[tuple(queues.LLM_QUEUES)]
     assert io_call["concurrency"] == WorkerLifecycle.IO_CONCURRENCY
     assert llm_call["concurrency"] == WorkerLifecycle.LLM_CONCURRENCY
+    # As many graph jobs run as episodes may be in flight; none waits in a slot.
+    from knowledge_ingest.config import settings
+
+    assert by_queue[tuple(queues.GRAPH_QUEUES)]["concurrency"] == settings.graphiti_max_concurrent
     assert io_call["concurrency"] >= llm_call["concurrency"], (
         "I/O lane should not have LOWER concurrency than LLM lane — "
         "the whole point of the split is to give I/O latency room"
@@ -265,7 +269,7 @@ async def test_zombie_recovery_failure_does_not_block_workers(stub_procrastinate
         await asyncio.sleep(0)
 
     # Workers still started despite the recovery failure.
-    assert len(stub_procrastinate["run_worker_calls"]) == 4
+    assert len(stub_procrastinate["run_worker_calls"]) == 5
 
 
 @pytest.mark.asyncio
@@ -293,7 +297,7 @@ async def test_requested_shutdown_does_not_restart_lanes(stub_procrastinate):
             await asyncio.sleep(0)
         await asyncio.sleep(0.05)
 
-    assert len(stub_procrastinate["run_worker_calls"]) == 4
+    assert len(stub_procrastinate["run_worker_calls"]) == 5
     assert not [e for e in logs if e["event"] == "procrastinate_worker_lane_died"]
 
 
@@ -325,4 +329,4 @@ async def test_shutdown_completes_when_worker_cleanup_swallows_the_cancel(
     await asyncio.sleep(0)
     await asyncio.wait_for(lifecycle.__aexit__(None, None, None), timeout=2)
 
-    assert runs == 4
+    assert runs == 5

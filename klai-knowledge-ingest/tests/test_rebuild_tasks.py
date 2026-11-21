@@ -12,8 +12,10 @@ All tests mock external I/O — no real network, no real DB, no real Qdrant.
 
 from __future__ import annotations
 
+import os
 import sys
 import types
+from contextlib import asynccontextmanager, nullcontext
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -97,18 +99,23 @@ def _common_patches():
     mock_pg.insert_parent_chunks = AsyncMock(return_value=[1])
 
     mock_enrich = AsyncMock()
+    mock_finish = AsyncMock()
 
     with (
         patch(
             "knowledge_ingest.rebuild_tasks._list_active_artifacts",
             new_callable=AsyncMock,
         ) as mock_list,
+        patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as mock_state,
+        # The marker and the per-KB lock are tested in test_operation_guards.py.
+        patch.dict(os.environ, {"INGEST_OK": "1"}),
+        patch("knowledge_ingest.rebuild_tasks.kb_operation", lambda *a, **k: nullcontext()),
         # Patch the lazy import targets so they resolve to our mocks.
         patch.dict(
             sys.modules,
             {
                 "knowledge_ingest.enrichment_tasks": types.SimpleNamespace(
-                    _enrich_document=mock_enrich
+                    _enrich_document=mock_enrich, _finish=mock_finish
                 ),
                 "knowledge_ingest.chunker": mock_chunker,
                 "knowledge_ingest.pg_store": mock_pg,
@@ -118,6 +125,8 @@ def _common_patches():
         yield {
             "mock_list": mock_list,
             "mock_enrich": mock_enrich,
+            "mock_finish": mock_finish,
+            "mock_state": mock_state,
             "mock_chunker": mock_chunker,
             "mock_pg": mock_pg,
             "chunks": chunks,
@@ -141,7 +150,7 @@ async def test_rebuild_kb_iterates_artifacts(_common_patches):
     ]
     _common_patches["mock_list"].return_value = artifacts
 
-    result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+    result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
 
     assert result["artifacts_processed"] == 2
     assert result["artifacts_skipped"] == 0
@@ -210,6 +219,8 @@ async def test_rebuild_kb_threads_parents_into_enrich_document(monkeypatch):
             "knowledge_ingest.rebuild_tasks._list_active_artifacts",
             new_callable=AsyncMock,
         ) as mock_list,
+        patch.dict(os.environ, {"INGEST_OK": "1"}),
+        patch("knowledge_ingest.rebuild_tasks.kb_operation", lambda *a, **k: nullcontext()),
         patch(
             "knowledge_ingest.enrichment_tasks._enrich_document",
             mock_enrich,
@@ -237,7 +248,7 @@ async def test_rebuild_kb_threads_parents_into_enrich_document(monkeypatch):
 
         from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
 
-        await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+        await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
 
     assert mock_enrich.call_count == 1
     enrich_kwargs = mock_enrich.call_args.kwargs
@@ -280,7 +291,7 @@ async def test_rebuild_kb_skips_artifacts_without_text(_common_patches):
     _common_patches["mock_list"].return_value = artifacts
 
     with structlog.testing.capture_logs() as captured:
-        result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+        result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
 
     assert result["artifacts_skipped"] == 1
     assert result["artifacts_processed"] == 1
@@ -319,7 +330,7 @@ async def test_rebuild_kb_propagates_failures_per_artifact(_common_patches):
 
     _common_patches["mock_enrich"].side_effect = _side_effect
 
-    result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+    result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
 
     assert result["artifacts_failed"] == 1
     assert result["artifacts_processed"] == 2
@@ -333,18 +344,24 @@ async def test_rebuild_kb_propagates_failures_per_artifact(_common_patches):
 async def test_rebuild_counts_an_artifact_whose_chunks_were_not_written_as_failed(
     _common_patches,
 ):
-    """_enrich_document swallows an infra failure and returns False. Counting
-    that as processed told the operator the document was rebuilt while Qdrant
-    never received its chunks."""
+    """An infra failure in _enrich_document must not count as processed: the
+    operator would be told the document was rebuilt while Qdrant never
+    received its chunks."""
     from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
 
     _common_patches["mock_list"].return_value = [_make_artifact("art-1", "doc.md", "Text")]
-    _common_patches["mock_enrich"].return_value = False
+    _common_patches["mock_enrich"].side_effect = ConnectionError("embedding service unreachable")
 
-    result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+    result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
 
     assert result["artifacts_processed"] == 0
     assert result["artifacts_failed"] == 1
+    # The parents were deleted: the document must not keep saying done.
+    _common_patches["mock_state"].assert_awaited_once()
+    assert _common_patches["mock_state"].await_args.args[1:] == ("art-1", "enrichment", "pending")
+    _common_patches["mock_finish"].assert_awaited_once_with(
+        "enrichment", "art-1", "failed", "rebuild_failed"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +457,7 @@ async def test_rebuild_kb_summary_log_event(_common_patches):
     ]
 
     with structlog.testing.capture_logs() as captured:
-        result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+        result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
 
     # Verify the returned dict has all required keys with correct types
     assert result["org_id"] == _ORG
@@ -460,3 +477,36 @@ async def test_rebuild_kb_summary_log_event(_common_patches):
     assert evt["artifacts_processed"] == 1
     assert evt["artifacts_skipped"] == 0
     assert evt["artifacts_failed"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["preview", "no_marker", "lock_busy"])
+async def test_a_rebuild_that_does_not_run_changes_no_document_state(_common_patches, refusal):
+    """A preview, a missing approval marker and a knowledge base another run
+    holds all stop before the first document: nothing is set to pending, so
+    nothing can be left pending, and no failure is recorded."""
+    from knowledge_ingest.operations import ApprovalRequired, OperationBusy
+    from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
+
+    _common_patches["mock_list"].return_value = [_make_artifact("art-1", "doc.md", "Text")]
+
+    @asynccontextmanager
+    async def _busy(*_args, **_kwargs):
+        raise OperationBusy("another operation is running")
+        yield
+
+    with (
+        patch.dict(os.environ, {"INGEST_OK": "" if refusal == "no_marker" else "1"}),
+        patch("knowledge_ingest.rebuild_tasks.kb_operation", _busy)
+        if refusal == "lock_busy"
+        else nullcontext(),
+    ):
+        if refusal == "preview":
+            assert (await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=False))["dry_run"]
+        else:
+            with pytest.raises(ApprovalRequired if refusal == "no_marker" else OperationBusy):
+                await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
+
+    _common_patches["mock_state"].assert_not_awaited()
+    _common_patches["mock_finish"].assert_not_awaited()
+    _common_patches["mock_enrich"].assert_not_awaited()

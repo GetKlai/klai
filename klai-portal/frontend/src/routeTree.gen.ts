@@ -110,7 +110,7 @@ import { Route as AppKnowledgeKbSlugAddSourceRouteImport } from './routes/app/kn
 import { Route as AppKnowledgeActivityIndexRouteImport } from './routes/app/knowledge/activity/index'
 import { Route as AppKnowledgeActivityConversationIdRouteImport } from './routes/app/knowledge/activity/$conversationId'
 import { Route as AppKnowledgeGapsIndexRouteImport } from './routes/app/knowledge/gaps/index'
-import { Route as AppKnowledgeGapsGroupKeyRouteImport } from './routes/app/knowledge/gaps/$groupKey'
+import { Route as AppKnowledgeGapsClusterKeyRouteImport } from './routes/app/knowledge/gaps/$clusterKey'
 import { Route as AdminPlatformFeedbackItemsItemIdRouteImport } from './routes/admin/platform/feedback.items.$itemId'
 import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
@@ -645,10 +645,10 @@ const AppKnowledgeGapsIndexRoute = AppKnowledgeGapsIndexRouteImport.update({
   path: '/knowledge/gaps/',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AppKnowledgeGapsGroupKeyRoute =
-  AppKnowledgeGapsGroupKeyRouteImport.update({
-    id: '/knowledge/gaps/$groupKey',
-    path: '/knowledge/gaps/$groupKey',
+const AppKnowledgeGapsClusterKeyRoute =
+  AppKnowledgeGapsClusterKeyRouteImport.update({
+    id: '/knowledge/gaps/$clusterKey',
+    path: '/knowledge/gaps/$clusterKey',
     getParentRoute: () => AppRouteRoute,
   } as any)
 const AdminPlatformFeedbackItemsItemIdRoute =
@@ -790,7 +790,7 @@ export interface FileRoutesByFullPath {
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/knowledge/activity/$conversationId': typeof AppKnowledgeActivityConversationIdRoute
-  '/app/knowledge/gaps/$groupKey': typeof AppKnowledgeGapsGroupKeyRoute
+  '/app/knowledge/gaps/$clusterKey': typeof AppKnowledgeGapsClusterKeyRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
@@ -896,7 +896,7 @@ export interface FileRoutesByTo {
   '/app/knowledge/$kbSlug/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/knowledge/activity/$conversationId': typeof AppKnowledgeActivityConversationIdRoute
-  '/app/knowledge/gaps/$groupKey': typeof AppKnowledgeGapsGroupKeyRoute
+  '/app/knowledge/gaps/$clusterKey': typeof AppKnowledgeGapsClusterKeyRoute
   '/admin/groups/$groupId': typeof AdminGroupsGroupIdIndexRoute
   '/admin/profiles/$profile': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug': typeof AppDocsKbSlugIndexRoute
@@ -1008,7 +1008,7 @@ export interface FileRoutesById {
   '/app/knowledge/$kbSlug_/add-connector': typeof AppKnowledgeKbSlugAddConnectorRoute
   '/app/knowledge/$kbSlug_/add-source': typeof AppKnowledgeKbSlugAddSourceRoute
   '/app/knowledge/activity/$conversationId': typeof AppKnowledgeActivityConversationIdRoute
-  '/app/knowledge/gaps/$groupKey': typeof AppKnowledgeGapsGroupKeyRoute
+  '/app/knowledge/gaps/$clusterKey': typeof AppKnowledgeGapsClusterKeyRoute
   '/admin/groups/$groupId/': typeof AdminGroupsGroupIdIndexRoute
   '/admin/profiles/$profile/': typeof AdminProfilesProfileIndexRoute
   '/app/docs/$kbSlug/': typeof AppDocsKbSlugIndexRoute
@@ -1121,7 +1121,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
     | '/app/knowledge/activity/$conversationId'
-    | '/app/knowledge/gaps/$groupKey'
+    | '/app/knowledge/gaps/$clusterKey'
     | '/admin/groups/$groupId/'
     | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
@@ -1227,7 +1227,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug/add-connector'
     | '/app/knowledge/$kbSlug/add-source'
     | '/app/knowledge/activity/$conversationId'
-    | '/app/knowledge/gaps/$groupKey'
+    | '/app/knowledge/gaps/$clusterKey'
     | '/admin/groups/$groupId'
     | '/admin/profiles/$profile'
     | '/app/docs/$kbSlug'
@@ -1338,7 +1338,7 @@ export interface FileRouteTypes {
     | '/app/knowledge/$kbSlug_/add-connector'
     | '/app/knowledge/$kbSlug_/add-source'
     | '/app/knowledge/activity/$conversationId'
-    | '/app/knowledge/gaps/$groupKey'
+    | '/app/knowledge/gaps/$clusterKey'
     | '/admin/groups/$groupId/'
     | '/admin/profiles/$profile/'
     | '/app/docs/$kbSlug/'
@@ -2087,11 +2087,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeGapsIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/app/knowledge/gaps/$groupKey': {
-      id: '/app/knowledge/gaps/$groupKey'
-      path: '/knowledge/gaps/$groupKey'
-      fullPath: '/app/knowledge/gaps/$groupKey'
-      preLoaderRoute: typeof AppKnowledgeGapsGroupKeyRouteImport
+    '/app/knowledge/gaps/$clusterKey': {
+      id: '/app/knowledge/gaps/$clusterKey'
+      path: '/knowledge/gaps/$clusterKey'
+      fullPath: '/app/knowledge/gaps/$clusterKey'
+      preLoaderRoute: typeof AppKnowledgeGapsClusterKeyRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/admin/platform/feedback/items/$itemId': {
@@ -2342,7 +2342,7 @@ interface AppRouteRouteChildren {
   AppKnowledgeKbSlugAddConnectorRoute: typeof AppKnowledgeKbSlugAddConnectorRoute
   AppKnowledgeKbSlugAddSourceRoute: typeof AppKnowledgeKbSlugAddSourceRoute
   AppKnowledgeActivityConversationIdRoute: typeof AppKnowledgeActivityConversationIdRoute
-  AppKnowledgeGapsGroupKeyRoute: typeof AppKnowledgeGapsGroupKeyRoute
+  AppKnowledgeGapsClusterKeyRoute: typeof AppKnowledgeGapsClusterKeyRoute
   AppKnowledgeActivityIndexRoute: typeof AppKnowledgeActivityIndexRoute
   AppKnowledgeGapsIndexRoute: typeof AppKnowledgeGapsIndexRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
@@ -2379,7 +2379,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppKnowledgeKbSlugAddSourceRoute: AppKnowledgeKbSlugAddSourceRoute,
   AppKnowledgeActivityConversationIdRoute:
     AppKnowledgeActivityConversationIdRoute,
-  AppKnowledgeGapsGroupKeyRoute: AppKnowledgeGapsGroupKeyRoute,
+  AppKnowledgeGapsClusterKeyRoute: AppKnowledgeGapsClusterKeyRoute,
   AppKnowledgeActivityIndexRoute: AppKnowledgeActivityIndexRoute,
   AppKnowledgeGapsIndexRoute: AppKnowledgeGapsIndexRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:

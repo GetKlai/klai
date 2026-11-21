@@ -26,6 +26,8 @@ export function buildWidgetRendererConfig(widget: WidgetDetailResponse, preview:
   const cssVariables = { ...(preview.cssVariables ?? widget.widget_config.css_variables) }
   if (preview.backgroundColor) cssVariables['--klai-background-color'] = preview.backgroundColor
   const appointments = widget.widget_config.integrations?.appointments
+  const routes = widget.widget_config.contact_routes ?? []
+  const defaultBookingUrl = (routes.find((r) => r.is_default) ?? routes[0])?.booking_url ?? undefined
   return {
     ...widget.widget_config,
     title: preview.headerTitle || preview.botName,
@@ -44,7 +46,8 @@ export function buildWidgetRendererConfig(widget: WidgetDetailResponse, preview:
     show_meta: preview.showMeta,
     collect_user_info: preview.collectUserInfo,
     page_context_enabled: false,
-    appointments: appointments ? { enabled: appointments.enabled, booking_url: appointments.booking_url ?? undefined } : undefined,
+    booking_url: defaultBookingUrl,
+    appointments: appointments ? { enabled: appointments.enabled } : undefined,
     chat_endpoint: session.chat_endpoint,
     session_token: session.session_token,
     session_expires_at: session.session_expires_at,

@@ -52,7 +52,29 @@ def _make_proc_app(stalled_jobs: list[SimpleNamespace]) -> MagicMock:
     proc_app.job_manager.get_stalled_jobs = AsyncMock(return_value=stalled_jobs)
     proc_app.job_manager.retry_job_by_id_async = AsyncMock(return_value=None)
     proc_app.job_manager.finish_job_by_id_async = AsyncMock(return_value=None)
+    # The todo job holding a zombie's queueing lock does the same work unless a
+    # test says otherwise.
+    proc_app.job_manager.list_jobs_async = AsyncMock(
+        side_effect=lambda **_kw: [
+            SimpleNamespace(
+                id=-job.id,
+                task_name=job.task_name,
+                task_kwargs=dict(job.task_kwargs),
+                status="todo",
+            )
+            for job in stalled_jobs
+        ]
+    )
     return proc_app
+
+
+def _job(job_id: int, queue: str, task_name: str, **task_kwargs) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=job_id,
+        queue=queue,
+        task_name=task_name,
+        task_kwargs=task_kwargs or {"artifact_id": f"artifact-{job_id}"},
+    )
 
 
 @pytest.mark.asyncio
@@ -114,7 +136,7 @@ async def test_unique_violation_on_queueing_lock_finishes_zombie_and_logs_info()
     """A newer job already queued under the zombie's lock covers the work:
     finish the zombie instead of retrying it, and log once at info, not error.
     """
-    job = SimpleNamespace(id=300, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
+    job = _job(300, "graphiti-bulk", "ingest_graphiti_episode")
     proc_app = _make_proc_app([job])
     proc_app.job_manager.retry_job_by_id_async = AsyncMock(
         side_effect=UniqueViolation(
@@ -145,7 +167,7 @@ async def test_second_recovery_pass_does_not_see_superseded_zombie_again():
     """Once finished, the zombie leaves ``doing`` and get_stalled_jobs stops
     returning it on the next minute-level pass.
     """
-    job = SimpleNamespace(id=301, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
+    job = _job(301, "graphiti-bulk", "ingest_graphiti_episode")
     proc_app = _make_proc_app([job])
     proc_app.job_manager.get_stalled_jobs = AsyncMock(side_effect=[[job], []])
     proc_app.job_manager.retry_job_by_id_async = AsyncMock(
@@ -212,8 +234,8 @@ def test_periodic_recovery_uses_dedicated_queue_and_lock() -> None:
 @pytest.mark.asyncio
 async def test_failed_finish_of_superseded_zombie_does_not_stop_the_pass():
     """A finish that raises is logged and the remaining zombies are still retried."""
-    superseded = SimpleNamespace(id=500, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
-    other = SimpleNamespace(id=501, queue="enrich-bulk", task_name="enrich_document_bulk")
+    superseded = _job(500, "graphiti-bulk", "ingest_graphiti_episode")
+    other = _job(501, "enrich-bulk", "enrich_document_bulk")
     proc_app = _make_proc_app([superseded, other])
     proc_app.job_manager.retry_job_by_id_async = AsyncMock(
         side_effect=[

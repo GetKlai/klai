@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from knowledge_ingest.connector_cleanup import CleanupReport, _list_resource_keys, purge_connector
-from knowledge_ingest.queues import CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK
+from knowledge_ingest.queues import ENRICH_BULK, ENRICH_INTERACTIVE, GRAPHITI_BULK
 from knowledge_ingest.resource_jobs import ResourceJobCancellation, connector_resource_key
 
 
@@ -46,12 +46,17 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         call_order.append("list_resource_keys")
         return ["connector:org-zid:support:conn-uuid:generation-1"]
 
-    async def fake_cancel_jobs(
-        *_a: object, queues: tuple[str, ...], **_kw: object
+    async def fake_cancel_crawl_jobs(*_a: object, **_kw: object) -> ResourceJobCancellation:
+        call_order.append("cancel_crawl_jobs")
+        return ResourceJobCancellation(1, 1, 0)
+
+    async def fake_cancel_document_jobs(
+        _app: object, _pool: object, artifact_ids: list[str], *, queues: tuple[str, ...]
     ) -> ResourceJobCancellation:
-        if queues == (CRAWL_JOBS, ENRICH_BULK):
+        assert artifact_ids
+        if queues == (ENRICH_INTERACTIVE, ENRICH_BULK):
             call_order.append("cancel_enrichment_jobs")
-            return ResourceJobCancellation(3, 2, 1)
+            return ResourceJobCancellation(2, 1, 1)
         assert queues == (GRAPHITI_BULK,)
         call_order.append("cancel_graphiti_jobs")
         return ResourceJobCancellation(1, 1, 0)
@@ -116,7 +121,11 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
         ),
         patch(
             "knowledge_ingest.connector_cleanup.cancel_jobs_by_resource_key",
-            side_effect=fake_cancel_jobs,
+            side_effect=fake_cancel_crawl_jobs,
+        ),
+        patch(
+            "knowledge_ingest.connector_cleanup.cancel_jobs_by_artifact_ids",
+            side_effect=fake_cancel_document_jobs,
         ),
         patch(
             "knowledge_ingest.connector_cleanup.get_pool",
@@ -180,6 +189,7 @@ async def test_purge_connector_orders_steps_correctly(mocked_proc_app: MagicMock
     assert call_order == [
         "list_artifact_ids",
         "list_resource_keys",
+        "cancel_crawl_jobs",
         "cancel_enrichment_jobs",
         "cancel_graphiti_jobs",
         "get_connector_episode_ids",

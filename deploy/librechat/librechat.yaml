@@ -155,7 +155,10 @@ mcpSettings:
   allowedDomains:
     - http://klai-knowledge-mcp:8080
 
-# Disable built-in endpoints; all AI goes through LiteLLM
+# Disable built-in endpoints. The one custom endpoint, "Klai AI", calls
+# portal-api's partner endpoint (KLAI_CHAT_BASE_URL), which runs the internal
+# chat turn; it is not a direct line to the model gateway. Only an environment
+# not yet switched over still points that variable at LiteLLM.
 endpoints:
   openAI:
     disabled: true

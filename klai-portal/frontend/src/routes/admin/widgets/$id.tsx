@@ -8,6 +8,7 @@ import {
   Code2,
   PanelRightOpen,
   Plug,
+  Phone,
   Activity,
   AlertTriangle,
   Loader2,
@@ -24,16 +25,18 @@ import { DetailsTab } from './_components/tabs/DetailsTab'
 import { KnowledgeBasesTab } from './_components/tabs/KnowledgeBasesTab'
 import { AppearanceTab } from './_components/tabs/AppearanceTab'
 import { EmbedTab } from './_components/tabs/EmbedTab'
+import { ContactRoutesTab } from './_components/tabs/ContactRoutesTab'
 import { IntegrationsTab } from './_components/tabs/IntegrationsTab'
 import { ActivityTab } from './_components/tabs/ActivityTab'
 import { DangerTab } from './_components/tabs/DangerTab'
 import { WidgetPreviewPanel } from './_components/WidgetPreviewPanel'
 import { PageContainer } from '@/components/ui/page-container'
 
-type TabId = 'details' | 'kbs' | 'appearance' | 'embed' | 'integrations' | 'activity' | 'danger'
+type TabId = 'details' | 'contact' | 'kbs' | 'appearance' | 'embed' | 'integrations' | 'activity' | 'danger'
 
 const VALID_TABS = new Set<TabId>([
   'details',
+  'contact',
   'kbs',
   'appearance',
   'embed',
@@ -117,6 +120,7 @@ function WidgetDetailPage() {
 
   const tabs: TabItem<TabId>[] = [
     { id: 'details', label: m.admin_shared_tab_general(), icon: Info },
+    { id: 'contact', label: m.admin_widgets_routes_tab(), icon: Phone },
     { id: 'kbs', label: m.admin_shared_wizard_step_kb_access(), icon: Shield },
     { id: 'appearance', label: m.admin_widgets_wizard_step_appearance(), icon: Palette },
     { id: 'embed', label: m.admin_widgets_wizard_step_embed(), icon: Code2 },
@@ -183,6 +187,7 @@ function WidgetDetailPage() {
             />
 
             {activeTab === 'details' && <DetailsTab widget={widget} />}
+            {activeTab === 'contact' && <ContactRoutesTab widget={widget} />}
             {activeTab === 'kbs' && <KnowledgeBasesTab widget={widget} />}
             {activeTab === 'appearance' && <AppearanceTab widget={widget} />}
             {activeTab === 'embed' && <EmbedTab widget={widget} />}

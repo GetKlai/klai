@@ -1,6 +1,6 @@
 """The chat quality measuring stick (docs/architecture/chat-quality-history-and-plan.md §6, §8) as one CLI.
 
-    meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>]
+    meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>] [--frontend <front-end.json>]
     meetlat run     --surface widget --org <slug> --widget <widget.json> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>]
     meetlat retrieval --surface internal|widget --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [same options as run]
     meetlat compare --cases <cases.jsonl> [--json] <round.jsonl>...
@@ -15,7 +15,7 @@ replies, ending in the turn to replay). ``run`` ignores every other field.
 ``dekkend_antwoord``, ``variants`` (regexes that must all appear in the answer;
 default android and iphone|ios). Internal classes: weigering, antwoord_kb,
 dekkend_antwoord, antwoord_algemeen_gelabeld and weigering_feiten (read by
-hand). Widget classes: antwoord, vraag, niet_gevonden and doorverwijzing.
+hand). Widget classes: antwoord, vraag, niet_gevonden, doorverwijzing and afsluiting.
 
 ``run`` replays those turns through the one chat pipeline (the internal
 surface the way replay_internal_chat.py does, the widget surface through the
@@ -64,7 +64,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -133,6 +133,7 @@ _AUTOMATIC_CLASSES = (
     "vraag",
     "niet_gevonden",
     "doorverwijzing",
+    "afsluiting",
 )
 _READ_CLASSES = ("weigering_feiten",)
 _DEFAULT_VARIANTS = ("android", "iphone|ios")
@@ -208,7 +209,6 @@ class Thread:
 
     cid: str
     profile: ChatProfile | None
-    mode: str
     turns: list[dict]
 
 
@@ -310,6 +310,9 @@ def _apply_measurement_patches() -> None:
     replay._REQUEST_MODEL = _FAST_ALIAS
     replay.partner._ALLOWED_MODELS = replay.partner._ALLOWED_MODELS | {_FAST_ALIAS}
     replay.settings.extraction_model = _FAST_ALIAS
+    # The widget writer's own setting (widget_turn._write): a replayed request already names _FAST_ALIAS, which the
+    # widget keeps, and this keeps a request for klai-primary from reaching klai-medium with the measuring key.
+    replay.settings.widget_writer_model = _FAST_ALIAS
     replay.settings.answer_grounding_model = _MEDIUM_ALIAS
     replay.settings.retrieval_paraphrase_model = _MEDIUM_ALIAS
 
@@ -348,7 +351,7 @@ async def _fetch_threads(org: Any, prefixes: list[str], days: int) -> dict[str, 
     for prefix, conversation in unique.items():
         profile = profiles[conversation["user"]]
         turns = replay._turns_from_messages(messages.get(conversation["conversationId"], []))
-        threads[prefix] = Thread(conversation["conversationId"], profile, profile.kb_mode if profile else "", turns)
+        threads[prefix] = Thread(conversation["conversationId"], profile, turns)
     return threads
 
 
@@ -533,9 +536,12 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
         return {"cid": case["cid"], "u": u, "error": "turn_out_of_range"}
     k = user_turns[u]
     messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
-    row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
     profile = thread.profile
     assert profile is not None and profile.user_id is not None, "replay_internal skips a thread without an employee"
+    # The mode the case was answered in, not the one the employee's profile has today.
+    if case.get("mode") in ("strict", "open"):
+        profile = replace(profile, kb_mode=case["mode"])
+    row = {"cid": case["cid"], "k": k, "u": u, "mode": profile.kb_mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
     return await _replayed(
         row,
         _from_the_same_memory(
@@ -559,13 +565,18 @@ async def _replay_internal_conversation(
     needs to write one. The named turns' rows say where the expected articles
     stood (:func:`_stage_row`).
     """
-    named = {case["turn"] for case in cases}
+    by_turn = {case["turn"]: case for case in cases}
+    named = set(by_turn)
     from_reply = {case["turn"] for case in cases if "articles" not in case}
     failed: list[dict] = []
     for u in range(max(named) + 1):
         if expected is not None:
             _arm()
-        row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u})
+        # A named turn runs in its own case's mode, and a turn before it in the
+        # mode of the named turn it stores the case for: one conversation can
+        # hold an Open case and a Strict case.
+        mode = by_turn[min(turn for turn in named if turn >= u)].get("mode")
+        row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u, "mode": mode})
         if expected is not None:
             record = _take()
             if u in named:
@@ -758,6 +769,9 @@ async def _run(args: argparse.Namespace) -> int:
         )
     if args.surface == "widget" and args.widget is None:
         raise UsageError("--surface widget needs --widget <json> with " + ", ".join(_WIDGET_FIELDS))
+    if args.frontend is not None and args.surface != "internal":
+        raise UsageError("--frontend is for --surface internal: a widget key refuses tools")
+    replay.use_frontend(args.frontend)
     widget = _read_widget(args.widget) if args.surface == "widget" else None
     if widget is not None:
         # The route and its middleware are part of what a widget round measures,
@@ -792,6 +806,7 @@ async def _run(args: argparse.Namespace) -> int:
         "command": args.command,
         "org": args.org,
         "surface": args.surface,
+        "frontend": str(args.frontend) if args.frontend else None,
         "cases": len(cases),
     }
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
@@ -1085,8 +1100,14 @@ def _verdict(klass: str, case: dict, row: dict | None) -> bool:
         return _is_short_question(text)
     if klass == "niet_gevonden":
         return decision == "refusal" or bool(signals.get("refused"))
+    if klass == "afsluiting":
+        return decision == "closing"
     if klass == "antwoord":
-        return decision not in ("off_topic", "refusal") and not signals.get("refused") and not _is_short_question(text)
+        return (
+            decision not in ("off_topic", "refusal", "closing")
+            and not signals.get("refused")
+            and not _is_short_question(text)
+        )
     return decision == "general_knowledge" or (decision in _ANSWERS and bool(_GENERAL_KNOWLEDGE.search(text)))
 
 
@@ -1257,6 +1278,12 @@ def _parser() -> argparse.ArgumentParser:
             type=Path,
             help="json with " + ", ".join(_WIDGET_FIELDS) + "; the widget a --surface widget round replays as",
         )
+        replaying.add_argument(
+            "--frontend",
+            type=Path,
+            help='json {"tools": [...], "system": "..."} the internal front-end sends with every turn; '
+            "--surface internal only (docs/runbooks/meetlat.md)",
+        )
     compare = commands.add_parser("compare", help="classify and compare rounds")
     compare.add_argument("--cases", type=Path, required=True)
     compare.add_argument("--json", action="store_true")
@@ -1267,7 +1294,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        return _compare(args) if args.command == "compare" else asyncio.run(_run(args))
+        if args.command == "compare":
+            return _compare(args)
+        return asyncio.run(_run(args))
     except UsageError as exc:
         print(f"meetlat: {exc}", file=sys.stderr)
         return 2

@@ -54,12 +54,15 @@ async def test_connector_is_active_returns_false_when_row_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_connector_is_active_returns_false_on_db_error() -> None:
-    """Fail-closed: any DB error => abort enrichment."""
+async def test_connector_state_lookup_error_raises() -> None:
+    """A failed lookup is not "connector gone": the job must fail and be retried."""
     pool = MagicMock()
     pool.acquire = MagicMock(side_effect=RuntimeError("connection refused"))
-    with patch("knowledge_ingest.connector_state.get_pool", return_value=pool):
-        assert await connector_state.connector_is_active("conn-uuid") is False
+    with (
+        patch("knowledge_ingest.connector_state.get_pool", return_value=pool),
+        pytest.raises(RuntimeError),
+    ):
+        await connector_state.connector_is_active("conn-uuid")
 
 
 @pytest.mark.asyncio
@@ -86,7 +89,8 @@ async def test_state_lookup_failures_are_not_cached() -> None:
     pool = MagicMock()
     pool.acquire = MagicMock(side_effect=RuntimeError("blip"))
     with patch("knowledge_ingest.connector_state.get_pool", return_value=pool):
-        await connector_state.connector_is_active("conn-uuid")
-        await connector_state.connector_is_active("conn-uuid")
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await connector_state.connector_is_active("conn-uuid")
     # Both calls should have hit the pool — no caching of failures.
     assert pool.acquire.call_count == 2

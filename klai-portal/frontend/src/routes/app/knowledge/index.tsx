@@ -66,7 +66,6 @@ interface KBStatsSummary {
   connectors: number
   chunks: number
   sources: number
-  gaps_7d: number
   usage_30d: number
   unique_users_30d: number
   active_days_30d: number

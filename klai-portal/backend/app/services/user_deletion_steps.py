@@ -83,12 +83,17 @@ async def step_zitadel_remove(state: _UserDeletionState) -> None:
 
 
 async def step_external_kb_delete(state: _UserDeletionState) -> None:
-    """Delete KBs externally (Qdrant/Garage/knowledge-ingest/docs-app) and
-    revoke partner API keys + MCP tokens.
+    """Delete KBs externally (Qdrant/Garage/knowledge-ingest/docs-app), hand
+    the partner API keys to ``state.api_keys_transfer_to`` and revoke MCP tokens.
 
-    Both sub-operations are applied; errors from either propagate up.
+    All sub-operations are applied; errors from any propagate up.
     """
-    from app.services.kb_offboarding import apply_dispositions, revoke_user_credentials
+    from app.services.kb_offboarding import (
+        apply_dispositions,
+        delete_user_api_keys,
+        revoke_user_mcp_tokens,
+        transfer_user_api_keys,
+    )
 
     if state.kb_dispositions:
         assert state.db_for_steps is not None, "db_for_steps must be set before step_external_kb_delete"
@@ -107,18 +112,21 @@ async def step_external_kb_delete(state: _UserDeletionState) -> None:
         )
 
     assert state.db_for_steps is not None, "db_for_steps must be set before step_external_kb_delete"
-    api_keys_count, mcp_tokens_count = await revoke_user_credentials(
-        state.zitadel_user_id,
-        state.org_id,
-        state.db_for_steps,
-    )
-    state.api_keys_count = api_keys_count
-    state.mcp_tokens_count = mcp_tokens_count
+    db = state.db_for_steps
+    if state.api_keys_transfer_to:
+        state.api_keys_transferred = await transfer_user_api_keys(
+            state.zitadel_user_id, state.api_keys_transfer_to, state.org_id, db
+        )
+    else:
+        state.api_keys_deleted = await delete_user_api_keys(state.zitadel_user_id, state.org_id, db)
+    state.mcp_tokens_count = await revoke_user_mcp_tokens(state.zitadel_user_id, state.org_id, db)
 
     logger.info(
-        "user_deletion.credentials_revoked",
-        api_keys=state.api_keys_count,
-        mcp_tokens=state.mcp_tokens_count,
+        "user_deletion.credentials_settled",
+        api_keys_transferred=state.api_keys_transferred,
+        api_keys_transferred_to=state.api_keys_transfer_to,
+        api_keys_deleted=state.api_keys_deleted,
+        mcp_tokens_revoked=state.mcp_tokens_count,
         zitadel_user_id=state.zitadel_user_id,
     )
 

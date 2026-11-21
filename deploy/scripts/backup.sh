@@ -47,6 +47,10 @@ readonly TOTAL_STEPS=16
 # restore, and hands the rest to the Storage Box.
 readonly LOCAL_RETENTION_DAYS=7
 readonly COMPLETE_MARKER=".backup-complete"
+# What a restore has to reproduce, one line per fact, written while the set is
+# made and encrypted with it. backup-restore.sh compares a restore against it;
+# the dumps that describe themselves (Postgres, Mongo) need no line here.
+readonly FACTS_FILE="backup-facts.txt"
 
 readonly AGE_RECIPIENTS=(
   "age1lyd243tsj8j7rn2wy4hdmnya99wsf2p87fpphys9k65kammerqsqnzpsur"
@@ -148,6 +152,58 @@ artifact_size() {
   du -sh "$1" 2>/dev/null | cut -f1
 }
 
+facts_add() {
+  printf '%s\n' "$*" >> "${BACKUP_DIR}/${FACTS_FILE}"
+}
+
+# "<entries> <sha256 of the sorted member names>" of a tar listing on stdin,
+# directories left out. backup-restore.sh computes the same two numbers from
+# the restored copy, so a tar that lists differently than it did is a failure.
+tar_listing_facts() {
+  python3 -c '
+import hashlib
+import sys
+
+names = sorted(n for n in sys.stdin.buffer.read().split(b"\n") if n and not n.endswith(b"/"))
+print(len(names), hashlib.sha256(b"\n".join(names)).hexdigest())'
+}
+
+file_sha256() {
+  python3 -c '
+import hashlib
+import sys
+
+h = hashlib.sha256()
+with open(sys.argv[1], "rb") as f:
+    for chunk in iter(lambda: f.read(1 << 20), b""):
+        h.update(chunk)
+print(h.hexdigest())' "$1"
+}
+
+# record_facts <artifact file>: its checksum, and for a tar its listing.
+record_facts() {
+  local file="$1" name listing
+  name="$(basename "${file}")"
+  facts_add "file ${name} sha256 $(file_sha256 "${file}")" || return 1
+  if [[ "${name}" == *.tar.gz ]]; then
+    listing="$(tar -tzf "${file}" | tar_listing_facts)" || return 1
+    facts_add "file ${name} entries ${listing%% *}" || return 1
+    facts_add "file ${name} listing ${listing##* }" || return 1
+  fi
+}
+
+# record_redis_facts <artifact> <container> [auth args...]: the keys without a
+# TTL (an expiring key can lapse between the read and the save), read just
+# before the save, so a restore must hold at least that many.
+record_redis_facts() {
+  local artifact="$1" container="$2" info
+  shift 2
+  info="$(redis_q "${container}" "$@" -- INFO keyspace)" && [[ "${info}" == *Keyspace* ]] \
+    || { fail "${container}: INFO keyspace failed"; return 1; }
+  facts_add "facts ${artifact} count keys $(tr -d '\r' <<< "${info}" \
+    | awk -F'[:=,]' '/^db[0-9]+:/ { k += $3 - $5 } END { print k + 0 }')"
+}
+
 record_file() {
   local file="$1"
 
@@ -158,6 +214,7 @@ record_file() {
 
   ARTIFACTS+=("${file}")
   log "      Size: $(artifact_size "${file}")"
+  record_facts "${file}"
 }
 
 record_optional_file() {
@@ -167,6 +224,7 @@ record_optional_file() {
   if [[ -s "${file}" ]]; then
     ARTIFACTS+=("${file}")
     log "      Size: $(artifact_size "${file}")"
+    record_facts "${file}"
   else
     rm -f "${file}"
     log "      ${empty_msg}"
@@ -344,6 +402,7 @@ bgsave_and_wait() {
 backup_redis() {
   local output="${BACKUP_DIR}/redis-dump.rdb"
 
+  record_redis_facts redis "$(ctr redis)" -a "${REDIS_PASSWORD}" || return 1
   bgsave_and_wait "$(ctr redis)" -a "${REDIS_PASSWORD}" || return 1
   docker compose cp redis:/data/dump.rdb "${output}" || return 1
   record_file "${output}"
@@ -380,6 +439,7 @@ backup_vexa_redis() {
       | grep -A1 '^--requirepass$' | tail -1)"
   fi
 
+  record_redis_facts vexa_redis "${container}" ${password:+-a "${password}"} || return 1
   bgsave_and_wait "${container}" ${password:+-a "${password}"} || return 1
   docker cp "${container}:/data/dump.rdb" "${output}" || return 1
   record_file "${output}"
@@ -387,6 +447,7 @@ backup_vexa_redis() {
 
 backup_meilisearch() {
   local container
+  local stats
   local output="${BACKUP_DIR}/meilisearch.snapshot"
 
   container="$(ctr meilisearch)"
@@ -400,7 +461,17 @@ backup_meilisearch() {
   # no Meilisearch backup existed (found 2026-10-22). Even a successful call
   # left the snapshot inside the container volume, outside the backup set. The
   # snapshot now runs inside the container with its own key, waits for the
-  # task and is copied out like every other artifact.
+  # task and is copied out like every other artifact. The documents per index
+  # are read first: the snapshot holds at least that many.
+  stats="$(docker exec "${container}" sh -c \
+    'wget -qO- --header="Authorization: Bearer ${MEILI_MASTER_KEY:?}" http://127.0.0.1:7700/stats')" || return 1
+  printf '%s' "${stats}" | python3 -c '
+import json
+import sys
+
+for uid, s in json.load(sys.stdin)["indexes"].items():
+    print("facts meilisearch index", uid)
+    print("facts meilisearch count", uid, s["numberOfDocuments"])' >> "${BACKUP_DIR}/${FACTS_FILE}" || return 1
   if ! docker exec "${container}" sh -c '
       auth="Authorization: Bearer ${MEILI_MASTER_KEY:?}"
       uid=$(wget -qO- --post-data="" --header="$auth" http://127.0.0.1:7700/snapshots \
@@ -429,7 +500,10 @@ qdrant_api() {
 
   case "${method}" in
     GET) ;;
-    POST) flags=(-X POST -d "") ;;
+    POST)
+      flags=(-X POST -d "${3:-}")
+      [[ -z "${3:-}" ]] || flags+=(-H "Content-Type: application/json")
+      ;;
     DELETE) flags=(-X DELETE) ;;
     *) fail "unknown Qdrant API method: ${method}" ;;
   esac
@@ -469,6 +543,7 @@ backup_qdrant() {
   local collections
   local collection
   local response
+  local points
   local snapshot
   local output
 
@@ -495,6 +570,13 @@ backup_qdrant() {
   while IFS= read -r collection; do
     [[ -n "${collection}" ]] || continue
 
+    # The points per collection are read first: the snapshot holds at least
+    # that many.
+    points="$(qdrant_api POST "/collections/${collection}/points/count" '{"exact": true}' \
+      | python3 -c 'import json, sys; print(json.load(sys.stdin)["result"]["count"])')" || return 1
+    facts_add "facts qdrant collection ${collection}"
+    facts_add "facts qdrant count ${collection} ${points}"
+
     response="$(qdrant_api POST "/collections/${collection}/snapshots")" || return 1
     snapshot="$(printf '%s' "${response}" | json_qdrant_snapshot_name)" || return 1
     if [[ -z "${snapshot}" ]]; then
@@ -520,6 +602,7 @@ backup_qdrant() {
     if [[ -s "${output}" ]]; then
       ARTIFACTS+=("${output}")
       log "      Size: $(artifact_size "${output}")"
+      record_facts "${output}" || return 1
     else
       qdrant_api DELETE "/collections/${collection}/snapshots/${snapshot}" >/dev/null || true
       rm -f "${output}"
@@ -533,6 +616,8 @@ backup_qdrant() {
 backup_falkordb() {
   local container
   local output
+  local graphs
+  local graph
 
   container="$(ctr falkordb)"
   output="${BACKUP_DIR}/falkordb-dump.rdb"
@@ -542,6 +627,11 @@ backup_falkordb() {
     return 0
   fi
 
+  record_redis_facts falkordb "${container}" || return 1
+  graphs="$(redis_q "${container}" -- GRAPH.LIST)" || return 1
+  while IFS= read -r graph; do
+    [[ -z "${graph}" ]] || facts_add "facts falkordb graph ${graph}"
+  done <<< "${graphs}"
   bgsave_and_wait "${container}" || return 1
   docker cp "${container}:/var/lib/falkordb/data/dump.rdb" "${output}" || return 1
   record_file "${output}"
@@ -743,6 +833,7 @@ backup_scribe_audio() {
 
 backup_research_uploads() {
   local output="${BACKUP_DIR}/research-uploads"
+  local listing
 
   if [[ ! -d /opt/klai/research-uploads ]]; then
     log "      Skipped (no /opt/klai/research-uploads)"
@@ -751,6 +842,9 @@ backup_research_uploads() {
 
   rsync -a --delete /opt/klai/research-uploads/ "${output}/" || return 1
   log "      Size: $(artifact_size "${output}")"
+  listing="$(tar -cf - -C "${BACKUP_DIR}" research-uploads | tar -tf - | tar_listing_facts)" || return 1
+  facts_add "file research-uploads.tar.gz entries ${listing%% *}"
+  facts_add "file research-uploads.tar.gz listing ${listing##* }"
 }
 
 encrypt_artifacts() {
@@ -758,6 +852,8 @@ encrypt_artifacts() {
 
   ENCRYPT_DIR="$(mktemp -d)" || return 1
 
+  # The facts travel with the set they describe.
+  [[ ! -s "${BACKUP_DIR}/${FACTS_FILE}" ]] || ARTIFACTS+=("${BACKUP_DIR}/${FACTS_FILE}")
   for artifact in "${ARTIFACTS[@]}"; do
     age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" "${artifact}" \
       > "${ENCRYPT_DIR}/$(basename "${artifact}").age" || return 1
@@ -869,7 +965,7 @@ main() {
   # marker left by an earlier successful run would then mark a failed rerun's
   # half-overwritten set as complete, and retention could drop an older good
   # set in its favour. Only this run's own success may write it again.
-  rm -f "${BACKUP_DIR}/${COMPLETE_MARKER}"
+  rm -f "${BACKUP_DIR}/${COMPLETE_MARKER}" "${BACKUP_DIR}/${FACTS_FILE}"
   cd "${COMPOSE_DIR}"
   load_config
 

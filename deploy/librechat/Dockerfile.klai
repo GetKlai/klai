@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.28
+# syntax=docker/dockerfile:1.29
 #
 # Klai-owned LibreChat image — SPEC-LIBRECHAT-PATCH-MODEL-001 Phase 2 (REQ-3/4).
 #
@@ -19,7 +19,7 @@
 # incident, so the CI workflow resolves it from the image and the build
 # asserts the two agree.
 
-ARG LIBRECHAT_TAG=v0.8.8
+ARG LIBRECHAT_TAG=v0.8.9
 
 # --------------------------------------------------------------------------
 # Lane A — @librechat/agents

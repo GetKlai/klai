@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -215,8 +215,9 @@ async def test_direct_file_upload_uses_interactive_enrichment_lane():
 
 
 @pytest.mark.asyncio
-async def test_direct_file_upload_stays_pending_until_enrichment_finishes():
-    """Queued enrichment must remain visible instead of reporting a false sync."""
+async def test_direct_file_upload_text_is_synced_while_its_enrichment_is_pending():
+    """index_status says the text is searchable; queued enrichment is the
+    enrichment state's to show (derived_state), as for every other source."""
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
@@ -235,7 +236,7 @@ async def test_direct_file_upload_stays_pending_until_enrichment_finishes():
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
-    calls.set_ingest_status.assert_not_awaited()
+    calls.set_ingest_status.assert_awaited_once_with(conn, "art-test", "org-1", "synced")
 
 
 @pytest.mark.asyncio
@@ -263,8 +264,8 @@ async def test_direct_file_upload_is_synced_when_enrichment_is_disabled():
 
 
 @pytest.mark.asyncio
-async def test_direct_file_upload_stays_pending_when_enrichment_is_already_queued():
-    """A deduplicated live job still owns the final pending-to-synced transition."""
+async def test_direct_file_upload_text_is_synced_when_enrichment_is_already_queued():
+    """A deduplicated live job finishes the enrichment state; the text is searchable now."""
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
@@ -286,7 +287,7 @@ async def test_direct_file_upload_stays_pending_when_enrichment_is_already_queue
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
-    calls.set_ingest_status.assert_not_awaited()
+    calls.set_ingest_status.assert_awaited_once_with(conn, "art-test", "org-1", "synced")
 
 
 @pytest.mark.asyncio
@@ -315,12 +316,17 @@ async def test_connector_ingest_still_finishes_raw_index_as_synced():
 
 
 @pytest.mark.asyncio
-async def test_connector_ingest_threads_resource_key_to_artifact_and_writer_jobs():
+async def test_connector_ingest_queues_document_work_without_a_run_key():
+    """The work belongs to the document version, not to the sync run.
+
+    A connector still sending ``resource_generation`` (one deployed before this
+    change) is accepted, and the field is ignored: a new run neither tags nor
+    cancels the derived jobs of documents that are still current.
+    """
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
     mock_app, _, enrichment_configured = _make_mock_app()
-    conn = _make_mock_conn()
     req = IngestRequest(
         org_id="org-1",
         kb_slug="my-kb",
@@ -333,16 +339,80 @@ async def test_connector_ingest_threads_resource_key_to_artifact_and_writer_jobs
     )
 
     async with _base_patches(mock_app, graphiti_enabled=True):
-        await ingest_document(conn, req)
+        await ingest_document(_make_mock_conn(), req)
 
-    resource_key = "connector:org-1:my-kb:connector-1:sync-run-42"
-    assert enrichment_configured.defer_async.await_args.kwargs == {
-        "artifact_id": "art-test",
-        "resource_key": resource_key,
-    }
-    assert (
-        mock_app.graphiti_configured.defer_async.await_args.kwargs["resource_key"] == resource_key
+    assert enrichment_configured.defer_async.await_args.kwargs == {"artifact_id": "art-test"}
+    assert "resource_key" not in mock_app.graphiti_configured.defer_async.await_args.kwargs
+    mock_app.job_manager.cancel_job_by_id_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_new_version_extraction_replaces_the_previous_versions_graph_content():
+    """The graph holds one version per document, so the new extraction takes the old one's place.
+
+    ``replace_stale`` makes the job delete the document's earlier episodes when it
+    starts writing, not at ingest, so the old facts stay searchable until then.
+    """
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="docs/page.md",
+        content="# Title\n\nNew content of an existing page.",
+        source_type="docs",
+        content_type="kb_article",
     )
+
+    async with _base_patches(mock_app, graphiti_enabled=True):
+        await ingest_document(_make_mock_conn(), req)
+
+    assert mock_app.graphiti_configured.defer_async.await_args.kwargs["replace_stale"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skip_reason", ["navigation_page", None])
+async def test_a_version_held_out_of_the_graph_removes_the_documents_earlier_facts(skip_reason):
+    """A deliberate skip leaves the document without graph content; a graphed version
+    leaves the earlier facts in place until its own extraction replaces them."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="docs/index.md",
+        content="# Index\n\nA page that became a link list.",
+        source_type="docs",
+        content_type="kb_article",
+    )
+
+    async with _base_patches(mock_app, graphiti_enabled=True):
+        with (
+            patch(
+                "knowledge_ingest.routes.ingest.graph_episode_skip_reason",
+                return_value=skip_reason,
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.pg_store.get_episode_ids_for_document_history",
+                new=AsyncMock(return_value=["earlier-episode"]),
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.graph_module.delete_kb_episodes",
+                new_callable=AsyncMock,
+            ) as delete_episodes,
+        ):
+            await ingest_document(_make_mock_conn(), req)
+
+    if skip_reason:
+        delete_episodes.assert_awaited_once_with("org-1", ["earlier-episode"])
+        mock_app.graphiti_configured.defer_async.assert_not_awaited()
+    else:
+        delete_episodes.assert_not_awaited()
+        mock_app.graphiti_configured.defer_async.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -368,6 +438,41 @@ async def test_already_enqueued_does_not_propagate():
     assert result["status"] == "ok"
     # configure was still called (lock was set)
     task_fn.configure.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_a_queue_outage_after_the_row_is_written_fails_the_request_and_the_document():
+    """The version row is committed before the defer. A retry of the request
+    would find the content unchanged and queue nothing, so every product that
+    could not be queued must say failed, the raw text must say searchable, and
+    only then does the caller see the request fail."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    outage = ConnectionError("queue unreachable")
+    mock_app, _, _ = _make_mock_app(side_effect=outage)
+    mock_app.graphiti_configured.defer_async.side_effect = outage
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="docs/page.md",
+        content="# Title\n\nContent.",
+        source_type="docs",
+        content_type="kb_article",
+    )
+
+    with patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as record:
+        async with _base_patches(mock_app, graphiti_enabled=True) as calls:
+            with pytest.raises(ConnectionError):
+                await ingest_document(_make_mock_conn(), req)
+
+    calls.set_ingest_status.assert_awaited_once_with(ANY, "art-test", "org-1", "synced")
+    assert [c.args[1:] for c in record.await_args_list] == [
+        ("art-test", "enrichment", "pending"),
+        ("art-test", "enrichment", "failed", "queue_unavailable"),
+        ("art-test", "graph", "pending"),
+        ("art-test", "graph", "failed", "queue_unavailable"),
+    ]
 
 
 @pytest.mark.asyncio

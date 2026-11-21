@@ -83,7 +83,6 @@ export function TranscriptImportDialog({ orgKbs }: { orgKbs: OrgKb[] }) {
         setError(m.gaps_transcript_error_generic())
         return
       }
-      void queryClient.invalidateQueries({ queryKey: ['app-gaps'] })
       void queryClient.invalidateQueries({ queryKey: ['support-case', String(res.case_id)] })
       void queryClient.invalidateQueries({ queryKey: ['support-cases', kbSlug] })
       if (!res.changed) {

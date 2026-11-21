@@ -47,6 +47,9 @@ class Reply:
     # Carries the deferred grounding check the record waits for.
     turn: KnowledgeTurn
     appointment: bool = False
+    # Where the appointment button books: the named contact route's URL, from
+    # the widget's config and never from model output; None without one.
+    booking_url: str | None = None
     broad_mode: str | None = None
     # How many passages the writer read, for the "passages found" activity frame.
     passages: int = 0
@@ -75,6 +78,11 @@ class AnswerUpstreamError(HTTPException):
         self.language = language
 
 
+def _escalation(reply: Reply) -> dict[str, Any]:
+    """``{"appointment": true, "booking_url": str | null}``: the button, and where it books."""
+    return {**_appointment_escalation(), "booking_url": reply.booking_url}
+
+
 def reply_body(reply: Reply, *, model: str, include_sources: bool = True) -> dict[str, Any]:
     """The non-streaming completion body of a reply."""
     message: dict[str, Any] = {"role": "assistant", "content": reply.text}
@@ -85,7 +93,7 @@ def reply_body(reply: Reply, *, model: str, include_sources: bool = True) -> dic
     if reply.broad_mode in ("offer", "answer"):
         message["broad_mode"] = reply.broad_mode
     if reply.appointment:
-        message["escalation"] = _appointment_escalation()
+        message["escalation"] = _escalation(reply)
     if reply.tool_calls:
         message["tool_calls"] = reply.tool_calls
     completion = dict(reply.completion)
@@ -109,7 +117,7 @@ def reply_frames(reply: Reply, *, include_sources: bool = True) -> list[bytes]:
     if reply.broad_mode in ("offer", "answer"):
         frames.append(_sse_broad_mode_delta(reply.broad_mode))
     if reply.appointment:
-        frames.append(_sse_escalation_delta(_appointment_escalation()))
+        frames.append(_sse_escalation_delta(_escalation(reply)))
     if reply.tool_calls:
         # A streamed tool call carries its position; the completion body's calls do not.
         frames.append(_sse_tool_calls_delta([{"index": i, **call} for i, call in enumerate(reply.tool_calls)]))

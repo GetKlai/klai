@@ -1,5 +1,7 @@
 # Runbook: apply a changed KB setting to existing chunks (`kb_patch`)
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 **Service:** `klai-knowledge-ingest`
 **Script:** `knowledge_ingest/scripts/kb_patch.py`
 **Model calls:** none
@@ -43,10 +45,10 @@ fixed and none is skipped:
 3. **The user's yes** for that one run, in his own words, after he has seen the
    dry-run output. A yes for an earlier run does not carry over.
 4. **One knowledge base as a trial**, with `INGEST_OK=1`. `--execute` refuses
-   to run (exit 2) without it. The local prefix satisfies the operator
-   machine's PreToolUse guard, and `-e` carries it into the container:
+   to run (exit 2) without it. The prefix marks the run as approved, and `-e`
+   carries it into the container:
    ```bash
-   INGEST_OK=1 ssh core-01 'docker exec -e INGEST_OK=1 klai-core-knowledge-ingest-1 python -m knowledge_ingest.scripts.kb_patch --org <zitadel org id> --kb <slug> --execute'
+   INGEST_OK=1 docker exec -e INGEST_OK=1 klai-core-knowledge-ingest-1 python -m knowledge_ingest.scripts.kb_patch --org <zitadel org id> --kb <slug> --execute
    ```
    Then measure: run the dry run again (it must report 0 points out of date
    for that KB), and run the retrieval measurement that motivated the setting

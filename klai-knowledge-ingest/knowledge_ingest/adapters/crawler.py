@@ -15,6 +15,7 @@ import json
 import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from statistics import median
 from urllib.parse import urlparse
 
 import asyncpg
@@ -22,16 +23,22 @@ import httpx
 import structlog
 from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
-from knowledge_ingest import pg_store, qdrant_store
+from knowledge_ingest import document_purge, pg_store
 from knowledge_ingest.chunker import noise_counts
 from knowledge_ingest.config import settings
+from knowledge_ingest.content_retention import retention
 from knowledge_ingest.crawl4ai_client import (
+    CrawlMemoryState,
     CrawlRateLimitState,
     CrawlResult,
     _canonicalise_url,
     crawl_site,
 )
-from knowledge_ingest.crawl_change import crawl_change_hash, crawled_page_unchanged
+from knowledge_ingest.crawl_change import (
+    crawl_change_hash,
+    crawled_page_unchanged,
+    learn_site_lines,
+)
 from knowledge_ingest.crawl_checkpoint import (
     ConnectionFactory,
     CrawlExecutionBusy,
@@ -43,6 +50,7 @@ from knowledge_ingest.crawl_checkpoint import (
     finish_crawl_execution,
     guard_crawl_execution,
 )
+from knowledge_ingest.crawl_memory import PostgresCrawlMemory
 from knowledge_ingest.crawl_result_processing import html_has_element, parse_login_indicator
 from knowledge_ingest.domain_rate_limit_control import (
     DomainRateLimitState,
@@ -63,8 +71,10 @@ from knowledge_ingest.reason_codes import (
     FetchReasonCode,
     PersistSkipReason,
 )
-from knowledge_ingest.resource_jobs import parse_connector_resource_key
-from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
+from knowledge_ingest.utils.auth_wall_classifier import (
+    AuthWallClassification,
+    classify_auth_wall,
+)
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
     detect_anonymous_auth_wall,
@@ -85,6 +95,9 @@ _VALID_LOGIN_WALL_MODES = ("reject", "degrade", "audit_only")
 # UI badge query, so it MUST stay stable.
 DIRTY_CONTENT_REASON = "boilerplate_or_authwall_dominant"
 CRAWL_BUDGET_EXHAUSTED_REASON = "crawl_budget_exhausted"
+# The crawl stopped at its attempt bound because most addresses it tried
+# answered 404/410; see crawl4ai_client._ATTEMPT_LIMIT_FACTOR.
+CRAWL_ADDRESSES_MOSTLY_GONE_REASON = "crawl_addresses_mostly_gone"
 CRAWL_FRONTIER_INCOMPLETE_REASON = "crawl_frontier_incomplete"
 CRAWL_FETCH_FAILED_REASON = "crawl_fetch_failed"
 AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
@@ -120,6 +133,10 @@ _CRAWLER_CONFIG_REJECTED_SUGGESTION = (
 # ``decide_ingest_failure_terminal_status`` for why a ratio threshold is
 # NOT used here.
 INGEST_FAILURE_TOTAL_REASON = "ingest_failure_total"
+# The run audit before the first write found that most changed pages lost a
+# large part of their stored text; nothing of the run was written. Surfaced
+# through crawl_jobs.error_summary like the reasons above.
+CONTENT_REGRESSION_REASON = "content_regression"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
@@ -491,11 +508,12 @@ def _build_crawl_outcome_warning(
         return None
 
     counts = Counter(str(outcome.get("reason_code") or "") for outcome in omitted)
-    reason = (
-        CRAWL_BUDGET_EXHAUSTED_REASON
-        if counts.get("not_fetched_budget_exhausted", 0) > 0
-        else CRAWL_FRONTIER_INCOMPLETE_REASON
-    )
+    if any(_stopped_at_attempt_limit(outcome) for outcome in omitted):
+        reason = CRAWL_ADDRESSES_MOSTLY_GONE_REASON
+    elif counts.get(FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value, 0) > 0:
+        reason = CRAWL_BUDGET_EXHAUSTED_REASON
+    else:
+        reason = CRAWL_FRONTIER_INCOMPLETE_REASON
     return {
         "reason": reason,
         "max_pages": max_pages,
@@ -505,6 +523,88 @@ def _build_crawl_outcome_warning(
             str(outcome.get("url") or "") for outcome in omitted[:10] if outcome.get("url")
         ],
     }
+
+
+# Which stop left addresses waiting, most specific first: a cancel or a block
+# explains a stop better than the limit the crawl was still under.
+_STOPPED_BY_PRECEDENCE = ("cancelled", "blocked", "site_rate_limit", "attempt_limit", "page_limit")
+_OUT_OF_SCOPE_REASON_CODES = frozenset(
+    {
+        FetchReasonCode.NOT_FETCHED_DEPTH_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_EXCLUDED.value,
+        FetchReasonCode.NOT_FETCHED_DUPLICATE.value,
+    }
+)
+
+
+def _crawl_coverage(fetch_outcomes: list[dict], *, max_pages: int) -> dict:
+    """How far one crawl got through the addresses its source knows.
+
+    An address counts once even when the discovery-seed pass reported it too:
+    a read outranks a failure or 404/410, which outranks a not-sent record. Every
+    address that was sent was tried, whatever it answered; a failure was tried
+    but read nothing. ``stopped_by`` is the stop that ended the loop, read from
+    the labels of the addresses never sent.
+    """
+    by_url: dict[str, dict] = {}
+    for outcome in fetch_outcomes:
+        reason = str(outcome.get("reason_code") or "")
+        if reason in _OUT_OF_SCOPE_REASON_CODES or _outcome_is_deliberately_filtered(outcome):
+            continue
+        canonical = _canonicalise_url(str(outcome.get("url") or ""))
+        earlier = by_url.get(canonical)
+        if earlier is None or _coverage_rank(outcome) > _coverage_rank(earlier):
+            by_url[canonical] = outcome
+    reasons = [str(o.get("reason_code") or "") for o in by_url.values()]
+    waiting = [r for r in reasons if _reason_waits(r)]
+    stops: set[str] = set()
+    if any(_stopped_at_attempt_limit(o) for o in by_url.values()):
+        stops.add("attempt_limit")
+    for reason in waiting:
+        if reason == FetchReasonCode.NOT_FETCHED_CANCELLED.value:
+            stops.add("cancelled")
+        elif reason == FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value:
+            stops.add("blocked")
+        elif reason == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value:
+            # The one ambiguous label: crawl_site gives the addresses an
+            # anti-bot block left unsent the same code as a rate-limit stop,
+            # so a blocked answer in this crawl tells the two apart.
+            blocked = FetchReasonCode.BLOCKED_ANTI_BOT.value in reasons
+            stops.add("blocked" if blocked else "site_rate_limit")
+        elif reason == FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value:
+            stops.add("page_limit")
+    gone = reasons.count(FetchReasonCode.GONE.value)
+    return {
+        "pages_read": sum(
+            1
+            for r in reasons
+            if r != FetchReasonCode.GONE.value
+            and r not in _FETCH_FAILURE_REASON_CODES
+            and not _reason_waits(r)
+        ),
+        "addresses_gone": gone,
+        "addresses_waiting": len(waiting),
+        "addresses_known": len(reasons),
+        "max_pages": max_pages,
+        "stopped_by": next((s for s in _STOPPED_BY_PRECEDENCE if s in stops), None),
+    }
+
+
+def _coverage_rank(outcome: dict) -> int:
+    reason = str(outcome.get("reason_code") or "")
+    if _reason_waits(reason):
+        return 0
+    if reason == FetchReasonCode.GONE.value or reason in _FETCH_FAILURE_REASON_CODES:
+        return 1
+    return 2
+
+
+def _stopped_at_attempt_limit(outcome: dict) -> bool:
+    return outcome.get("budget") == "attempts"
+
+
+def _reason_waits(reason: str) -> bool:
+    return reason.startswith(_NOT_FETCHED_REASON_PREFIX)
 
 
 def _outcome_is_deliberately_filtered(outcome: dict) -> bool:
@@ -565,15 +665,32 @@ def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
     return True
 
 
-def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
-    """Return the terminal status implied by a crawl warning, if any."""
+# Stops after which waiting addresses are normal operation: the rotation picks
+# them up on the next crawls, and coverage says how many wait.
+_ROTATING_STOPS = frozenset({"page_limit", "attempt_limit", "site_rate_limit"})
+
+
+def _crawl_warning_terminal_status(crawl_warning: dict | None, coverage: dict) -> str:
+    """Return the terminal status implied by a crawl warning, if any.
+
+    A crawl that read pages and left addresses waiting because of the page
+    limit, the attempt bound or the site's rate limit is how a source larger
+    than one crawl is read, so it ends ``completed`` with the warning still in
+    its summary. Nothing read, a block, the circuit breaker or any other stop
+    stays ``failed_partial``.
+    """
     if crawl_warning is None:
         return ""
-    if crawl_warning.get("reason") in {
+    reason = crawl_warning.get("reason")
+    if reason in {
         CRAWL_BUDGET_EXHAUSTED_REASON,
+        CRAWL_ADDRESSES_MOSTLY_GONE_REASON,
         CRAWL_FRONTIER_INCOMPLETE_REASON,
-        CRAWL_FETCH_FAILED_REASON,
     }:
+        if coverage["pages_read"] > 0 and coverage["stopped_by"] in _ROTATING_STOPS:
+            return ""
+        return "failed_partial"
+    if reason == CRAWL_FETCH_FAILED_REASON:
         return "failed_partial"
     return ""
 
@@ -588,6 +705,162 @@ def _header_value(headers: dict | None, name: str) -> str | None:
     return None
 
 
+def _check_login_indicator(result: CrawlResult, selector: str) -> None:
+    """Raise AuthWallDetected when a fetched page carries the login indicator.
+
+    SPEC-CRAWLER-004 Fase B: matched on crawl4ai's cleaned HTML, so a user menu
+    in a stripped header never reads as a login wall. It used to ride in
+    crawl4ai's JS wait_for, which 0.9.5 refuses.
+    """
+    if result.success and html_has_element(result.cleaned_html or result.html or "", selector):
+        raise AuthWallDetected(selector)
+
+
+def _walled_pages(results: list[CrawlResult], *, login_indicator_selector: str | None) -> list[str]:
+    """URLs of fetched pages the auth-wall classifier rejects, as the ingest loop would.
+
+    Raises AuthWallDetected when any page carries the configured login
+    indicator.
+    """
+    if login_indicator_selector:
+        for result in results:
+            _check_login_indicator(result, login_indicator_selector)
+    if not settings.ingest_login_wall_detect_enabled or _resolve_login_wall_mode() != "reject":
+        return []
+    return [r.url for r in results if r.success and _classify_page_wall(r).is_walled]
+
+
+# Run audit before publish: a crawl run is judged against the stored versions
+# before it writes anything. A page "lost content" when it keeps under 90% of
+# its stored words AND at least 50 stored words are gone; a run writes nothing
+# when at least 10 pages changed and at least half of them lost content.
+# Production history (2026-11-12): 116 crawl runs replaced at least 5 pages.
+# By share of replaced pages under 0.9 retained: 0% in 40 runs, under 10% in
+# 48, 10-30% in 15, 30-50% in 7, at least 50% in 6. Those 6 were four
+# logged-out runs of one connector (172-207 pages, median retained 0.83-0.84,
+# about 280 words lost per page) and two small runs: 6 pages, under the floor
+# of 10, and 12 pages of a documentation site that dropped three lines from
+# every small page (15%, about 20 words each), a real change. The 50-word
+# floor lets that one through, so the rule flags exactly the 4 logged-out runs.
+_REGRESSION_MIN_CHANGED_PAGES = 10
+_REGRESSION_MIN_LOST_SHARE = 0.5
+_LOST_BELOW_RETAINED = 0.9
+_LOST_MIN_MISSING_WORDS = 50
+
+_CONTENT_REGRESSION_SUGGESTION = (
+    "Most changed pages lost a large part of their stored text, so nothing of this "
+    "run was stored. Check that the site is complete (login, content selector); "
+    "if the change is real, an operator starts one crawl with accept_content_regression."
+)
+
+
+def _content_regression(results: list[CrawlResult], stored_texts: dict[str, str]) -> dict | None:
+    """Counts of the changed pages against their stored text when the run regressed, else None.
+
+    A page takes part only when it has a stored text and its change hash
+    differs from that text's, the same test the per-page dedup applies.
+    """
+    retained_values: list[float] = []
+    lost = 0
+    for result in results:
+        stored = stored_texts.get(result.url)
+        text = result.fit_markdown or result.raw_markdown or ""
+        if not result.success or stored is None:
+            continue
+        if crawl_change_hash(text, result.url) == crawl_change_hash(stored, result.url):
+            continue
+        retained, missing = retention(stored, text)
+        retained_values.append(retained)
+        if retained < _LOST_BELOW_RETAINED and missing >= _LOST_MIN_MISSING_WORDS:
+            lost += 1
+    changed = len(retained_values)
+    if changed < _REGRESSION_MIN_CHANGED_PAGES or lost < changed * _REGRESSION_MIN_LOST_SHARE:
+        return None
+    return {
+        "reason": CONTENT_REGRESSION_REASON,
+        "changed_pages": changed,
+        "pages_lost_content": lost,
+        "median_retained": round(median(retained_values), 3),
+        "suggestion": _CONTENT_REGRESSION_SUGGESTION,
+    }
+
+
+async def _judge_run_before_write(
+    *,
+    connection_factory: ConnectionFactory,
+    results: list[CrawlResult],
+    auth_wall_pages: list[str],
+    wall_decision_count: int,
+    cookies: list[dict] | None,
+    login_indicator_selector: str | None,
+    accept_content_regression: bool,
+    log_fields: dict,
+) -> tuple[bool, dict | None]:
+    """Decide before the first write whether this run may write at all.
+
+    Returns ``(write_nothing, content_regression_summary)``. Walled pages that
+    make the run untrusted are appended to ``auth_wall_pages`` so the
+    terminal status reports them. Three verdicts write nothing:
+
+    * saved cookies and any walled page: the run lost its session, and a
+      logged-out page does not always show a wall (2026-11-12: 203 pages
+      replaced, median 18.5% of their text lost);
+    * an anonymous run walled at the existing dirty-content rate: its other
+      pages cannot be trusted either;
+    * a content regression against the stored versions (see the constants).
+    """
+    walled = _walled_pages(results, login_indicator_selector=login_indicator_selector)
+    if cookies:
+        untrusted = bool(auth_wall_pages or walled)
+    else:
+        untrusted = bool(
+            decide_terminal_status(
+                auth_wall_count=len(auth_wall_pages) + len(walled),
+                total_count=wall_decision_count,
+                has_cookies=False,
+                has_login_indicator=bool(login_indicator_selector),
+                threshold=settings.ingest_authwall_dirty_trip_rate,
+            )[0]
+        )
+    if untrusted:
+        auth_wall_pages.extend(walled)
+        logger.error(
+            "crawl_session_lost_stored_pages_kept"
+            if cookies
+            else "crawl_walled_run_stored_pages_kept",
+            login_walls=len(auth_wall_pages),
+            pages_kept=len(results),
+            **log_fields,
+        )
+        return True, None
+
+    async with connection_factory() as conn:
+        stored_texts = await pg_store.get_active_document_texts(
+            conn, log_fields["org_id"], log_fields["kb_slug"], [r.url for r in results]
+        )
+    regression = _content_regression(results, stored_texts)
+    if regression is None:
+        return False, None
+    counts = {k: regression[k] for k in ("changed_pages", "pages_lost_content", "median_retained")}
+    if accept_content_regression:
+        logger.info("crawl_content_regression_accepted", **counts, **log_fields)
+        return False, None
+    logger.error("crawl_content_regression_stored_pages_kept", **counts, **log_fields)
+    return True, regression
+
+
+def _classify_page_wall(result: CrawlResult) -> AuthWallClassification:
+    """Classify a fetched page the same way before the ingest loop and inside it."""
+    return classify_auth_wall(
+        response_status_code=None,
+        redirect_target_url=None,
+        set_cookie_header=_header_value(result.response_headers, "set-cookie"),
+        word_count=result.word_count,
+        fit_markdown=result.fit_markdown or result.raw_markdown or "",
+        raw_html=result.html or "",
+    )
+
+
 def _attach_crawl_warning(summary: dict, crawl_warning: dict | None) -> dict:
     """Attach warning details without replacing a stronger top-level reason."""
     if crawl_warning is not None:
@@ -595,9 +868,9 @@ def _attach_crawl_warning(summary: dict, crawl_warning: dict | None) -> dict:
     return summary
 
 
-# @MX:ANCHOR: AuthWallDetected -- propagates login-indicator triggers from _ingest_crawl_result
-#   back up to run_crawl_job, which converts them into a single structured
-#   crawl_jobs.error entry and halts the remaining BFS pages.
+# @MX:ANCHOR: AuthWallDetected -- raised by _check_login_indicator before the
+#   ingest loop; run_crawl_job converts it into a single structured
+#   crawl_jobs.error entry and ingests no page of that run.
 # @MX:REASON: A silent auth wall would otherwise ingest login pages as "content"
 #   and pollute Qdrant. Hard failing with a typed exception keeps the error
 #   surface at exactly one row per sync regardless of page count.
@@ -854,6 +1127,45 @@ async def _apply_domain_rate_limit_effect_once(
             )
 
 
+async def _purge_stale_paths(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    stale_paths: list[str],
+) -> int:
+    """Delete this connector's documents for pages the site no longer has.
+
+    Also retries every page of this connector whose purge started on an
+    earlier crawl and did not finish: those rows are closed already, so they
+    no longer appear among the active stale paths. ``conn`` runs without an
+    outer transaction, so the close is committed before the stores are
+    cleaned, exactly as on the other delete paths, and a failure leaves the
+    page closed and marked for the next complete crawl. Returns the number of
+    pages purged.
+    """
+    pending = await pg_store.list_connector_paths_pending_purge(conn, org_id, kb_slug, connector_id)
+    purged = 0
+    for path in dict.fromkeys([*stale_paths, *pending]):
+        try:
+            heads = await pg_store.list_document_heads(
+                conn, org_id, path, kb_slug, connector_id=connector_id
+            )
+            await document_purge.purge_documents(conn, org_id, heads)
+        except Exception as exc:
+            logger.warning(
+                "crawl_connector_stale_purge_failed",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                connector_id=connector_id,
+                path=path,
+                error=str(exc),
+            )
+        else:
+            purged += 1
+    return purged
+
+
 async def run_crawl_job(
     *,
     connection_factory: ConnectionFactory,
@@ -874,6 +1186,7 @@ async def run_crawl_job(
     connector_id: str | None = None,
     resource_key: str | None = None,
     discovery_seed_url: str | None = None,
+    accept_content_regression: bool = False,
 ) -> None:
     """
     Crawl a website and ingest each page into the knowledge pipeline.
@@ -904,10 +1217,15 @@ async def run_crawl_job(
     over subsequent clean crawls (same module).
 
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
-    matched against the HTML of every page before it is ingested. If a page
-    matches, it is flagged as auth-walled and the job is marked failed
-    with ``error='auth_wall_detected: {selector}'`` and no further pages
-    are ingested.
+    matched against the HTML of every fetched page before the first page is
+    ingested. If a page matches, the job is marked failed with
+    ``error='auth_wall_detected: {selector}'`` and no page is ingested. The
+    whole run is judged before its first write (``_judge_run_before_write``):
+    a lost session, an anonymous run dominated by walls, or a content
+    regression against the stored versions ends ``failed_partial`` and
+    writes nothing. ``accept_content_regression`` is a person's one-shot
+    acceptance of a real site change: the run then writes as usual, and
+    ingest_document does not hold its shrunken pages.
 
     SPEC-TI-003-FOLLOWUP-001 AC-1: ``connection_factory`` leases a connection
     with the tenant RLS GUC for each bounded database phase. No connection is
@@ -1054,6 +1372,17 @@ async def run_crawl_job(
         # ``crawl_jobs.fetch_outcomes`` so operators can answer "where did
         # the missing pages go?" without log forensics.
         crawl_rate_limit_state = CrawlRateLimitState(effective_rate_limit)
+        # Only a connector's own crawl rotates; the discovery-seed pass below
+        # does not, since its pages are merged into this crawl and trimmed to
+        # max_pages.
+        memory = (
+            PostgresCrawlMemory(
+                connection_factory, org_id=org_id, kb_slug=kb_slug, connector_id=connector_id
+            )
+            if connector_id
+            else None
+        )
+        memory_state = CrawlMemoryState(remembered=await memory.load()) if memory else None
         results, fetch_outcomes = await crawl_site(
             start_url=start_url,
             selector=content_selector,
@@ -1066,6 +1395,7 @@ async def run_crawl_job(
             cancel_check=cancel_check,
             checkpoint=primary_checkpoint,
             rate_limit_state=crawl_rate_limit_state,
+            memory=memory_state,
         )
 
         # 2026-08-19 (crawl-cancel): detected purely from the reason code
@@ -1199,6 +1529,26 @@ async def run_crawl_job(
         # plus the walls that never became a result.
         wall_decision_count = len(results) + len(http_login_walls)
 
+        # Audit before publish: every "write nothing" verdict empties this one
+        # list, so no page, link-graph row, crawled_pages row, stale purge or
+        # follow-up job comes out of an untrusted run.
+        write_nothing, regression_summary = await _judge_run_before_write(
+            connection_factory=connection_factory,
+            results=results,
+            auth_wall_pages=auth_wall_pages,
+            wall_decision_count=wall_decision_count,
+            cookies=cookies,
+            login_indicator_selector=login_indicator_selector,
+            accept_content_regression=accept_content_regression,
+            log_fields={
+                "job_id": job_id,
+                "connector_id": connector_id,
+                "org_id": org_id,
+                "kb_slug": kb_slug,
+            },
+        )
+        pages_to_ingest = [] if write_nothing else results
+
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,
             max_pages=max_pages,
@@ -1231,14 +1581,20 @@ async def run_crawl_job(
 
                 # SPEC-CRAWLER-005 Fase 1: build link graph BEFORE per-page ingest so
                 # late pages don't read an empty graph. REQ-01.1.
-                await _build_link_graph(conn, results, org_id, kb_slug)
+                await _build_link_graph(conn, pages_to_ingest, org_id, kb_slug)
 
         # Batch-fetch all known content hashes in a single query
-        urls = [r.url for r in results]
+        urls = [r.url for r in pages_to_ingest]
         async with connection_factory() as conn:
             known_hashes = await pg_store.get_crawled_page_hashes(conn, org_id, kb_slug, urls)
 
-        for result in results:
+        # Recurring site lines are learned once per run from the stored pages.
+        async with connection_factory() as conn:
+            site_lines_by_host = learn_site_lines(
+                await pg_store.get_crawled_pages_markdown(conn, org_id, kb_slug)
+            )
+
+        for result in pages_to_ingest:
             url = result.url
             if resource_key:
                 from knowledge_ingest.connector_state import (
@@ -1273,13 +1629,10 @@ async def run_crawl_job(
                             login_indicator_selector=login_indicator_selector,
                             authenticated_context=bool(cookies or login_indicator_selector),
                             connector_id=connector_id,
-                            resource_key=resource_key,
+                            accept_shrink=accept_content_regression,
+                            site_lines=site_lines_by_host.get(urlparse(url).netloc, frozenset()),
                         )
                         pages_done += 1
-                    except AuthWallDetected:
-                        # Halt the whole BFS — downstream handler in the except block
-                        # writes the job row; do not keep ingesting follow-up pages.
-                        raise
                     except AnonymousAuthWallDetected as wall_exc:
                         # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.1 — per-page wall,
                         # NOT a session-wide failure. Record + continue BFS so sibling
@@ -1388,6 +1741,7 @@ async def run_crawl_job(
                     total_count=wall_decision_count,
                     wall_rate=round(wall_fraction, 3),
                 )
+        coverage = _crawl_coverage(fetch_outcomes, max_pages=max_pages)
         summary_json: str | None = None
         if job_cancelled:
             # 2026-08-19 (crawl-cancel): an operator cancel outranks every
@@ -1397,6 +1751,11 @@ async def run_crawl_job(
             # fetched before the cancel was observed are still ingested
             # above (pages_done keeps whatever it already counted).
             terminal_status = "cancelled"
+        elif regression_summary:
+            terminal_status = "failed_partial"
+            summary_json = json.dumps(
+                _attach_crawl_warning(regression_summary, crawl_outcome_warning)
+            )
         elif dirty_status:
             terminal_status = dirty_status
             summary_payload = dirty_summary or {}
@@ -1429,8 +1788,8 @@ async def run_crawl_job(
                     crawl_outcome_warning,
                 )
             )
-        elif _crawl_warning_terminal_status(crawl_outcome_warning):
-            terminal_status = _crawl_warning_terminal_status(crawl_outcome_warning)
+        elif _crawl_warning_terminal_status(crawl_outcome_warning, coverage):
+            terminal_status = _crawl_warning_terminal_status(crawl_outcome_warning, coverage)
             summary_payload = dict(crawl_outcome_warning or {})
             if auth_wall_pages:
                 summary_payload["login_walls_skipped"] = len(auth_wall_pages)
@@ -1463,14 +1822,33 @@ async def run_crawl_job(
             summary_json = json.dumps(crawl_outcome_warning)
         else:
             terminal_status = "completed"
+        if connector_id:
+            summary_payload = json.loads(summary_json) if summary_json else {}
+            summary_payload["coverage"] = coverage
+            summary_json = json.dumps(summary_payload)
 
         async with connection_factory() as conn:
             async with guard_crawl_execution(conn, job_id, execution_generation):
                 # Serialize all completion side effects with recovery. This keeps
                 # a superseded attempt from deleting connector artifacts or
                 # enqueueing follow-up work after a newer generation has started.
+                # A rotation crawl reads remembered addresses the site may no
+                # longer list, so what it read cannot say what is stale: it
+                # never retires anything. A whole-site crawl runs and purges
+                # exactly as without memory.
+                rotating = memory_state is not None and not memory_state.whole_site
+                stale_paths: list[str] = []
+                reconcile = False
                 if connector_id and terminal_status == "completed" and pages_done > 0:
-                    if not _crawl_fully_fetched(fetch_outcomes):
+                    if rotating:
+                        logger.info(
+                            "crawl_connector_stale_reconcile_skipped",
+                            job_id=job_id,
+                            connector_id=connector_id,
+                            kb_slug=kb_slug,
+                            reason="rotation_crawl",
+                        )
+                    elif not _crawl_fully_fetched(fetch_outcomes):
                         skip_reason_counts = Counter(
                             reason
                             for outcome in fetch_outcomes
@@ -1487,6 +1865,7 @@ async def run_crawl_job(
                             skip_reason_counts=dict(skip_reason_counts),
                         )
                     else:
+                        reconcile = True
                         current_urls = [result.url for result in results]
                         stale_paths = await pg_store.list_stale_connector_artifact_paths(
                             conn,
@@ -1521,47 +1900,37 @@ async def run_crawl_job(
                                     retire_limit=retire_limit,
                                 )
                                 stale_paths = []
-                        if stale_paths:
-                            stale_paths_deleted: list[str] = []
-                            for path in stale_paths:
-                                try:
-                                    await qdrant_store.delete_document(org_id, kb_slug, path)
-                                except Exception as exc:
-                                    logger.warning(
-                                        "crawl_connector_stale_vector_delete_failed",
-                                        job_id=job_id,
-                                        connector_id=connector_id,
-                                        kb_slug=kb_slug,
-                                        path=path,
-                                        error=str(exc),
-                                    )
-                                else:
-                                    stale_paths_deleted.append(path)
-                            if stale_paths_deleted:
-                                retired_count = (
-                                    await pg_store.soft_delete_stale_connector_artifacts(
-                                        conn,
-                                        org_id=org_id,
-                                        kb_slug=kb_slug,
-                                        connector_id=connector_id,
-                                        stale_paths=stale_paths_deleted,
-                                    )
-                                )
-                                await conn.execute(
-                                    "UPDATE knowledge.crawl_jobs "
-                                    "SET pages_changed=pages_changed+$1 "
-                                    "WHERE id=$2 AND execution_generation=$3",
-                                    retired_count,
-                                    job_id,
-                                    execution_generation,
-                                )
-                                logger.info(
-                                    "crawl_connector_stale_artifacts_retired",
-                                    job_id=job_id,
-                                    connector_id=connector_id,
-                                    kb_slug=kb_slug,
-                                    retired_count=retired_count,
-                                )
+                if memory is not None and memory_state is not None and not write_nothing:
+                    # Recorded here, inside the fence, after the pages were
+                    # written and before anything is retired, so a run judged
+                    # "write nothing" or superseded leaves the memory where it
+                    # was, and a failed record fails the job before the purge.
+                    # A whole-site crawl replaces the memory with tonight's
+                    # frontier; a rotation crawl adds to it.
+                    await memory.record(
+                        conn, memory_state.rows, memory_state.forget, replace=not rotating
+                    )
+                retired_count = (
+                    await _purge_stale_paths(conn, org_id, kb_slug, connector_id, stale_paths)
+                    if reconcile
+                    else 0
+                )
+                if retired_count:
+                    await conn.execute(
+                        "UPDATE knowledge.crawl_jobs "
+                        "SET pages_changed=pages_changed+$1 "
+                        "WHERE id=$2 AND execution_generation=$3",
+                        retired_count,
+                        job_id,
+                        execution_generation,
+                    )
+                    logger.info(
+                        "crawl_connector_stale_artifacts_retired",
+                        job_id=job_id,
+                        connector_id=connector_id,
+                        kb_slug=kb_slug,
+                        retired_count=retired_count,
+                    )
 
                 if terminal_status == "completed" and pages_done > 0:
                     await _enqueue_taxonomy_backfill_after_crawl(
@@ -1682,24 +2051,17 @@ async def _ingest_crawl_result(
     login_indicator_selector: str | None = None,
     authenticated_context: bool = False,
     connector_id: str | None = None,
-    resource_key: str | None = None,
+    accept_shrink: bool = False,
+    site_lines: frozenset[str] = frozenset(),
 ) -> bool:
     """Process a crawl result: dedup, extract links, ingest.
 
     Returns whether the knowledge base changed: False for every skip (unchanged
-    raw HTML, change-hash noise, too-short content, or knowledge-ingest's own
-    content-hash no-op), True after a real ingest.
+    raw HTML, change-hash noise, too-short content, knowledge-ingest's own
+    content-hash no-op, or a held shrunken version), True after a real ingest.
     """
     if not result.success:
         raise ValueError(f"Crawl failed: {result.error_message}")
-
-    # SPEC-CRAWLER-004 Fase B: the login indicator is checked on the fetched
-    # HTML. It used to ride in crawl4ai's JS wait_for, which 0.9.5 refuses.
-    # Surfacing it as AuthWallDetected gives one structured failure per sync.
-    if login_indicator_selector and html_has_element(
-        result.cleaned_html or result.html or "", login_indicator_selector
-    ):
-        raise AuthWallDetected(login_indicator_selector)
 
     # Detect PDF: check Content-Type header first, fall back to URL extension
     content_type_header = ""
@@ -1832,6 +2194,8 @@ async def _ingest_crawl_result(
             url=url,
             stored_content_hash=stored_content,
             change_hash=content_hash,
+            new_markdown=text,
+            site_lines=site_lines,
         ):
             await pg_store.upsert_crawled_page(
                 conn,
@@ -1856,14 +2220,7 @@ async def _ingest_crawl_result(
     login_wall_mode: str | None = None
     effective_authenticated_context = authenticated_context or login_indicator_selector is not None
     if settings.ingest_login_wall_detect_enabled:
-        auth_wall = classify_auth_wall(
-            response_status_code=None,
-            redirect_target_url=None,
-            set_cookie_header=_header_value(result.response_headers, "set-cookie"),
-            word_count=result.word_count,
-            fit_markdown=text,
-            raw_html=raw_html,
-        )
+        auth_wall = _classify_page_wall(result)
         if auth_wall.is_walled:
             login_wall_signal = AuthWallSignal(
                 pattern="auth_wall_classifier",
@@ -1968,8 +2325,6 @@ async def _ingest_crawl_result(
         # Before this, every crawl chunk had source_connector_id=None and
         # neither Qdrant nor artifact delete matched.
         extra["source_connector_id"] = connector_id
-        if resource_key:
-            extra["resource_key"] = resource_key
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
 
@@ -2038,11 +2393,14 @@ async def _ingest_crawl_result(
             synthesis_depth=1,
             extra=extra,
             source_connector_id=connector_id,
-            resource_generation=(
-                parse_connector_resource_key(resource_key).generation if resource_key else None
-            ),
         ),
+        accept_shrink=accept_shrink,
     )
+    if ingest_result.get("status") == "held":
+        # crawled_pages keeps the hashes of the stored version, so the next
+        # crawl sees this page as changed again and offers the candidate to
+        # ingest_document, which accepts it once it has been seen for 12 hours.
+        return False
 
     if ingest_result.get("status") != "skipped":
         # Counts only, no text. Logged here and not in the chunker, which runs

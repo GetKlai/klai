@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  availableMfaMethods,
   canResendEmailOtp,
   createInitialEmailOtpState,
   emailOtpReducer,
@@ -67,10 +68,10 @@ describe('email OTP reducer', () => {
     expect(canResendEmailOtp(emailOtpReducer(verifying, { type: 'tick', now: 31_000 }))).toBe(true)
   })
 
-  it('keeps verification codes numeric and six digits long', () => {
-    const state = emailOtpReducer(createInitialEmailOtpState(), { type: 'setCode', code: '12a34-567' })
+  it('keeps verification codes numeric and eight digits long, the length Zitadel mails', () => {
+    const state = emailOtpReducer(createInitialEmailOtpState(), { type: 'setCode', code: '12a34-5678-9' })
 
-    expect(state.code).toBe('123456')
+    expect(state.code).toBe('12345678')
   })
 })
 
@@ -97,5 +98,16 @@ describe('TOTP reducer', () => {
     const state = totpReducer(initialTotpState, { type: 'setCode', code: '9a876543' })
 
     expect(state.code).toBe('987654')
+  })
+})
+
+describe('methods offered on the set-up page', () => {
+  it('offers only factors the login verifies when the organisation requires one', () => {
+    expect(availableMfaMethods('required')).toEqual(['email', 'totp'])
+  })
+
+  it('offers the passkey first under the other policies', () => {
+    expect(availableMfaMethods('optional')).toEqual(['passkey', 'email', 'totp'])
+    expect(availableMfaMethods('recommended')).toEqual(['passkey', 'email', 'totp'])
   })
 })

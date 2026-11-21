@@ -49,6 +49,15 @@ def test_a_cookie_for_the_base_host_is_stored_as_json() -> None:
     assert (stored["secure"], stored["httpOnly"], stored["path"]) == (True, False, "/")
 
 
+def test_a_stored_config_with_sign_in_hosts_still_validates_and_drops_them() -> None:
+    validated = _validate_connector_config(
+        "web_crawler",
+        {**_config({**_idp_cookie(), "domain": "app.example.com"}), "auth_chain_hosts": ["idp.example.com"]},
+    )
+    assert "auth_chain_hosts" not in validated
+    assert validated["cookies"][0]["domain"] == "app.example.com"
+
+
 def test_a_cookie_for_another_host_is_rejected_with_422() -> None:
     with pytest.raises(HTTPException) as excinfo:
         _validate_connector_config("web_crawler", _config(_idp_cookie()))

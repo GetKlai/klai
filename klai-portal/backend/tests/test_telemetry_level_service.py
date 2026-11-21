@@ -203,3 +203,8 @@ async def test_failed_opt_out_cleanup_runs_again_on_retry(monkeypatch, support_p
 
     assert await set_telemetry_level(db, **kwargs) == ("shadow", "shadow")
     assert support_purge.await_count == 2
+    # Leaving full purges the support evidence only; nothing else is deleted in that session.
+    from app.core import database
+
+    purge_db = database.tenant_scoped_session.return_value.__aenter__.return_value  # type: ignore[attr-defined]
+    purge_db.execute.assert_not_awaited()

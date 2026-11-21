@@ -31,9 +31,11 @@ import * as m from '@/paraglide/messages'
  *     "direct manager" pattern), or delete.
  *   - Personal KBs: always delete (no transfer option - REQ-2.4 / D2).
  *
- * Token revoke counts (REQ-2.1b / REQ-2.7) surface as an info banner
- * so the admin sees what auto-cleanup will happen alongside the
- * user-status flip.
+ * Partner API keys the user created are handed over, not deleted, so
+ * integrations keep working: the admin picks the new owner (default = the
+ * current admin, like the KBs). Only admins can manage API keys, so only
+ * admins are offered. MCP tokens act as the person and are revoked
+ * (REQ-2.7); their count surfaces as an info banner.
  */
 
 interface OffboardPreviewKb {
@@ -63,6 +65,7 @@ interface AdminUser {
   email: string
   first_name: string
   last_name: string
+  role: string
   status: string
   invite_pending: boolean
 }
@@ -135,6 +138,8 @@ export function OffboardWizard({
         !u.invite_pending,
     )
   }, [usersQuery.data, userId])
+  const apiKeyReceivers = eligibleReceivers.filter((u) => u.role === 'admin')
+  const [apiKeysTransferTo, setApiKeysTransferTo] = useState(currentAdminId)
 
   // Per-org-KB disposition state. Default action is 'transfer' to the
   // current admin - picks up Mark's "default to admin" decision (D1).
@@ -206,7 +211,14 @@ export function OffboardWizard({
   const previewError = previewQuery.error?.message
   const apiKeysCount = previewQuery.data?.api_keys_count ?? 0
   const mcpTokensCount = previewQuery.data?.mcp_tokens_count ?? 0
-  const tokensCount = apiKeysCount + mcpTokensCount
+  const credentialRows = [
+    ...(apiKeysCount > 0
+      ? [{ label: m.admin_users_wizard_api_keys_label(), value: apiKeysCount }]
+      : []),
+    ...(mcpTokensCount > 0
+      ? [{ label: m.admin_users_wizard_tokens_label(), value: mcpTokensCount }]
+      : []),
+  ]
   const transferCount = orgKbs.filter(
     (kb) => dispositionFor(kb).action === 'transfer',
   ).length
@@ -245,9 +257,7 @@ export function OffboardWizard({
           },
         ]
       : []),
-    ...(tokensCount > 0
-      ? [{ label: m.admin_users_wizard_tokens_label(), value: tokensCount }]
-      : []),
+    ...credentialRows,
   ]
   const confirmRows = [
     ...(transferCount > 0
@@ -269,9 +279,7 @@ export function OffboardWizard({
           },
         ]
       : []),
-    ...(tokensCount > 0
-      ? [{ label: m.admin_users_wizard_tokens_label(), value: tokensCount }]
-      : []),
+    ...credentialRows,
   ]
   const wizardDescription =
     !previewQuery.data || orgKbs.length > 0
@@ -290,6 +298,7 @@ export function OffboardWizard({
     if (isSubmitting) return
     if (!next) {
       setOrgDispositions({})
+      setApiKeysTransferTo(currentAdminId)
       setStep(0)
     }
     onOpenChange(next)
@@ -297,10 +306,15 @@ export function OffboardWizard({
 
   function handleSubmit() {
     lifecycleMutation.mutate(
-      { userId, kb_dispositions: buildDispositions() },
+      {
+        userId,
+        kb_dispositions: buildDispositions(),
+        api_keys_transfer_to: apiKeysTransferTo,
+      },
       {
         onSuccess: () => {
           setOrgDispositions({})
+          setApiKeysTransferTo(currentAdminId)
           setStep(0)
           onOpenChange(false)
           void navigate({ to: '/admin/users' })
@@ -377,7 +391,35 @@ export function OffboardWizard({
                     )}
                   </section>
 
-                  {tokensCount > 0 && (
+                  {apiKeysCount > 0 && (
+                    <section className="space-y-1.5">
+                      <Label
+                        htmlFor="api-keys-transfer-to"
+                        className="font-medium text-gray-900"
+                      >
+                        {m.admin_users_wizard_api_keys_recipient_label()}
+                      </Label>
+                      <p className="text-gray-600">
+                        {m.admin_users_wizard_api_keys_description({
+                          apiKeys: apiKeysCount,
+                        })}
+                      </p>
+                      <Select
+                        id="api-keys-transfer-to"
+                        value={apiKeysTransferTo}
+                        onChange={(e) => setApiKeysTransferTo(e.target.value)}
+                        containerClassName="w-full sm:w-80"
+                      >
+                        {apiKeyReceivers.map((u) => (
+                          <option key={u.zitadel_user_id} value={u.zitadel_user_id}>
+                            {u.first_name} {u.last_name} ({u.email})
+                          </option>
+                        ))}
+                      </Select>
+                    </section>
+                  )}
+
+                  {mcpTokensCount > 0 && (
                     <div
                       className="flex items-start gap-2 border-y border-gray-200 py-3"
                       data-test-id="offboard-token-banner"
@@ -389,7 +431,6 @@ export function OffboardWizard({
                         </p>
                         <p className="text-gray-600">
                           {m.admin_users_wizard_tokens_description({
-                            apiKeys: apiKeysCount,
                             mcpTokens: mcpTokensCount,
                           })}
                         </p>

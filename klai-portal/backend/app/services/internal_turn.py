@@ -28,9 +28,11 @@ from klai_chat_prompts import check_unavailable_message, no_citable_sources_mess
 
 from app.core.config import Settings
 from app.services import case_file, knowledge_ingest_client
+from app.services.action_wish import ActionOutcome, read_action_wish
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _is_web_search_tool
 from app.services.chat_safety import _last_user_message
+from app.services.pasted_correspondence import material_rules
 from app.services.retrieval_context import (
     INTERNAL_RETRIEVE_TOP_K,
     KnowledgeTurn,
@@ -87,8 +89,24 @@ class InternalInputs:
 
 
 async def internal_turn(inputs: InternalInputs) -> Reply:
+    wish = _action_wish(inputs)
+    try:
+        return await _run_turn(inputs, wish)
+    finally:
+        # Every exit of the turn ends the action call: a reply decided in code
+        # offers no tools, and a step that raised leaves nobody to await it.
+        # Cancelling a finished task does nothing.
+        if wish is not None:
+            wish.cancel()
+
+
+async def _run_turn(inputs: InternalInputs, wish: asyncio.Task[ActionOutcome] | None) -> Reply:
     turn = KnowledgeTurn()
     messages = inputs.request.messages
+    # Decided in code before anything searches (SPEC-CHAT-INTERNAL-ROUTE-001 §5);
+    # the record keeps which rules fired, so the misses can be counted.
+    inputs.answer_signals["material"] = material_rules(messages)
+    turn.material = bool(inputs.answer_signals["material"])
     case: case_file.Case | None = None
     case_ms = 0
     with retrieval_upstream_errors(inputs.auth.org_id):
@@ -133,7 +151,7 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
     if routed := _route(inputs, turn, found, case):
         return routed
     timing = {"started_at": inputs.turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
-    return await _write(inputs, turn, found, timing)
+    return await _write(inputs, turn, found, timing, wish)
 
 
 def _read_case(inputs: InternalInputs) -> Awaitable[case_file.Case | None]:
@@ -146,6 +164,43 @@ def _read_case(inputs: InternalInputs) -> Awaitable[case_file.Case | None]:
         inputs.settings,
         delegated_org_id=inputs.auth.zitadel_org_id,
     )
+
+
+def _answers_a_tool_result(request: ChatCompletionsRequest) -> bool:
+    """The client ran a tool the writer called and sends its result back: the tool round goes on."""
+    return bool(request.tools) and request.messages[-1].get("role") == "tool"
+
+
+def _action_wish(inputs: InternalInputs) -> asyncio.Task[ActionOutcome] | None:
+    """The action call, started beside the search and the case so it adds no waiting time.
+
+    Only a request with tools makes it, and not a turn that answers a tool
+    result: that one is an action turn without asking.
+    """
+    if not inputs.request.tools or _answers_a_tool_result(inputs.request):
+        return None
+    return asyncio.create_task(
+        read_action_wish(inputs.request.messages, inputs.settings, delegated_org_id=inputs.auth.zitadel_org_id)
+    )
+
+
+async def _action_turn(inputs: InternalInputs, wish: asyncio.Task[ActionOutcome] | None) -> bool:
+    """Whether the writer is offered the employee's tools on this turn.
+
+    Only when the tool round goes on, or when the employee asked for an action
+    in words code found literally in the last message (action_wish.py). In
+    doubt it is not: with the tools beside the reply format the production
+    model ran away on 8 of 8 replayed turns (SPEC-CHAT-INTERNAL-ROUTE-001 §1),
+    and in four weeks employees asked for a tool nine times. The record keeps
+    what the call decided, so its false actions can be counted on real traffic.
+    """
+    if _answers_a_tool_result(inputs.request):
+        return True
+    if wish is None:
+        return False
+    outcome = await wish
+    inputs.answer_signals["action_call"] = outcome
+    return outcome == "action"
 
 
 async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variants: list[str], product: str) -> Found:
@@ -170,7 +225,11 @@ async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variant
         profile=profile,
         templates_block=inputs.templates_block,
         telemetry_level=inputs.telemetry_level,
-        web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
+        # Only a general turn reads this, before the action call has answered,
+        # so only a turn that answers a tool result surely offers the writer its
+        # tools: the prompt may not promise a search tool the writer does not get.
+        web_search_available=_answers_a_tool_result(request)
+        and any(_is_web_search_tool(tool) for tool in request.tools or []),
         knowledge_turn=turn,
     )
     return Found(chunks, system_prompt, trusted_sources, broad, None)
@@ -194,10 +253,12 @@ def _route(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case
         )
         return _refusal(inputs, turn, turn.refusal(language), language)
     mark_knowledge_turn_without_evidence(turn, case)
-    if turn.not_in_passages and inputs.profile.kb_mode == "strict":
+    if turn.not_in_passages and inputs.profile.kb_mode == "strict" and not turn.material:
         # Strict promised knowledge-base-only answers, and no passage answers
         # this question: the same fixed refusal as with zero passages, decided
         # before any model writes (step N). Open writes from general knowledge.
+        # A material turn is written: the task on the pasted text needs no
+        # passage, and the statement check refuses a product claim none carries.
         logger.info(
             "partner_chat_not_in_passages",
             org_id=inputs.auth.org_id,
@@ -218,7 +279,13 @@ def _refusal(inputs: InternalInputs, turn: KnowledgeTurn, text: str, language: s
     return fixed_reply(inputs, turn, text, language, decision="refusal", refused=True, appointment=False)
 
 
-async def _write(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, timing: dict[str, float]) -> Reply:
+async def _write(
+    inputs: InternalInputs,
+    turn: KnowledgeTurn,
+    found: Found,
+    timing: dict[str, float],
+    wish: asyncio.Task[ActionOutcome] | None,
+) -> Reply:
     """5. Write. Strict is held until the reply is composed and judged, as on the widget.
 
     Open and general stream when the request does: an employee reads the
@@ -247,10 +314,14 @@ async def _write(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, timi
         turn_timing=timing,
         delegated_org_id=auth.zitadel_org_id,
         knowledge_turn=turn,
-        pasted_correspondence=inputs.pasted_correspondence,
+        # Every turn the mail detector fires on is a material turn, and on all
+        # of them the reply format does not force a language: a reply to the
+        # customer is in the customer's language.
+        pasted_correspondence=turn.material,
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,
+        action_turn=await _action_turn(inputs, wish),
         web_chunks=web_chunks,
         web_query=web_query,
         include_sources=knowledge is None or knowledge.include_sources,

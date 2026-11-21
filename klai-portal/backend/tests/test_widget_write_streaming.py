@@ -63,7 +63,9 @@ def _deltas(frame: bytes) -> list[dict]:
 async def test_an_open_reply_streams_its_words_first_and_ends_on_its_sources_and_footer(monkeypatch):
     model = _PausingModel("Je vraagt verlof aan in het HR-portaal ", "onder Verlof, zo regel je het snel en goed.")
     monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", model)
-    settings = MagicMock(litellm_base_url="http://litellm.example.com", litellm_master_key="key")
+    settings = MagicMock(
+        litellm_base_url="http://litellm.example.com", litellm_master_key="key", chat_writer_max_tokens=2000
+    )
     reply = await write_reply(
         messages=[{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
         model="klai-primary",
@@ -124,9 +126,12 @@ async def test_a_streamed_reply_with_text_and_a_tool_call_ends_on_run_the_tools(
         model="klai-primary",
         temperature=0.2,
         system_prompt="prompt",
-        settings=MagicMock(litellm_base_url="http://litellm.example.com", litellm_master_key="key"),
+        settings=MagicMock(
+            litellm_base_url="http://litellm.example.com", litellm_master_key="key", chat_writer_max_tokens=2000
+        ),
         profile=ChatProfile(surface="internal", kb_mode="open"),
         tools=[{"type": "function", "function": {"name": "rooster"}}],
+        action_turn=True,
         stream=True,
     )
 

@@ -98,6 +98,7 @@ class _LiteLLM:
         repaired: str = "",
         selection: dict | str | None = None,
         case: dict | None = None,
+        action: dict | None = None,
     ) -> None:
         self.answer = answer
         self.question = question
@@ -108,6 +109,8 @@ class _LiteLLM:
         self.selection = selection
         # The case (case_file.py); without one the call fails and the turn runs without a case.
         self.case = case
+        # The action call (action_wish.py); without one it fails, which is no action turn.
+        self.action = action
         self.calls: list[dict] = []
 
     def of(self, kind: str) -> list[dict]:
@@ -140,6 +143,8 @@ class _LiteLLM:
             replies[kind] = selection_quoting_first_passage(body) if self.selection is None else self.selection
         if kind == "case_update" and self.case is not None:
             replies[kind] = self.case
+        if kind == "action_wish" and self.action is not None:
+            replies[kind] = self.action
         if kind in replies:
             return _reply(replies[kind])
         answer = self.answer
@@ -281,7 +286,6 @@ async def _turn(
         router.post(f"{RETRIEVAL}/retrieve").mock(
             return_value=retrieval_response or httpx.Response(200, json=retrieval or {})
         )
-        router.get(url__startswith=f"{RETRIEVAL}/internal/v1/taxonomy").mock(return_value=httpx.Response(200, json={}))
         response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db, profile=profile)
         frames: list[dict] = []
         message: dict = {}
@@ -1328,21 +1332,195 @@ async def test_a_turn_that_only_calls_a_tool_sends_no_refusal_after_the_call(mon
 
 
 @pytest.mark.asyncio
-async def test_strict_answer_about_pasted_mail_is_not_repaired_against_the_articles(monkeypatch):
-    """The reply rests on the pasted mail, so the selection step does not run on it either."""
-    from tests.test_pasted_correspondence import _ENGLISH_HEADER_PASTE
+async def test_a_pasted_mail_with_passages_gets_the_material_brief_and_not_the_four_sections(monkeypatch):
+    """Both texts in one prompt contradicted each other: four fixed sections
+    against "no fixed analysis format". The selection still does not run on a
+    pasted mail, and the check reads the mail as one more article."""
+    from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE
 
-    llm = _LiteLLM(grounding=_unsupported(ANSWER), repaired="", selection=NOT_IN_PASSAGES)
+    llm = _LiteLLM(selection=NOT_IN_PASSAGES)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=PASTED,
+    )
+
+    prompt = _system_prompt(llm)
+    assert "[Pasted material]" in prompt and prompt.index("[Pasted material]") > prompt.index(ARTICLE)
+    assert PASTED_CORRESPONDENCE_SCOPE not in prompt and "[[KLAI_CORRESPONDENCE" not in prompt
+    assert llm.of("passage_selection") == []
+    (check,) = llm.of("grounding_check")
+    assert "Ik heb recht op dertig vrije dagen." in check["messages"][-1]["content"]
+    assert turn.records[0]["material"] == ["mail"]
+
+
+# --- Pasted material (SPEC-CHAT-INTERNAL-ROUTE-001 §5) -----------------------------
+
+# Synthetic pasted material, one per rule the code branches on (fictional names).
+LETTER = (
+    "Kun je hierop een antwoord maken?\n\n"
+    "Beste support,\n\n"
+    "Sinds vorige week gaat mijn vaste toestel niet meer over als er iemand belt. "
+    "Op mijn mobiel komen de gesprekken wel binnen. Ik heb het toestel al opnieuw opgestart.\n\n"
+    "Met vriendelijke groet,\n"
+    "Petra Wolters"
+)
+LONG_TEXT = "Wat kan hier aan de hand zijn? " + " ".join(
+    ["Het toestel op de receptie belt sinds dinsdag niet meer uit naar buiten."] * 11
+)
+TRACE = (
+    "Wat gaat hier mis?\n"
+    "2026-11-02 10:15:01 INVITE sip:201@pbx.example.com SIP/2.0\n"
+    "2026-11-02 10:15:01 SIP/2.0 100 Trying\n"
+    "2026-11-02 10:15:03 SIP/2.0 486 Busy Here"
+)
+RESTATED = (
+    "Beste Petra, je schrijft dat je vaste toestel niet meer overgaat, terwijl gesprekken op je mobiel binnenkomen."
+)
+PRODUCT_CLAIM = "Zet doorschakelen bij geen gehoor uit in het beheerportaal."
+
+
+@pytest.mark.parametrize(
+    ("question", "history", "rules"),
+    [
+        (LONG_TEXT, (), ["words"]),
+        (PASTED, (), ["mail"]),
+        (TRACE, (), ["trace"]),
+        (LETTER, (), ["letter"]),
+        (
+            "Maak hem korter.",
+            ({"role": "user", "content": LETTER}, {"role": "assistant", "content": RESTATED}),
+            ["earlier"],
+        ),
+        (QUESTION, (), []),
+    ],
+    ids=["words", "mail", "trace", "letter", "earlier", "product_question"],
+)
+@pytest.mark.asyncio
+async def test_the_record_names_the_rules_that_made_a_turn_a_material_turn(monkeypatch, question, history, rules):
+    llm = _LiteLLM()
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=question,
+        history=history,
+    )
+
+    assert turn.records[0]["material"] == rules
+    assert ("[Pasted material]" in _system_prompt(llm)) == bool(rules)
+
+
+@pytest.mark.parametrize(
+    ("answer", "grounding", "shown"),
+    [(RESTATED, _supported(RESTATED), RESTATED), (PRODUCT_CLAIM, _unsupported(PRODUCT_CLAIM), STRICT_REFUSAL)],
+    ids=["restates_the_material", "states_a_product_fact"],
+)
+@pytest.mark.asyncio
+async def test_a_strict_material_turn_without_passages_is_written_and_checked_against_the_material(
+    monkeypatch, answer, grounding, shown
+):
+    """The zero-evidence refusal refused the task on the material itself; the
+    statement check still refuses what no passage and no pasted line carries."""
+    llm = _LiteLLM(answer, grounding=grounding)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "unknown"},
+        question=LETTER,
+    )
+
+    assert len(llm.of("answer")) == 1
+    (check,) = llm.of("grounding_check")
+    assert "Sinds vorige week gaat mijn vaste toestel" in check["messages"][-1]["content"]
+    assert turn.text.startswith(shown)
+
+
+@pytest.mark.asyncio
+async def test_a_strict_material_turn_without_a_knowledge_base_is_written_not_refused(monkeypatch):
+    llm = _LiteLLM(RESTATED, grounding=_supported(RESTATED))
+
+    turn = await _turn(monkeypatch, llm, profile=_internal(kb_slugs=()), question=LETTER)
+
+    assert turn.text.startswith(RESTATED)
+    assert "zero results for this query" not in _system_prompt(llm)
+
+
+@pytest.mark.asyncio
+async def test_a_strict_material_turn_gets_no_passage_when_none_answers_so_no_reply_can_cite_one(monkeypatch):
+    """Handed every passage, the writer cited one on a related subject, and a
+    cited reply is shown whatever the statement check finds."""
+    llm = _LiteLLM(PRODUCT_CLAIM, grounding=_unsupported(PRODUCT_CLAIM), selection=NOT_IN_PASSAGES)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=LETTER,
+    )
+
+    prompt = _system_prompt(llm)
+    assert ARTICLE not in prompt and "[Pasted material]" in prompt
+    assert turn.text.startswith(STRICT_REFUSAL)
+
+
+@pytest.mark.asyncio
+async def test_a_short_follow_up_on_pasted_material_is_still_checked_in_strict(monkeypatch):
+    """ "Korter." after a pasted letter rewrites the reply to the customer; as a
+    trivial turn it skipped the search and the statement check."""
+    llm = _LiteLLM(RESTATED, grounding=_supported(RESTATED))
 
     await _turn(
         monkeypatch,
         llm,
         profile=_internal(),
-        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
-        question=_ENGLISH_HEADER_PASTE,
+        retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "unknown"},
+        question="Korter.",
+        history=({"role": "user", "content": LETTER}, {"role": "assistant", "content": RESTATED}),
     )
 
-    assert llm.of("grounding_check") == [] and llm.of("repair") == [] and llm.of("passage_selection") == []
+    assert len(llm.of("grounding_check")) == 1
+
+
+def test_the_check_reads_the_pasted_text_and_not_the_employees_own_short_sentences():
+    from app.services.pasted_correspondence import material_article
+
+    premise = "Klopt het dat doorschakelen in het beheerportaal zit?"
+    _, text = material_article(
+        [
+            {"role": "user", "content": LETTER},
+            {"role": "assistant", "content": RESTATED},
+            {"role": "user", "content": premise},
+        ]
+    )
+
+    assert "Sinds vorige week gaat mijn vaste toestel" in text
+    assert premise not in text
+
+
+@pytest.mark.asyncio
+async def test_a_widget_message_of_more_than_120_words_gets_no_material_brief(monkeypatch):
+    llm = _LiteLLM()
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=ChatProfile(surface="widget"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=LONG_TEXT,
+        key_id="wgt_acme",
+    )
+
+    assert "[Pasted material]" not in _system_prompt(llm)
+    assert len(llm.of("passage_selection")) == 1
 
 
 @pytest.mark.asyncio
@@ -1490,10 +1668,12 @@ _GOLDEN_FRAMES = (
 _GOLDEN_STRICT_RECORD = {
     "org_id": 7,
     "case_remembered": False,
+    "material": [],
     "band": "high",
     "multi_question": False,
     "selection": {"verdict": "answers", "passages": [1]},
     "judge_failed": ["case"],
+    "writer": {"tools_offered": False, "action_turn": False, "model": "klai-primary", "fallback": False, "cut": None},
     "grounding": "all_in_articles",
     "decision": "answer",
     "top_score": 0.82,
@@ -1576,3 +1756,182 @@ async def test_a_caption_beside_an_unreadable_file_and_two_pdfs_gets_the_pdf_onl
     assert reply["choices"][0]["message"]["content"] == "Klai kan nu alleen PDF-bestanden direct in chat verwerken."
     assert notice == ""
     convert.assert_not_awaited()
+
+
+# --- Tools reach the writer only on an action turn (SPEC-CHAT-INTERNAL-ROUTE-001 §4) ---
+
+SAVE_TOOL = {"type": "function", "function": {"name": "kennis_opslaan", "parameters": {"type": "object"}}}
+SAVE_ASK = "Sla dit op in mijn kennis: verlof vraag je aan in het HR-portaal."
+SAVE_WISH = {"quote": "Sla dit op in mijn kennis", "action": True}
+
+
+def _with_tools(*tail: dict) -> Callable[[list[dict]], dict]:
+    """The body LibreChat sends: the knowledge server's tool definitions with every turn."""
+    return lambda messages: {
+        "messages": [*messages, *tail],
+        "tools": [SAVE_TOOL],
+        "tool_choice": "auto",
+        "stream": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_internal_turn_with_tools_that_is_no_action_turn_writes_without_tools_in_the_reply_format(monkeypatch):
+    """Tools and the reply format together made the production model run away on 8 of 8 tries."""
+    from app.api import partner
+
+    llm = _LiteLLM(case=LEAVE_CASE)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        request_body=_with_tools(),
+    )
+
+    (answer,) = llm.of("answer")
+    assert "tools" not in answer and "tool_choice" not in answer
+    assert answer["response_format"]["json_schema"]["name"] == "reply_in_language"
+    assert answer["max_tokens"] == partner.settings.chat_writer_max_tokens
+    (record,) = turn.records
+    assert record["writer"] == {
+        "tools_offered": False,
+        "action_turn": False,
+        "model": "klai-primary",
+        "fallback": False,
+        "cut": None,
+    }
+    assert record["action_call"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_an_internal_turn_answering_a_tool_result_offers_the_writer_the_tools_without_the_reply_format(
+    monkeypatch,
+):
+    llm = _LiteLLM()
+    call = {"id": "call_1", "type": "function", "function": {"name": "kennis_opslaan", "arguments": "{}"}}
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=SAVE_ASK,
+        request_body=_with_tools(
+            {"role": "assistant", "content": None, "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "Opgeslagen."},
+        ),
+    )
+
+    (answer,) = llm.of("answer")
+    assert [tool["function"]["name"] for tool in answer["tools"]] == ["kennis_opslaan"]
+    assert answer["tool_choice"] == "auto"
+    assert "response_format" not in answer
+    assert llm.of("action_wish") == [], "a tool result is an action turn without asking"
+    (record,) = turn.records
+    assert record["writer"] == {
+        "tools_offered": True,
+        "action_turn": True,
+        "model": "klai-primary",
+        "fallback": False,
+        "cut": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "action_turn"),
+    [(SAVE_ASK, True), (QUESTION, False)],
+    ids=["quote-in-the-message", "quote-not-in-the-message"],
+)
+@pytest.mark.asyncio
+async def test_an_action_wish_makes_an_action_turn_only_when_its_quote_stands_in_the_employees_last_message(
+    monkeypatch, question, action_turn
+):
+    llm = _LiteLLM(action=SAVE_WISH)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=question,
+        request_body=_with_tools(),
+    )
+
+    (answer,) = llm.of("answer")
+    assert ("tools" in answer) is action_turn
+    assert ("response_format" in answer) is not action_turn
+    (record,) = turn.records
+    assert record["writer"]["action_turn"] is action_turn
+    assert record["action_call"] == ("action" if action_turn else "quote_not_found")
+
+
+@pytest.mark.asyncio
+async def test_the_action_call_reads_a_wish_that_follows_long_pasted_material(monkeypatch):
+    """An employee pastes material and asks to save it at the end; the call must get to see that sentence."""
+    llm = _LiteLLM(action=SAVE_WISH)
+    pasted = "Notulen van het overleg van de voorbeeldafdeling. " * 120  # about 6,000 characters
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=pasted + SAVE_ASK,
+        request_body=_with_tools(),
+    )
+
+    (call,) = llm.of("action_wish")
+    assert SAVE_ASK in call["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_request_without_tools_makes_no_action_call(monkeypatch):
+    llm = _LiteLLM(action=SAVE_WISH)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=SAVE_ASK,
+    )
+
+    assert llm.of("action_wish") == []
+    (record,) = turn.records
+    assert "action_call" not in record
+    assert record["writer"]["action_turn"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_action_call_is_cancelled_when_a_later_step_of_the_turn_raises(monkeypatch):
+    from app.services import internal_turn
+
+    started: list[asyncio.Task] = []
+
+    async def never_answers(*_: object, **__: object) -> str:
+        started.append(asyncio.current_task())
+        await asyncio.sleep(3600)
+        return "none"
+
+    async def search_fails(*_: object, **__: object) -> None:
+        raise RuntimeError("retrieval exploded")
+
+    monkeypatch.setattr(internal_turn, "read_action_wish", never_answers)
+    monkeypatch.setattr(internal_turn, "_search", search_fails)
+
+    with pytest.raises(RuntimeError, match="retrieval exploded"):
+        await _turn(
+            monkeypatch,
+            _LiteLLM(),
+            profile=_internal(),
+            retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+            question=SAVE_ASK,
+            request_body=_with_tools(),
+        )
+
+    (task,) = started
+    await asyncio.wait({task}, timeout=1)
+    assert task.cancelled()
+    task.cancel()

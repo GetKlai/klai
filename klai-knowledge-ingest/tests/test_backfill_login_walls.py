@@ -18,7 +18,8 @@ for recovery, content_simhash write for the pass-1 ensure-simhash loop).
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import os
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -113,6 +114,9 @@ def patched_externals():
             "knowledge_ingest.backfill_tasks.get_qdrant_client",
             return_value=qdrant,
         ),
+        # The marker and the per-KB lock are tested in test_operation_guards.py.
+        patch.dict(os.environ, {"INGEST_OK": "1"}),
+        patch("knowledge_ingest.backfill_tasks.kb_operation", lambda *a, **k: nullcontext()),
     ]
     for p in patches:
         p.start()
@@ -148,10 +152,27 @@ class TestBackfillCluster:
         result = await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         assert result == {"processed": 6, "flagged": 6, "qdrant_deleted": 6}
         assert qdrant.delete.await_count == 6
+
+    @pytest.mark.asyncio()
+    async def test_a_preview_reports_the_walled_pages_and_writes_nothing(
+        self, patched_externals
+    ) -> None:
+        conn, qdrant, set_rows = patched_externals
+        set_rows(_walled_cluster(6))
+
+        result = await backfill_detect_login_walls(org_id="100000000000000002", kb_slug="support")
+
+        assert result == {"processed": 6, "flagged": 6, "qdrant_deleted": 0}
+        qdrant.delete.assert_not_called()
+        # The rows start without a stored fingerprint; a preview computes it
+        # in memory and leaves the column alone.
+        conn.fetchval.assert_not_called()
+        conn.execute.assert_not_called()
 
     @pytest.mark.asyncio()
     async def test_at_threshold_minus_one_not_flagged(self, patched_externals) -> None:
@@ -162,6 +183,7 @@ class TestBackfillCluster:
         result = await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         assert result == {"processed": 5, "flagged": 0, "qdrant_deleted": 0}
@@ -178,6 +200,7 @@ class TestBackfillCluster:
         result = await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         assert result["processed"] == 7
@@ -204,6 +227,7 @@ class TestIdempotency:
         result = await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         assert result == {"processed": 0, "flagged": 0, "qdrant_deleted": 0}
@@ -235,6 +259,7 @@ class TestSimhashBackfillPass:
         await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         # Each row triggers an UPDATE ... SET content_simhash = $1
@@ -264,6 +289,7 @@ class TestSimhashBackfillPass:
         await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         update_calls = [
@@ -291,6 +317,7 @@ class TestSimhashBackfillPass:
         result = await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         assert result["flagged"] == 0
@@ -357,6 +384,7 @@ class TestTenantIsolation:
         await backfill_detect_login_walls(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         # Inspect the first delete's filter.
@@ -393,6 +421,7 @@ class TestRecovery:
         result = await recover_purged_pages(
             org_id="100000000000000002",
             kb_slug="voys-test",
+            execute=True,
         )
 
         assert result == {"processed": 1, "recovered": 1}
@@ -419,6 +448,7 @@ class TestRecovery:
         result = await recover_purged_pages(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         assert result == {"processed": 6, "recovered": 0}
@@ -450,6 +480,7 @@ class TestRecovery:
         result = await recover_purged_pages(
             org_id="100000000000000002",
             kb_slug="support",
+            execute=True,
         )
 
         # Only the 1 purged row counted.

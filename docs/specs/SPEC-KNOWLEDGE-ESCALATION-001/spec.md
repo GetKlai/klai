@@ -1,9 +1,9 @@
 ---
 id: SPEC-KNOWLEDGE-ESCALATION-001
 version: "0.4.0"
-status: in aanbouw
+status: 'gebouwd (PR #1773, gemerged 30 september 2026): de knop "Maak ticket" in de beoordeling, `create_ticket`, `HubSpotTickets`, `widget_ticket_settings` en `conversation_tickets`'
 created: 2026-09-29
-updated: 2026-09-29
+updated: 2026-09-30
 author: Claude (Opus 5.5), commissioned by Mark Vletter
 priority: high
 tenant_scope: platform-wide — elke tenant met de `knowledge_activity`-unlock en een geconfigureerde widget

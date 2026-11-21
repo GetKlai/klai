@@ -81,8 +81,6 @@ async def resolve_internal_profile(
     of this org.
     """
     user = await resolve_librechat_user(db, org, librechat_user_id, remember=remember)
-    if user.status != "active":
-        raise LibreChatIdentityError
     return _internal_profile(user, knowledge=await has_knowledge_access(db, user))
 
 

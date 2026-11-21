@@ -70,7 +70,7 @@ def _find_callers() -> frozenset[str]:
     the portal-API side that only mention the path in a hand-off comment,
     etc. We tighten detection in two stages:
 
-    1. Skip files in ``tests/``, ``.moai/``, ``docs/`` etc. (these are
+    1. Skip files in ``tests/``, ``docs/`` etc. (these are
        noise by construction).
     2. Require the path to co-occur with an HTTP-client call pattern
        within the same expression -- ``.post(...path...)`` or similar.
@@ -83,7 +83,6 @@ def _find_callers() -> frozenset[str]:
         "__pycache__",
         "site-packages",
         "tests",
-        ".moai",
         ".serena",
         ".claude",
         "docs",
@@ -149,7 +148,7 @@ def test_ingest_v1_document_caller_set_is_known() -> None:
 
     # Remove spec files, docs, and test files — they reference the path as text
     # but are not production callers.
-    noise_patterns = (".moai/", "docs/", "tests/", ".serena/", ".claude/")
+    noise_patterns = ("docs/", "tests/", ".serena/", ".claude/")
     found = frozenset(f for f in found if not any(f.startswith(p) for p in noise_patterns))
 
     unexpected = found - EXPECTED_CALLERS

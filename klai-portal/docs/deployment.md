@@ -1,165 +1,82 @@
 # Deployment: portal-api and portal-frontend
 
-Describes the CI/CD pipeline for the FastAPI backend (`backend/`) and the steps to
-maintain or recover it.
+What a contributor needs to know about how the portal is built and shipped.
+Both parts are built and tested by workflows in this repository. Klai's
+production rollout runs from those workflows with host targets and
+credentials that are managed in private infrastructure automation and do not
+appear in this repository. For the platform as a whole, see
+[platform.md](../../docs/architecture/platform.md).
 
-## Overview
+## portal-api
 
-```
-git push (backend/**) → GitHub Actions → GHCR image → SSH into core-01 → docker compose up
-```
+Workflow: [`.github/workflows/portal-api.yml`](../../.github/workflows/portal-api.yml),
+named "Build and push portal-api". It runs on every push to `main` that
+touches the backend, the shared libraries `klai-libs/chat-prompts`, `klai-libs/citations`,
+`klai-libs/connector-credentials` and `klai-libs/kb-slugs`, the workflow itself,
+`deploy/scripts/deploy-portal-api.sh`, `deploy/docker-compose.yml` or
+`scripts/check-vexa12-deploy-preconditions.sh` (`portal-api.yml:3-24`), and it can be called
+from other workflows.
 
-The workflow file is at [`.github/workflows/portal-api.yml`](../../.github/workflows/portal-api.yml).
-
-## Trigger
-
-The pipeline runs automatically on every push to `main` that touches:
-
-- `klai-portal/backend/**`
-- `.github/workflows/portal-api.yml`
-
-## Steps
-
-| Step | What it does |
+| Job | What it does |
 |---|---|
-| Build | Builds the Docker image from `backend/Dockerfile` |
-| Push | Pushes two tags to GHCR: `latest` and `<git-sha>` |
-| Deploy | SSHes into core-01 and runs `docker compose up -d portal-api` |
+| `quality` | ruff lint and format, code guards, pyright, `pip-audit`, Alembic integrity and post-deploy guards, expand-then-contract check, pytest |
+| `rls-policy-smoke-test` | Applies every `post_deploy_*.sql` to a throwaway PostgreSQL and checks the row-level-security policies (`portal-api.yml:128`) |
+| `zitadel-password-policy-drift` | On a push to `main` only: checks that the production password policy matches what the portal enforces (`portal-api.yml:392`) |
+| `build-push` | Builds `klai-portal/backend/Dockerfile` and pushes `ghcr.io/getklai/portal-api:<git sha>` and `latest`, only on a push to `main` (`portal-api.yml:455-490`) |
+| `scan` | Trivy scan of the image; a high or critical finding stops the deploy (`portal-api.yml:492-541`) |
+| `deploy` | On `main` only, after every gate: rolls the image out to production, one run at a time (`portal-api.yml:543-560`) |
 
-## Required GitHub Secrets
+The rollout itself is `deploy/scripts/deploy-portal-api.sh`. It runs
+`alembic upgrade head` from the new image, applies the post-deploy SQL files
+(the row-level-security bootstrap first, then the others in alphabetical
+order, skipping `*_rollback_*`), and swaps the container through
+`deploy-with-rollback.sh`, which puts the previous image back when the health
+probe fails after the swap (`deploy-portal-api.sh:1-24`, `:124-157`).
 
-For self-hosted deployments, configure your own deployment host and key in the
-repository or environment that owns your deploy workflow.
+Migrations also run at container start-up: the image's entrypoint runs
+`alembic upgrade head` before it starts uvicorn on port 8010 and stops the
+container when a migration fails (`klai-portal/backend/entrypoint.sh:1-23`).
+Changes to row-level-security policies live in `post_deploy_*.sql` files,
+because the application database role cannot run that DDL; see
+`klai-portal/backend/AGENTS.md`.
 
-Klai production deployment secrets and host targets are maintained in the
-private `GetKlai/klai-infra` repository, not in this public monorepo.
+A running portal-api answers `GET /health` and `GET /api/health`
+(`klai-portal/backend/app/main.py:469-476`).
 
-## SSH Deploy Key
+## portal-frontend
 
-The deploy key is an ed25519 key pair. The public key is installed in
-`~/.ssh/authorized_keys` for the `klai` user on core-01.
+Workflow: [`.github/workflows/portal-frontend.yml`](../../.github/workflows/portal-frontend.yml).
+It runs on pushes to `main` that touch `klai-portal/frontend/**`,
+`klai-widget/**` or the workflow (`portal-frontend.yml:3-10`).
 
-To rotate the key:
+| Job | What it does |
+|---|---|
+| `quality` | Locale check, `npm audit`, ESLint, design-token drift check, vitest for the portal and the widget |
+| `visual` | Visual regression and accessibility audit of the component catalogue |
+| `build-deploy` | Builds the widget bundle and the SPA with `npm run build` (Vite), then on `main` publishes the static `dist/` to production |
 
-```bash
-# Generate a new key pair
-ssh-keygen -t ed25519 -C "github-actions@getklai.com" -f /tmp/new_deploy_key -N ""
+The SPA is static: API calls are relative to the page's own origin
+(`VITE_API_BASE_URL` is empty), and the browser authenticates with the
+session cookie that portal-api sets ([auth-flows.md](auth-flows.md)); the
+frontend source reads no OIDC settings. Publishing a new build needs no
+service restart.
 
-# Install the public key on core-01
-ssh core-01 "echo '$(cat /tmp/new_deploy_key.pub)' >> ~/.ssh/authorized_keys"
-
-# Optionally remove the old key from authorized_keys on core-01
-
-# Update the CORE01_DEPLOY_KEY secret in GitHub with the content of:
-cat /tmp/new_deploy_key
-```
-
-## Manual Deployment
-
-If the pipeline fails or you need to deploy without a push:
-
-```bash
-ssh core-01
-docker pull ghcr.io/getklai/portal-api:latest
-cd /opt/klai && docker compose up -d portal-api
-```
-
-To roll back to a specific build:
-
-```bash
-ssh core-01
-docker compose stop portal-api
-# Edit /opt/klai/docker-compose.yml to pin the image to a specific sha tag
-docker compose up -d portal-api
-```
-
-## Verifying the Running Image
+## Local development
 
 ```bash
-ssh core-01
-docker inspect klai-core-portal-api-1 --format '{{.Created}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+make backend    # portal-api with hot reload, port 8010 (or CONDUCTOR_PORT+1)
+make frontend   # Vite dev server, port 5174 (or CONDUCTOR_PORT)
 ```
 
-Or check the health endpoint:
+The ports come from the root `Makefile` (`Makefile:7-8`). For a local login
+without Zitadel, set `AUTH_DEV_MODE` with `DEBUG` on the backend and
+`VITE_AUTH_DEV_MODE` on the frontend ([auth-flows.md](auth-flows.md),
+section 9). The full setup is in
+[local-dev.md](../../docs/runbooks/local-dev.md).
 
-```bash
-curl --max-time 3 http://localhost:8010/health
-```
+## Self-hosting
 
----
-
-# Deployment: portal-frontend
-
-## Overview
-
-```
-git push (frontend/**) → GitHub Actions → npm run build → rsync to core-01
-```
-
-The workflow file is at [`.github/workflows/portal-frontend.yml`](../../.github/workflows/portal-frontend.yml).
-
-## Trigger
-
-The pipeline runs automatically on every push to `main` that touches:
-
-- `klai-portal/frontend/**`
-- `.github/workflows/portal-frontend.yml`
-
-## Steps
-
-| Step | What it does |
-|------|-------------|
-| Install | `npm ci` with Node 22 and npm cache |
-| Build | `npm run build` (Vite) with production environment variables |
-| SSH setup | Installs `CORE01_DEPLOY_KEY` via `webfactory/ssh-agent` |
-| Deploy | `rsync --delete` the `dist/` folder to `/opt/klai/portal-dist/` on core-01 |
-
-## Build environment variables
-
-Baked into the static build at compile time:
-
-| Variable | Value |
-|----------|-------|
-| `VITE_OIDC_AUTHORITY` | `https://auth.getklai.com` |
-| `VITE_OIDC_CLIENT_ID` | `300000000000000002` |
-| `VITE_API_BASE_URL` | `""` (empty — API calls are relative, same origin) |
-
-These are set in the workflow file, not in GitHub Secrets (they are not secret).
-
-## Required GitHub Secrets
-
-Same secrets as portal-api:
-
-| Secret | Value |
-|--------|-------|
-| `CORE01_HOST` | IPv4 address of core-01 |
-| `CORE01_DEPLOY_KEY` | Private SSH key matching the deploy key on core-01 |
-
-## Serving on core-01
-
-Caddy serves the static files from `/opt/klai/portal-dist/` as the SPA fallback for all `*.getklai.com` requests not matched by other routes. The directory is updated in-place by rsync; no service restart is needed.
-
-## Manual Deployment
-
-```bash
-# Build locally
-cd frontend
-VITE_OIDC_AUTHORITY=https://auth.getklai.com \
-VITE_OIDC_CLIENT_ID=300000000000000002 \
-VITE_API_BASE_URL="" \
-npm run build
-
-# Deploy
-rsync -av --delete dist/ klai@core-01:/opt/klai/portal-dist/
-```
-
-## Local Development
-
-```bash
-cd frontend
-npm install
-cp .env.local.example .env.local  # or set vars manually
-npm run dev
-```
-
-The dev server runs on `http://localhost:5174`. CORS and OIDC redirect URIs are configured to allow this origin.
+A self-hosted deployment configures its own registry, host and deploy key in
+the repository or environment that owns its deploy workflow;
+`deploy/scripts/deploy-portal-api.sh` and `deploy/docker-compose.yml` are the
+reference for the steps.

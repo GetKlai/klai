@@ -111,13 +111,8 @@ class TestReindexHappyPath:
         conn = _make_mock_conn()
         conn.fetchrow = AsyncMock(
             side_effect=[
-                {
-                    "id": _ARTIFACT,
-                    "kb_slug": _KB,
-                    "path": _PATH,
-                    "belief_time_end": 253402300800,
-                },
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                {"org_id": _ORG, "kb_slug": "kb", "previous_state": None, "previous_reason": None},
                 _artifact_for_enrichment(),
             ]
         )
@@ -154,13 +149,8 @@ class TestReindexHappyPath:
         conn = _make_mock_conn()
         conn.fetchrow = AsyncMock(
             side_effect=[
-                {
-                    "id": _ARTIFACT,
-                    "kb_slug": _KB,
-                    "path": _PATH,
-                    "belief_time_end": 253402300800,
-                },
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                {"org_id": _ORG, "kb_slug": "kb", "previous_state": None, "previous_reason": None},
                 _artifact_for_enrichment(),
             ]
         )
@@ -187,11 +177,11 @@ class TestReindexHappyPath:
                     params={"org_id": _ORG},
                 )
 
-        # The second fetchrow is the UPDATE that sets the artifact to pending.
-        sql = conn.fetchrow.await_args_list[1].args[0]
+        # The first fetchrow is the UPDATE that sets the artifact to pending.
+        sql = conn.fetchrow.await_args_list[0].args[0]
         assert "UPDATE knowledge.artifacts" in sql
         assert "index_status" in sql
-        status_arg = conn.fetchrow.await_args_list[1].args[1]
+        status_arg = conn.fetchrow.await_args_list[0].args[1]
         assert status_arg == "pending"
 
     def test_double_click_returns_202_when_reindex_already_enqueued(self) -> None:
@@ -204,13 +194,8 @@ class TestReindexHappyPath:
         conn = _make_mock_conn()
         conn.fetchrow = AsyncMock(
             side_effect=[
-                {
-                    "id": _ARTIFACT,
-                    "kb_slug": _KB,
-                    "path": _PATH,
-                    "belief_time_end": 253402300800,
-                },
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                {"org_id": _ORG, "kb_slug": "kb", "previous_state": None, "previous_reason": None},
                 _artifact_for_enrichment(),
             ]
         )
@@ -241,49 +226,6 @@ class TestReindexHappyPath:
         body = resp.json()
         assert body["artifact_id"] == _ARTIFACT
         assert body["index_status"] == "pending"
-
-    def test_reactivates_expired_upload_artifact(self) -> None:
-        conn = _make_mock_conn()
-        conn.fetchrow = AsyncMock(
-            side_effect=[
-                {
-                    "id": _ARTIFACT,
-                    "kb_slug": _KB,
-                    "path": _PATH,
-                    "belief_time_end": 1779974993,
-                },
-                {"artifact_id": _ARTIFACT, "path": _PATH},
-                _artifact_for_enrichment(),
-            ]
-        )
-
-        mock_job = MagicMock()
-        mock_job.configure = MagicMock(return_value=mock_job)
-        mock_job.defer_async = AsyncMock(return_value=None)
-        mock_proc_app = MagicMock()
-        mock_proc_app.enrich_document_interactive = mock_job
-
-        with (
-            patch(
-                "knowledge_ingest.routes.kb_sources.assert_caller_identity_tenant_only",
-                AsyncMock(return_value=_ORG),
-            ),
-            patch(
-                "knowledge_ingest.enrichment_tasks.get_app",
-                return_value=mock_proc_app,
-            ),
-        ):
-            with _client_with_conn(conn) as client:
-                resp = client.post(
-                    f"/knowledge/v1/artifacts/{_ARTIFACT}/reindex",
-                    params={"org_id": _ORG},
-                )
-
-        assert resp.status_code == 202
-        assert conn.execute.await_count == 1
-        sql = conn.execute.await_args.args[0]
-        assert "UPDATE knowledge.artifacts" in sql
-        assert "id <> $6::uuid" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +312,7 @@ class TestDeleteUploadHappyPath:
 
         assert resp.status_code == 204
 
-    def test_calls_qdrant_delete_document(self) -> None:
+    def test_purges_every_document_under_the_upload_path(self) -> None:
         conn = _make_mock_conn()
         conn.fetchrow = AsyncMock(
             return_value={
@@ -379,14 +321,16 @@ class TestDeleteUploadHappyPath:
                 "user_id": "user-abc",
             }
         )
-        qdrant_mock = AsyncMock(return_value=None)
+        heads = AsyncMock(return_value=[_ARTIFACT])
+        purge = AsyncMock(return_value=(1, 0))
 
         with (
             patch(
                 "knowledge_ingest.routes.kb_sources.assert_caller_identity_tenant_only",
                 AsyncMock(return_value=_ORG),
             ),
-            patch("knowledge_ingest.qdrant_store.delete_document", qdrant_mock),
+            patch("knowledge_ingest.pg_store.list_document_heads", heads),
+            patch("knowledge_ingest.document_purge.purge_documents", purge),
         ):
             with _client_with_conn(conn) as client:
                 client.delete(
@@ -394,7 +338,8 @@ class TestDeleteUploadHappyPath:
                     params={"org_id": _ORG},
                 )
 
-        qdrant_mock.assert_awaited_once_with(_ORG, _KB, _PATH)
+        heads.assert_awaited_once_with(conn, _ORG, _PATH, _KB)
+        purge.assert_awaited_once_with(conn, _ORG, [_ARTIFACT])
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +412,7 @@ class TestListKbSourcesIndexStatus:
             "chunks_count": 5,
             "index_status": "pending",
             "index_status_changed_at": 1751330000,
+            "enrichment_fields": None,
         }
         # list_kb_sources makes two fetch calls: connectors then uploads.
         # Make the first call return [] (no connectors), second return the upload.
@@ -508,12 +454,15 @@ class TestListKbSourcesConnectorFailedCount:
         from the DB row through ConnectorAggregate to the JSON response."""
         conn = _make_mock_conn()
 
-        connector_row = {
-            "connector_id": "conn-z",
-            "items_count": 5,
-            "items_failed_count": 2,
-            "chunks_count": 30,
-        }
+        connector_rows = [
+            {
+                "connector_id": "conn-z",
+                "index_status": "failed" if number < 2 else "synced",
+                "enrichment_fields": {"source_connector_id": "conn-z"},
+                "chunks_count": 6,
+            }
+            for number in range(5)
+        ]
         # list_kb_sources makes two fetch calls: connectors then uploads.
         call_count = 0
 
@@ -521,7 +470,7 @@ class TestListKbSourcesConnectorFailedCount:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return [connector_row]
+                return connector_rows
             return []
 
         conn.fetch = AsyncMock(side_effect=_side_effect)

@@ -83,7 +83,7 @@ def _mock_conn() -> MagicMock:
 
 @asynccontextmanager
 async def _tenant_connection(_org_id: str):
-    yield SimpleNamespace()
+    yield SimpleNamespace(fetchrow=AsyncMock(return_value=None), execute=AsyncMock())
 
 
 async def _ingest_unchanged(
@@ -173,7 +173,7 @@ async def test_unchanged_navigation_page_replaces_history_with_current_skip_mark
             "graphiti_episode_ids": [],
             "graphiti_episode_part_count": 0,
             "graphiti_episode_complete": True,
-            "graphiti_episode_id": "skipped:navigation_page",
+            "graphiti_episode_id": None,
             "graphiti_extraction_version": 2,
         },
     )
@@ -298,6 +298,9 @@ async def _run_graphiti_task(graphiti_task: object, *, replace_stale: bool = Fal
         side_effect=lambda **_kwargs: events.append("ingest") or "episode-new"
     )
     graph_module.flush_entity_graph_data = AsyncMock(return_value=None)
+    graph_module.retire_earlier_extractions = AsyncMock(
+        side_effect=lambda *_args, **_kwargs: events.append("retire")
+    )
 
     store = MagicMock()
     store.read_artifact_for_enrichment = AsyncMock(
@@ -339,17 +342,28 @@ async def _run_graphiti_task(graphiti_task: object, *, replace_stale: bool = Fal
 
 
 @pytest.mark.asyncio
-async def test_replacement_run_deletes_and_resets_history_before_new_extraction(
+async def test_replacement_run_retires_history_only_after_the_new_extraction(
     graphiti_task,
 ) -> None:
+    """The store outcome is proven against FalkorDB and Postgres in
+    tests/graph_contract/test_new_extraction_replaces_on_completion.py."""
     events, store, graph_module = await _run_graphiti_task(graphiti_task, replace_stale=True)
 
-    assert events[:4] == ["history", "delete", "reset", "ingest"]
-    graph_module.delete_kb_episodes.assert_awaited_once_with(_ORG_ID, ["episode-old"])
+    assert events == ["ingest", "retire"]
+    graph_module.delete_kb_episodes.assert_not_awaited()
+    graph_module.retire_earlier_extractions.assert_awaited_once_with(
+        ANY, _ORG_ID, _ARTIFACT_ID, keep=["episode-new"]
+    )
     assert store.update_artifact_extra.await_args_list[-1] == call(
         ANY,
         _ARTIFACT_ID,
-        {"graphiti_episode_complete": True, "graphiti_extraction_version": 2},
+        {
+            "graphiti_episode_complete": True,
+            "graphiti_extraction_version": 2,
+            "graphiti_episode_ids": ["episode-new"],
+            "graphiti_episode_ids_from": 0,
+            "graphiti_episode_id": "episode-new",
+        },
     )
 
 
@@ -357,12 +371,14 @@ async def test_replacement_run_deletes_and_resets_history_before_new_extraction(
 async def test_normal_graph_run_stamps_current_extraction_version(graphiti_task) -> None:
     _events, store, graph_module = await _run_graphiti_task(graphiti_task)
 
-    graph_module.delete_kb_episodes.assert_not_awaited()
-    store.get_episode_ids_for_document_history.assert_not_awaited()
+    graph_module.retire_earlier_extractions.assert_not_awaited()
     assert store.update_artifact_extra.await_args_list[-1] == call(
         ANY,
         _ARTIFACT_ID,
-        {"graphiti_episode_complete": True, "graphiti_extraction_version": 2},
+        {
+            "graphiti_episode_complete": True,
+            "graphiti_extraction_version": 2,
+        },
     )
 
 
@@ -468,6 +484,7 @@ async def _run_two_part_job(
     graph_module.delete_kb_episodes = AsyncMock()
     graph_module.flush_entity_graph_data = AsyncMock()
     graph_module.load_entity_graph_data = AsyncMock()
+    graph_module.retire_earlier_extractions = AsyncMock()
     with (
         patch.object(knowledge_ingest, "pg_store", row),
         patch.object(knowledge_ingest, "graph", graph_module),
@@ -515,14 +532,13 @@ async def test_retried_multi_part_job_does_not_rerun_a_completed_part(graphiti_t
         "part 2"
     ]
     assert graph_module.ingest_episode.await_args.kwargs["previous_episode_id"] == "episode-1"
-    graph_module.delete_kb_episodes.assert_not_awaited()
     graph_module.load_entity_graph_data.assert_awaited_once_with(_ORG_ID, ["episode-1"], ANY)
     assert row.extra["graphiti_episode_ids"] == ["episode-1", "episode-2"]
     assert row.extra["graphiti_episode_complete"] is True
 
 
 @pytest.mark.asyncio
-async def test_resumed_replacement_deletes_only_episodes_of_earlier_versions(graphiti_task) -> None:
+async def test_resumed_replacement_keeps_its_parts_when_it_retires_the_rest(graphiti_task) -> None:
     row = _ArtifactRow(
         {
             "graphiti_episode_ids": ["episode-1"],
@@ -536,7 +552,9 @@ async def test_resumed_replacement_deletes_only_episodes_of_earlier_versions(gra
         graphiti_task, row, ["episode-2"], attempts=1, replace_stale=True
     )
 
-    graph_module.delete_kb_episodes.assert_awaited_once_with(_ORG_ID, ["episode-predecessor"])
+    graph_module.retire_earlier_extractions.assert_awaited_once_with(
+        ANY, _ORG_ID, _ARTIFACT_ID, keep=["episode-1", "episode-2"]
+    )
     assert row.extra["graphiti_episode_ids"] == ["episode-1", "episode-2"]
 
 
@@ -550,13 +568,28 @@ async def test_exhausted_graph_job_waits_out_the_cool_off_but_a_change_extracts_
     )
 
     row = _ArtifactRow({})
-    with pytest.raises(RuntimeError):
+
+    async def _record(product, _artifact_id, state, reason=None):
+        row.extra.update(
+            {
+                f"{product}_state": state,
+                f"{product}_reason": reason,
+                f"{product}_state_at": int(time.time()),
+            }
+        )
+
+    with (
+        patch.object(enrichment_tasks, "_finish", _record),
+        pytest.raises(RuntimeError),
+    ):
         await _run_two_part_job(
             graphiti_task,
             row,
             ["episode-1", None],
             attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
         )
+    assert row.extra["graph_state"] == "failed"
+    assert row.extra["graph_reason"] == "retries_exhausted"
     unchanged = _request()
     app = _ProcApp()
 
@@ -565,7 +598,7 @@ async def test_exhausted_graph_job_waits_out_the_cool_off_but_a_change_extracts_
     assert result["graph_refresh"] == "deferred:cool_off"
     app.ingest_graphiti_episode.defer_async.assert_not_awaited()
 
-    cooled_off = {**row.extra, "graphiti_exhausted_at": int(time.time()) - 8 * 86_400}
+    cooled_off = {**row.extra, "graph_state_at": int(time.time()) - 8 * 86_400}
     result = await _ingest_unchanged(unchanged, extra=cooled_off, app=app)
 
     assert result["graph_refresh"] == "queued"

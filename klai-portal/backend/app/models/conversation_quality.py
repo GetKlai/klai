@@ -23,8 +23,9 @@ the webchat case. One row per conversation:
   the pilot).
 
 ``reasoning`` may quote the conversation and is nulled out by the retention
-sweep once the underlying ``widget_conversations``/``widget_messages`` rows
-are purged (``widget_messages_retention_days``) — a quote surviving past the
+sweep once the underlying ``widget_messages`` rows are purged, and on every
+channel once the judgment is older than the org's term
+(``widget_messages_retention_days``) — a quote surviving past the
 conversation it came from is itself identifiable content. See
 SPEC-CHAT-QUALITY-LOOP-001 §6.
 

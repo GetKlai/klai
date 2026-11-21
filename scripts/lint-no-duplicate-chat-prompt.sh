@@ -5,7 +5,7 @@
 #
 # Two anchor sets:
 #   1. Grounded chat prompt anchors — canonical home is
-#      klai-libs/chat-prompts. Imported by partner_chat.py + synthesis.py.
+#      klai-libs/chat-prompts. Imported by partner_chat.py.
 #   2. KB prefix anchors (Klai Knowledge Base header, ANSWER FORMAT
 #      instructions, KB-unavailable notice, Klai Templates wrapper) —
 #      canonical home is klai-libs/chat-prompts. The LiteLLM hook that used

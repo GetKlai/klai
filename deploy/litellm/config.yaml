@@ -1,6 +1,6 @@
 model_list:
   # Daily spend ceiling per Mistral deployment: max_budget (USD) per
-  # budget_duration. LiteLLM 1.96.2 enforces this in
+  # budget_duration. LiteLLM (read in 1.108.3, the version compose runs) enforces this in
   # router_strategy/budget_limiter.py: a deployment whose spend in the current
   # window has reached max_budget is filtered out before selection, and with
   # no deployment left the request fails with "No deployments available -
@@ -251,7 +251,7 @@ model_list:
   # Reasoning: Medium 3.5 is a hybrid reasoning model and Mistral does not
   # document a default reasoning_effort (Vibe's client asks for high itself).
   # reasoning_effort "none" is pinned here so these calls never pay for a
-  # thinking chunk. LiteLLM 1.96.2's mistral transformation only maps
+  # thinking chunk. LiteLLM 1.108.3's mistral transformation only maps
   # reasoning_effort for model names containing "magistral" and drop_params
   # drops it otherwise; allowed_openai_params forwards it to Mistral as is.
   # tests/test_litellm_mistral_failover.py checks the outgoing request body.
@@ -292,11 +292,14 @@ model_list:
   # TPM; rpm/tpm here are 90% of that, as for the other aliases. Prices as
   # Mistral's Vibe client (2.25.8) prices this model: $0.10 in / $0.30 out
   # per 1M tokens, cache reads at 10% of input like the other entries.
-  # Budget: normal ingest is ~$1-3/day. knowledge-ingest paces itself at
-  # 0.6 rps (36 rpm, llm_throttle), about 52k calls/day flat out; at a
-  # typical ~2.5k input / ~250 output tokens per call a full backlog day
-  # costs ~$17. $20 lets that day finish and stops a runaway (a retry loop
-  # at the 237k TPM peak measured on klai-fast reaches it in ~14h).
+  # Budget: normal ingest is ~$1-4/day. knowledge-ingest paces itself at
+  # 2 rps with a burst of 40 (llm_throttle; at most ~74% of the tpm below
+  # at the busiest minute's call size), about 173k calls/day flat out; at the measured
+  # 1,537 input / 114 output tokens per call (7 days to 12 Nov 2026) that is
+  # ~$0.19 per 1,000 calls, so a normal night of 6,000-8,000 calls costs
+  # ~$1.5 and $20 is reached after ~106k calls, ~15 hours flat out. A backlog
+  # that large stops at the budget and is deferred until the window rolls
+  # over (llm_capacity.py); $20 also stops a runaway retry loop.
   - model_name: klai-ingest
     litellm_params:
       model: mistral/mistral-vibe-cli-fast
@@ -331,7 +334,7 @@ search_tools:
       api_base: os.environ/SEARXNG_API_BASE
 
 router_settings:
-  # LiteLLM v1.96.2 filters to the lowest deployment order before applying
+  # LiteLLM v1.108.3 filters to the lowest deployment order before applying
   # simple-shuffle, then advances on any failure except context-window and
   # content-policy errors, which follow their dedicated fallback paths --
   # including a persistent 429, which is why klai_mistral_pool_hook above is
@@ -340,7 +343,7 @@ router_settings:
   routing_strategy: simple-shuffle
   # Keeps the max_budget spend above across restarts (see model_list). The
   # router's rpm counter and cooldowns move to Redis with it: one INCR per
-  # request, and litellm 1.96.2 falls back to its in-memory count when a
+  # request, and litellm 1.108.3 falls back to its in-memory count when a
   # Redis call fails (caching/dual_cache.py), so Redis down degrades to the
   # old per-process behaviour instead of failing requests. That fallback
   # does not cover startup: on 2026-10-22 `redis_url: os.environ/REDIS_URL`
@@ -442,9 +445,9 @@ litellm_settings:
 #
 # This registers the native Presidio guardrail so the Phase 0 round-trip
 # harness (deploy/litellm/scripts/eval_pii_restore_live.py) can prove
-# whether `output_parse_pii` restores masked values correctly on this
-# LiteLLM version (v1.96.2) — both streaming and non-streaming — and
-# measure Dutch token-survival rate, BEFORE any recognizer work (REQ-3,
+# whether `output_parse_pii` restores masked values correctly on the
+# LiteLLM version it ran against (v1.96.2), both streaming and non-streaming,
+# and measure Dutch token-survival rate, BEFORE any recognizer work (REQ-3,
 # Phase 1) begins. Stock entities only (PERSON, PHONE_NUMBER,
 # EMAIL_ADDRESS) — no Dutch recognizer pack exists yet.
 #

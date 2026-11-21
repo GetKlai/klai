@@ -26,13 +26,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, NoReturn
 
 import structlog
 
 from knowledge_ingest import (
     cheap_layer,
     chunker,
+    derived_state,
     embedder,
     enrichment,
     kb_config,
@@ -43,6 +44,7 @@ from knowledge_ingest import (
 )
 from knowledge_ingest.content_profiles import child_chunk_chars, get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
+from knowledge_ingest.derived_state import DONE, FAILED, NOT_APPLICABLE
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
@@ -76,6 +78,11 @@ _GRAPHITI_MAX_ATTEMPTS = 8
 # 23 October 2026 the guilty document crashed it on every attempt, so the
 # second strike costs one more 99-105 s reload instead of seven hours of them.
 _FALKORDB_DEATHS_BEFORE_QUARANTINE = 2
+
+# Enrichment retries: the interactive lane keeps the user's wait under a minute
+# (waits 3, 9, 27 s), the bulk lane rides out a 429 burst (4, 16, 64, 256 s).
+_INTERACTIVE_MAX_ATTEMPTS = 4
+_BULK_MAX_ATTEMPTS = 5
 
 
 class GraphitiEpisodeQuarantined(RuntimeError):
@@ -175,9 +182,7 @@ def init_app(connector: Any) -> Any:
     return _procrastinate_app
 
 
-async def _load_and_enrich(
-    artifact_id: str, resource_key: str | None = None, batch_offset: int = 0
-) -> None:
+async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
     """SPEC-INGEST-CONTENT-PG-001 (audit finding 1): single entry point for
     both enrichment task variants.
 
@@ -189,9 +194,8 @@ async def _load_and_enrich(
     vectors while the worker still processed an older content snapshot
     frozen in the task args.
 
-    If the artifact has been deleted between enqueue and dequeue (typically
-    by the connector purge orchestrator), the function returns silently —
-    same soft-skip semantics as ``ingest_graphiti_episode`` uses.
+    If the artifact has been deleted or replaced between enqueue and dequeue,
+    the job is abandoned (``_abandon``), as ``ingest_graphiti_episode`` does.
 
     A document with more chunks than ``enrichment_batch_size`` is enriched in
     batches, one task per batch (``batch_offset`` is the first chunk of this
@@ -204,10 +208,12 @@ async def _load_and_enrich(
     async with cross_org_admin_connection() as admin_conn:
         artifact = await pg_store.read_artifact_for_enrichment(admin_conn, artifact_id)
     if artifact is None:
-        logger.info("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
-        return
+        # Points this job (or a failed earlier attempt of it) wrote for a
+        # version that is gone now belong to no row; nothing else removes them.
+        await qdrant_store.delete_points_of_artifact(artifact_id)
+        _abandon("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
     if artifact["belief_time_end"] != pg_store._SENTINEL:
-        logger.info(
+        _abandon(
             "enrichment_aborted_artifact_superseded",
             artifact_id=artifact_id,
             org_id=artifact["org_id"],
@@ -215,12 +221,8 @@ async def _load_and_enrich(
             path=artifact["path"],
             belief_time_end=artifact["belief_time_end"],
         )
-        return
 
     extra: dict = artifact["extra"] or {}
-    resource_key = resource_key or extra.get("resource_key")
-    if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
-        return
     document_text: str = extra.get("document_text", "") or ""
     prechunked_skip = enrichment_skip_reason(
         chunk_count=int(extra.get("docling_chunk_count") or 0),
@@ -235,20 +237,13 @@ async def _load_and_enrich(
             reason=prechunked_skip,
             docling_chunk_count=extra.get("docling_chunk_count"),
         )
-        await _set_direct_upload_index_status(artifact, "synced")
+        await _finish("enrichment", artifact_id, NOT_APPLICABLE, prechunked_skip)
         return
     if not document_text:
         # Pre-SPEC-INGEST-CONTENT-PG-001 artifact rows may have no
         # document_text on extra. Without a body we cannot enrich; the
         # rebuild_kb path is the right tool to repair these legacy rows.
-        logger.info(
-            "enrichment_aborted_no_document_text",
-            artifact_id=artifact_id,
-            kb_slug=artifact["kb_slug"],
-            path=artifact["path"],
-        )
-        await _set_direct_upload_index_status(artifact, "failed")
-        return
+        await _give_up("enrichment", artifact_id, "no_stored_text")
 
     title: str = extra.get("title") or ""
     document_text = normalize_document_for_chunking(document_text)
@@ -270,7 +265,7 @@ async def _load_and_enrich(
             reason=derived_skip,
             chunks=len(chunks_text),
         )
-        await _set_direct_upload_index_status(artifact, "synced")
+        await _finish("enrichment", artifact_id, NOT_APPLICABLE, derived_skip)
         return
     # Route on the points that are indexed, not on a re-chunk of the stored
     # text: a pre-chunked connector document would otherwise re-chunk to fewer
@@ -279,9 +274,7 @@ async def _load_and_enrich(
     if batch_offset or await qdrant_store.has_chunks_from(
         artifact["org_id"], artifact["kb_slug"], artifact["path"], artifact_id, batch_size
     ):
-        await _enrich_next_batch(
-            artifact, extra, document_text, title, resource_key, batch_offset, batch_size
-        )
+        await _enrich_next_batch(artifact, extra, document_text, title, batch_offset, batch_size)
         return
     parents_serialised: list[dict] = [
         {
@@ -310,7 +303,6 @@ async def _load_and_enrich(
         parents=parents_serialised,
         parent_index_per_child=parent_index_per_child,
         heading_path_per_child=heading_path_per_child,
-        resource_key=resource_key,
     )
 
 
@@ -319,7 +311,6 @@ async def _enrich_next_batch(
     extra: dict,
     document_text: str,
     title: str,
-    resource_key: str | None,
     offset: int,
     size: int,
 ) -> None:
@@ -344,8 +335,9 @@ async def _enrich_next_batch(
             path=path,
             batch_offset=offset,
         )
+        await _finish("enrichment", artifact_id, DONE)
         return
-    written = await _enrich_document(
+    await _enrich_document(
         org_id=org_id,
         kb_slug=kb_slug,
         path=path,
@@ -358,16 +350,15 @@ async def _enrich_next_batch(
         synthesis_depth=artifact["synthesis_depth"],
         content_type=artifact["content_type"] or "unknown",
         heading_path_per_child=[pl.get("heading_path", "") for pl in batch],
-        resource_key=resource_key,
         existing_parent_chunk_ids=[pl.get("parent_chunk_id") for pl in batch],
         chunk_offset=offset,
     )
     next_offset = offset + size
     if not (
-        written
-        and len(batch) == size
+        len(batch) == size
         and await qdrant_store.has_chunks_from(org_id, kb_slug, path, artifact_id, next_offset)
     ):
+        await _finish("enrichment", artifact_id, DONE)
         return
     from procrastinate.exceptions import AlreadyEnqueued
 
@@ -380,7 +371,6 @@ async def _enrich_next_batch(
             .defer_async(
                 artifact_id=artifact_id,
                 batch_offset=next_offset,
-                **({"resource_key": resource_key} if resource_key else {}),
             )
         )
     except AlreadyEnqueued:
@@ -396,35 +386,93 @@ async def _enrich_next_batch(
     )
 
 
-async def _resource_fence_blocks(
-    resource_key: str | None, *, artifact_id: str, fresh: bool
-) -> bool:
-    if not resource_key:
-        return False
-    from knowledge_ingest.connector_state import (
-        FenceState,
-        check_connector_resource_fence,
-    )
+def _abandon(event: str, **fields: Any) -> NoReturn:
+    """End a derived job whose document version is no longer current.
 
-    state = await check_connector_resource_fence(resource_key, fresh=fresh)
-    if state is FenceState.ACTIVE:
-        return False
-    logger.warning(
-        "connector_resource_job_skipped",
-        artifact_id=artifact_id,
-        resource_key=resource_key,
-        fence_state=state.value,
-    )
-    return True
+    Raises procrastinate's ``JobAborted``, so the job ends ``aborted`` (never
+    retried) instead of ``succeeded``: the queue and the log tell "abandoned"
+    apart from "did the work". Only for a version that is replaced or deleted,
+    or a connector that is being deleted or is gone. A check that cannot be
+    made raises its own error and the job is retried.
+    """
+    from procrastinate.exceptions import JobAborted
+
+    logger.info(event, outcome="abandoned", **fields)
+    raise JobAborted(event)
+
+
+async def _abandon_if_connector_inactive(
+    connector_id: str | None, *, fresh: bool = False, **fields: Any
+) -> None:
+    """Abandon the job when the document's connector is being deleted or is gone.
+
+    ``fresh`` bypasses the 5-second state cache; use it where the answer
+    decides about a write just made or about to be made.
+    """
+    from knowledge_ingest.connector_state import connector_is_active
+
+    if connector_id and not await connector_is_active(connector_id, fresh=fresh):
+        _abandon("derived_job_aborted_connector_inactive", connector_id=connector_id, **fields)
+
+
+async def _still_current_for_write(org_id: str, artifact_id: str, connector_id: str | None) -> bool:
+    """Fresh: is the artifact the active version and its connector active?
+
+    A lookup error propagates: the job fails and is retried.
+    """
+    from knowledge_ingest.connector_state import connector_is_active
+
+    async with tenant_scoped_connection(org_id) as conn:
+        if not await pg_store.artifact_is_active(conn, artifact_id):
+            return False
+    return not connector_id or await connector_is_active(connector_id, fresh=True)
+
+
+class _DerivedWorkFailed(RuntimeError):
+    """The work was needed for a current document and cannot be done; no retry helps.
+
+    Raised after the document records ``failed``; the task's retry strategy
+    gives up on it, so the job ends failed.
+    """
+
+
+async def _finish(
+    product: derived_state.Product, artifact_id: str, state: str, reason: str | None = None
+) -> None:
+    """Record the product's final state on the document version, if it is still current."""
+    async with cross_org_admin_connection() as conn:
+        await derived_state.record_outcome(conn, artifact_id, product, state, reason)
+
+
+async def _give_up(product: derived_state.Product, artifact_id: str, reason: str) -> NoReturn:
+    """The document says failed, and the job ends failed without a retry."""
+    await _finish(product, artifact_id, FAILED, reason)
+    raise _DerivedWorkFailed(f"{product} of {artifact_id}: {reason}")
+
+
+async def _fail_if_last_attempt(
+    product: derived_state.Product,
+    artifact_id: str,
+    exc: BaseException,
+    context: Any,
+    max_attempts: int,
+) -> None:
+    """On the last run procrastinate makes, a failure means the document gets no product.
+
+    Earlier runs leave the state pending: they are retried. Abandoned jobs
+    (``JobAborted``) and jobs that already recorded their failure are not
+    failures here.
+    """
+    from procrastinate.exceptions import JobAborted
+
+    if isinstance(exc, JobAborted | _DerivedWorkFailed | GraphitiEpisodeQuarantined):
+        return
+    if context is not None and context.job.attempts >= max_attempts:
+        await _finish(product, artifact_id, FAILED, "retries_exhausted")
 
 
 class _EnrichmentDeferred(LLMCapacityUnavailable):
-    """Capacity failure in _enrich_document, carrying what marking the artifact
-    failed needs once the deferral window is spent."""
-
-    def __init__(self, message: str, artifact: dict) -> None:
-        super().__init__(message)
-        self.artifact = artifact
+    """Capacity failure in _enrich_document; the task re-queues the job."""
 
 
 async def _defer_after_llm_capacity(
@@ -439,9 +487,8 @@ async def _defer_after_llm_capacity(
     A fresh job instead of a procrastinate retry, because the deferral window
     has to survive in the job arguments and the new job keeps the full normal
     retry budget for the ordinary failures it may meet once capacity is back.
-    The artifact stays pending: the new job is what the stale-pending reaper
-    looks for. Once the window is spent the artifact is failed here and the
-    job returns, so procrastinate's retries do not run it again.
+    The document stays pending while it waits. Once the window is spent the
+    document records failed and the job ends failed without a retry.
     """
     since = llm_deferred_since or int(time.time())
     if deferral_window_spent(since):
@@ -452,11 +499,7 @@ async def _defer_after_llm_capacity(
             window_hours=DEFERRAL_WINDOW_SECONDS // 3600,
             error=str(exc),
         )
-        # A later batch of a large document is not the document: it stays as
-        # searchable as batch 1 left it.
-        if not task_kwargs.get("batch_offset"):
-            await _set_direct_upload_index_status(exc.artifact, "failed")
-        return
+        await _give_up("enrichment", task_kwargs["artifact_id"], "llm_capacity_exhausted")
     from procrastinate.exceptions import AlreadyEnqueued
 
     delay = deferral_delay_seconds()
@@ -478,63 +521,36 @@ async def _defer_after_llm_capacity(
     )
 
 
-class ArtifactIndexStatusUpdateError(RuntimeError):
-    """Raised when a direct-upload artifact cannot leave pending state."""
-
-
-def _has_source_connector(artifact: dict) -> bool:
-    source_connector_id = artifact.get("source_connector_id")
-    if source_connector_id:
-        return True
-    extra = artifact.get("extra")
-    if isinstance(extra, dict):
-        return bool(extra.get("source_connector_id"))
-    return False
-
-
-async def _set_direct_upload_index_status(artifact: dict, status: str) -> None:
-    """Finish a direct-upload reindex status so the Sources UI cannot hang."""
-    artifact_id = str(artifact.get("artifact_id") or "")
-    org_id = str(artifact.get("org_id") or "")
-    if _has_source_connector(artifact):
-        return
-    if not artifact_id or not org_id:
-        raise ArtifactIndexStatusUpdateError(
-            "missing artifact_id or org_id for index_status update"
-        )
-    try:
-        async with tenant_scoped_connection(org_id) as conn:
-            updated = await pg_store.set_artifact_index_status(conn, artifact_id, org_id, status)
-    except Exception as exc:
-        logger.exception(
-            "artifact_index_status_update_failed",
-            artifact_id=artifact_id,
-            org_id=org_id,
-            status=status,
-        )
-        raise ArtifactIndexStatusUpdateError(
-            f"failed to set index_status={status} for artifact {artifact_id}"
-        ) from exc
-    if updated is None:
-        logger.error(
-            "artifact_index_status_update_missing",
-            artifact_id=artifact_id,
-            org_id=org_id,
-            status=status,
-        )
-        raise ArtifactIndexStatusUpdateError(
-            f"artifact {artifact_id} was not updated to index_status={status}"
-        )
-
-
 def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
     import procrastinate
 
+    class _GiveUpRetry(procrastinate.BaseRetryStrategy):
+        """``inner``, except for the two ways a job ends without trying the work.
+
+        A recorded or quarantined failure fails for good. A job cancelled from
+        outside (a worker shutting down, a user abort; ``CancelledError``) did
+        not fail at all, so it is always retried, whatever its attempt count:
+        otherwise a cancellation on the last attempt would end the job
+        ``aborted`` with no retry left and the document pending for ever. The
+        retried job then does the work, or abandons it when its version or
+        connector has gone.
+        """
+
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def get_retry_decision(self, *, exception: BaseException, job: Any) -> Any:
+            if isinstance(exception, GraphitiEpisodeQuarantined | _DerivedWorkFailed):
+                return None
+            if isinstance(exception, asyncio.CancelledError):
+                return procrastinate.RetryDecision(retry_in={"seconds": 0})
+            return self.inner.get_retry_decision(exception=exception, job=job)
+
     # Backoff rationale: enrichment failures in production are dominated by
     # LiteLLM 429s during bulk crawls. Immediate retries (the previous
     # default: wait=0) burn every attempt inside the same rate-limit window
-    # — the intermedia.com artifact failed 3x in 20 seconds and went
+    # — an artifact from a crawled site failed 3x in 20 seconds and went
     # permanent-failed. exponential_wait waits
     # ``exponential_wait ** (attempts + 1)`` seconds between attempts, so
     # retries land after the rate-limit window has moved on.
@@ -543,7 +559,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
         queue=queues.ENRICH_INTERACTIVE,
         # Waits 3s, 9s, 27s — user is watching, keep worst-case added latency
         # under a minute while still escaping a per-minute rate-limit window.
-        retry=procrastinate.RetryStrategy(max_attempts=4, exponential_wait=3),
+        retry=_GiveUpRetry(
+            procrastinate.RetryStrategy(max_attempts=_INTERACTIVE_MAX_ATTEMPTS, exponential_wait=3)
+        ),
         pass_context=True,
     )
     async def enrich_document_interactive(
@@ -564,18 +582,26 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 llm_deferred_since,
                 artifact_id=artifact_id,
             )
+        except Exception as exc:
+            await _fail_if_last_attempt(
+                "enrichment", artifact_id, exc, context, _INTERACTIVE_MAX_ATTEMPTS
+            )
+            raise
 
     @procrastinate_app.task(
         queue=queues.ENRICH_BULK,
         # Waits 4s, 16s, 64s, 256s (~5.7 min total) — nobody is watching bulk
         # jobs, so ride out the whole 429 burst a concurrent crawl produces.
-        retry=procrastinate.RetryStrategy(max_attempts=5, exponential_wait=4),
+        retry=_GiveUpRetry(
+            procrastinate.RetryStrategy(max_attempts=_BULK_MAX_ATTEMPTS, exponential_wait=4)
+        ),
         pass_context=True,
     )
     async def enrich_document_bulk(
         context: Any,
         artifact_id: str,
-        resource_key: str | None = None,
+        # Ignored; jobs queued before 2026-11 still pass it. Drop after one release.
+        resource_key: str | None = None,  # noqa: ARG001
         llm_deferred_since: int | None = None,
         batch_offset: int = 0,
     ) -> None:
@@ -586,7 +612,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         batch position of a large document).
         """
         try:
-            await _load_and_enrich(artifact_id, resource_key, batch_offset)
+            await _load_and_enrich(artifact_id, batch_offset)
         except _EnrichmentDeferred as exc:
             await _defer_after_llm_capacity(
                 enrich_document_bulk,
@@ -594,24 +620,15 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 exc,
                 llm_deferred_since,
                 artifact_id=artifact_id,
-                resource_key=resource_key,
                 batch_offset=batch_offset,
             )
+        except Exception as exc:
+            await _fail_if_last_attempt("enrichment", artifact_id, exc, context, _BULK_MAX_ATTEMPTS)
+            raise
 
     # Expose task functions via app attributes for use in ingest.py
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
     procrastinate_app.enrich_document_bulk = enrich_document_bulk  # type: ignore[attr-defined]
-
-    class _QuarantineAwareRetry(procrastinate.BaseRetryStrategy):
-        """The graphiti retry, except that a quarantined episode fails for good."""
-
-        def __init__(self, inner: Any) -> None:
-            self.inner = inner
-
-        def get_retry_decision(self, *, exception: BaseException, job: Any) -> Any:
-            if isinstance(exception, GraphitiEpisodeQuarantined):
-                return None
-            return self.inner.get_retry_decision(exception=exception, job=job)
 
     @procrastinate_app.task(
         queue=queues.GRAPHITI_BULK,
@@ -623,12 +640,22 @@ def _register_tasks(procrastinate_app: Any) -> None:
         # rate-limiting instead of a quiet klai-medium success. A bounded but
         # generous lifetime re-queues the episode instead of dropping it the
         # moment graph.py's own inner retry gives up.
-        retry=_QuarantineAwareRetry(
+        retry=_GiveUpRetry(
             procrastinate.RetryStrategy(max_attempts=_GRAPHITI_MAX_ATTEMPTS, exponential_wait=4)
         ),
         pass_context=True,
     )
-    async def ingest_graphiti_episode(
+    async def ingest_graphiti_episode(context: Any = None, **job_args: Any) -> None:
+        """Extract the document's graph (``_extract_graph``); see it for the contract."""
+        try:
+            await _extract_graph(context, **job_args)
+        except Exception as exc:
+            await _fail_if_last_attempt(
+                "graph", job_args["artifact_id"], exc, context, _GRAPHITI_MAX_ATTEMPTS
+            )
+            raise
+
+    async def _extract_graph(
         context: Any = None,
         *,
         artifact_id: str,
@@ -638,13 +665,14 @@ def _register_tasks(procrastinate_app: Any) -> None:
         kb_slug: str = "",
         path: str = "",
         replace_stale: bool = False,
-        resource_key: str | None = None,
+        # Ignored; jobs queued before 2026-11 still pass it. Drop after one release.
+        resource_key: str | None = None,  # noqa: ARG001
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
-        Runs on the graphiti-bulk queue, which the worker drains AFTER enrich-bulk.
-        This ensures enrichment LLM calls complete before Graphiti starts, preventing
-        both from competing on the same 1 req/s upstream rate limit simultaneously.
+        Runs on the graphiti-bulk queue in the worker's own graph lane, so a
+        graph job waiting its turn never holds an enrichment slot; both share
+        the one LLM limiter (``llm_throttle``).
 
         SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: artifact-existence guard.
         If the artifact has been deleted between enqueue and dequeue (e.g. by
@@ -665,40 +693,28 @@ def _register_tasks(procrastinate_app: Any) -> None:
         async with tenant_scoped_connection(org_id) as conn:
             artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
             if artifact is None and not await pg_store.artifact_exists(conn, artifact_id):
-                logger.info(
-                    "graphiti_aborted_artifact_missing",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
+                _abandon(
+                    "graphiti_aborted_artifact_missing", artifact_id=artifact_id, org_id=org_id
                 )
-                return
             if artifact is None:
-                logger.info(
-                    "graphiti_aborted_artifact_superseded",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
+                _abandon(
+                    "graphiti_aborted_artifact_superseded", artifact_id=artifact_id, org_id=org_id
                 )
-                return
+            connector_id = artifact["extra"].get("source_connector_id")
             document_text = artifact["extra"].get("document_text", "") or ""
             if not document_text:
-                logger.info(
-                    "graphiti_aborted_no_document_text",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
-                )
-                return
+                await _give_up("graph", artifact_id, "no_stored_text")
             # Deaths and quarantine count only for the build that caused them;
             # a new version of the document is a new artifact and starts clean.
             build = graph_writer_build()
             same_build = artifact["extra"].get("graphiti_quarantine_build") == build
             if artifact["extra"].get("graphiti_quarantined_at"):
                 if same_build:
-                    # graph_refresh and re-syncs enqueue it again.
-                    logger.info(
-                        "graphiti_aborted_quarantined",
-                        artifact_id=artifact_id,
-                        org_id=org_id,
-                    )
-                    return
+                    # Reached only by a deliberate re-queue (a reindex): graph
+                    # refresh does not queue a document quarantined for this
+                    # build. The re-queue reopened the state, so this failure
+                    # is recorded and alerted again.
+                    await _give_up("graph", artifact_id, "quarantined")
                 await pg_store.update_artifact_extra(
                     conn,
                     artifact_id,
@@ -713,47 +729,44 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 )
             prior_deaths = int(artifact["extra"].get("graphiti_falkordb_deaths") or 0)
             prior_deaths = prior_deaths if same_build else 0
-            if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
-                return
+            await _abandon_if_connector_inactive(connector_id, artifact_id=artifact_id)
             from knowledge_ingest import graph as graph_module
 
             done_ids = resumable_episode_ids(artifact["extra"])
-            if replace_stale:
-                # Delete at execution time so old episodes stay readable while
-                # the bulk queue drains. A resumed run keeps the parts an
-                # earlier run of this extraction already wrote.
-                stale_ids = [
+            if not done_ids:
+                # A new extraction starts. Whatever this row already records
+                # (the previous extraction when graph_refresh re-extracts the
+                # same row, or parts of an abandoned run) stays in front of the
+                # new parts, recorded and searchable, until the new extraction
+                # is complete; graphiti_episode_ids_from marks where the new
+                # parts begin. The list is written out explicitly because
+                # append_graphiti_episode_id turns a lone legacy scalar into a
+                # list element; the scalar goes so a sentinel cannot outlive
+                # the new episodes. complete/part_count reset in the same
+                # write: a worker kill before the part-count update below must
+                # not leave a row that reads as "complete".
+                extra = artifact["extra"]
+                recorded = [
                     episode_id
-                    for episode_id in await pg_store.get_episode_ids_for_document_history(
-                        conn, org_id, [artifact_id]
+                    for episode_id in (
+                        extra["graphiti_episode_ids"]
+                        if isinstance(extra.get("graphiti_episode_ids"), list)
+                        else [extra.get("graphiti_episode_id")]
                     )
-                    if episode_id not in done_ids
+                    if episode_id
+                    and episode_id != "no-chunks"
+                    and not str(episode_id).startswith("skipped:")
                 ]
-                if stale_ids:
-                    await graph_module.delete_kb_episodes(org_id, stale_ids)
-                if not done_ids:
-                    # Null the legacy scalar too: append_graphiti_episode_id
-                    # keeps an existing scalar via COALESCE, so leaving the old
-                    # value in place would pin it to a just-deleted episode
-                    # uuid forever. complete/part_count reset in the same
-                    # write: a worker kill between this statement and the
-                    # part-count update below must not leave a row that reads
-                    # as "complete with zero episodes".
-                    await pg_store.update_artifact_extra(
-                        conn,
-                        artifact_id,
-                        {
-                            "graphiti_episode_ids": [],
-                            "graphiti_episode_id": None,
-                            "graphiti_episode_complete": False,
-                            "graphiti_episode_part_count": 0,
-                        },
-                    )
-                logger.info(
-                    "graphiti_stale_episodes_replaced",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
-                    deleted=len(stale_ids),
+                await pg_store.update_artifact_extra(
+                    conn,
+                    artifact_id,
+                    {
+                        "graphiti_episode_ids": recorded,
+                        "graphiti_episode_ids_from": len(recorded),
+                        "graphiti_episode_id": recorded[0] if recorded else None,
+                        "graphiti_episode_complete": False,
+                        "graphiti_episode_part_count": 0,
+                    },
                 )
             logger.info(
                 "graphiti_episode_started",
@@ -789,21 +802,19 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     # Page deletion can land while an earlier part is spending
                     # minutes in Graphiti; never regrow later parts afterward.
                     if not await pg_store.artifact_exists(conn, artifact_id):
-                        logger.info(
+                        _abandon(
                             "graphiti_aborted_artifact_missing",
                             artifact_id=artifact_id,
                             org_id=org_id,
                         )
-                        return
                     if not await pg_store.artifact_is_active(conn, artifact_id):
-                        logger.info(
+                        _abandon(
                             "graphiti_aborted_artifact_superseded",
                             artifact_id=artifact_id,
                             org_id=org_id,
                         )
-                        return
-                if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
-                    return
+                # The connector was checked before the first part and is
+                # checked after every part (below), so no extra check here.
                 try:
                     episode_id = await graph_module.ingest_episode(
                         artifact_id=artifact_id,
@@ -836,6 +847,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         falkordb_deaths=deaths,
                         reason="falkordb_died_during_episode",
                     )
+                    await _finish("graph", artifact_id, FAILED, "quarantined")
                     raise GraphitiEpisodeQuarantined(
                         f"FalkorDB died {deaths} times while writing this document's episode"
                     ) from exc
@@ -844,17 +856,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     event, exhausted = _graphiti_episode_failure_event(
                         attempt, _GRAPHITI_MAX_ATTEMPTS
                     )
-                    if exhausted:
-                        # graph_refresh.py holds an unchanged re-sync back for
-                        # a cool-off from this moment instead of starting a
-                        # new ~24h retry cycle right away. The version stays
-                        # stale, so the document is retried after the cool-off
-                        # and resumes after the parts stored so far.
-                        await pg_store.update_artifact_extra(
-                            conn,
-                            artifact_id,
-                            {"graphiti_exhausted_at": int(time.time())},
-                        )
+                    # On the last attempt the task records failed
+                    # (retries_exhausted); graph_refresh.py holds an unchanged
+                    # re-sync back for a cool-off from that moment.
                     (logger.error if exhausted else logger.warning)(
                         event,
                         artifact_id=artifact_id,
@@ -869,9 +873,16 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         f"{part_index + 1} of {len(episode_parts)}"
                     )
                 episode_ids.append(episode_id)
-                if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
+                try:
+                    await _abandon_if_connector_inactive(
+                        connector_id, fresh=True, artifact_id=artifact_id
+                    )
+                except BaseException:
+                    # Abandoned, or the state could not be read: either way
+                    # this part must not outlive the job as an unrecorded
+                    # episode. A retry extracts it again.
                     await graph_module.delete_kb_episodes(org_id, [episode_id])
-                    return
+                    raise
                 # A worker retry starts with a fresh Python list, so the SQL
                 # append must retain IDs written before a mid-loop worker kill.
                 await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
@@ -879,21 +890,43 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     # Deletion may finish while Graphiti is extracting this
                     # part; the delete path could not have seen its new UUID.
                     await graph_module.delete_kb_episodes(org_id, [episode_id])
-                    logger.info(
-                        "graphiti_aborted_artifact_missing",
-                        artifact_id=artifact_id,
-                        org_id=org_id,
+                    _abandon(
+                        "graphiti_aborted_artifact_missing", artifact_id=artifact_id, org_id=org_id
                     )
-                    return
                 if not await pg_store.artifact_is_active(conn, artifact_id):
                     await graph_module.delete_kb_episodes(org_id, [episode_id])
-                    logger.info(
+                    _abandon(
                         "graphiti_aborted_artifact_superseded",
                         artifact_id=artifact_id,
                         org_id=org_id,
                     )
-                    return
 
+            final: dict[str, Any] = {
+                "graphiti_episode_complete": True,
+                "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
+            }
+            if replace_stale:
+                # Only now, with every part written, does this extraction
+                # replace the earlier ones (other versions and this row's own
+                # previous extraction). A run that fails or aborts before this
+                # point leaves the previous facts in place next to its parts.
+                await graph_module.retire_earlier_extractions(
+                    conn, org_id, artifact_id, keep=episode_ids
+                )
+                final |= {
+                    "graphiti_episode_ids": episode_ids,
+                    "graphiti_episode_ids_from": 0,
+                    "graphiti_episode_id": episode_ids[0],
+                }
+                logger.info(
+                    "graphiti_stale_episodes_replaced", artifact_id=artifact_id, org_id=org_id
+                )
+            await pg_store.update_artifact_extra(conn, artifact_id, final)
+            await derived_state.set_product_state(conn, artifact_id, "graph", DONE)
+            # The outcome and the episode ids are recorded before the fields
+            # go onto the points, and the enrichment job reads them after it
+            # replaces the points (_link_graph_fields): whichever of the two
+            # finishes last writes the fields, also when both end together.
             try:
                 await graph_module.flush_entity_graph_data(
                     artifact_id,
@@ -902,18 +935,54 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 )
             except Exception:
                 logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
-            if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
-                return
-            await pg_store.update_artifact_extra(
-                conn,
-                artifact_id,
-                {
-                    "graphiti_episode_complete": True,
-                    "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
-                },
-            )
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
+
+
+async def _link_graph_fields(org_id: str, artifact_id: str) -> None:
+    """Write the graph fields onto the points just replaced, when the graph is done.
+
+    Replacing a version's points drops the graph fields the graph job wrote
+    onto them. The graph job records ``done`` and its episode ids before it
+    writes the fields, so reading the row after the replacement either sees
+    ``done`` and writes them here, or the graph job's own write comes after
+    the replacement. Before the graph had its own worker lane this order
+    almost never happened; on 13 November 2026, 66 of 2,253 documents with a
+    finished graph had no point carrying the fields.
+    """
+    from knowledge_ingest import graph as graph_module
+
+    try:
+        async with tenant_scoped_connection(org_id) as conn:
+            artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
+        if artifact is None:
+            return
+        extra = artifact["extra"]
+        if derived_state.product_state(extra, "graph").state != DONE:
+            return
+        # The episodes of the extraction that finished, as the graph job flushed them.
+        episode_ids = list(extra.get("graphiti_episode_ids") or [])[
+            int(extra.get("graphiti_episode_ids_from") or 0) :
+        ]
+        if not episode_ids:
+            return
+        entity_graph_data = graph_module.EntityGraphData()
+        await graph_module.load_entity_graph_data(org_id, episode_ids, entity_graph_data)
+        await graph_module.flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
+        # flush_entity_graph_data writes nothing for a graph without entities,
+        # so only a write that happened is logged.
+        if entity_graph_data.entity_uuids or entity_graph_data.entity_names:
+            logger.info(
+                "graph_fields_linked",
+                artifact_id=artifact_id,
+                org_id=org_id,
+                entities=len(entity_graph_data.entity_uuids),
+            )
+    except Exception:
+        # Logged as the graph job logs its own failed write: the enrichment
+        # itself landed, and retrying it would redo the model work for fields
+        # it does not produce.
+        logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
 
 
 async def _enrich_document(
@@ -931,16 +1000,15 @@ async def _enrich_document(
     parents: list[dict] | None = None,
     parent_index_per_child: list[int | None] | None = None,
     heading_path_per_child: list[str] | None = None,
-    resource_key: str | None = None,
     existing_parent_chunk_ids: list[int | None] | None = None,
     chunk_offset: int | None = None,
-) -> bool:
+) -> None:
     """
     Core enrichment logic shared by both task variants.
     Uses content-type profiles for HyPE decisions and context strategy.
-    Errors are logged but do not raise -- raw vectors remain in Qdrant.
+    Errors raise, so the job is retried; the raw vectors stay in Qdrant.
 
-    Returns True when the enriched chunks were written. ``chunks`` is one batch
+    ``chunks`` is one batch
     of a larger document when ``chunk_offset`` is set (the position of its first
     chunk); ``existing_parent_chunk_ids`` then carries the parents the base
     ingest already stored, which are kept as they are.
@@ -952,18 +1020,9 @@ async def _enrich_document(
     # any chunk we enrich here would be re-written to Qdrant after the
     # purge orchestrator's qdrant cleanup ran.
     source_connector_id = extra_payload.get("source_connector_id") if extra_payload else None
-    if source_connector_id:
-        from knowledge_ingest.connector_state import connector_is_active
-
-        if not await connector_is_active(source_connector_id):
-            logger.info(
-                "enrichment_aborted_connector_inactive",
-                connector_id=source_connector_id,
-                artifact_id=artifact_id,
-                kb_slug=kb_slug,
-                path=path,
-            )
-            return False
+    await _abandon_if_connector_inactive(
+        source_connector_id, artifact_id=artifact_id, kb_slug=kb_slug, path=path
+    )
     t_total = time.monotonic()
     logger.info(
         "enrichment_started",
@@ -998,13 +1057,15 @@ async def _enrich_document(
         connector_type_val = (extra_payload or {}).get("connector_type", "")
         source_domain_val = (extra_payload or {}).get("source_domain", "")
 
-        # SPEC-RAG-CONTEXTUAL-001: generate one document summary per artifact
-        # (Anthropic-pattern). Cached in extra_payload so a re-ingest of the
-        # same artifact reuses it. The chunk-enrichment prompt then feeds
-        # the summary instead of the full document body — ~8x reduction in
-        # per-chunk input tokens for a 20-chunk document.
-        document_summary_val = (extra_payload or {}).get("document_summary", "")
-        document_language_val = (extra_payload or {}).get("document_language") or None
+        # SPEC-RAG-CONTEXTUAL-001: the chunk prompts carry a short document
+        # summary instead of the document body (~8x fewer input tokens per
+        # chunk for a 20-chunk document). The summary is an input of this
+        # version, like its text: it is stored on the version's own row before
+        # the chunk calls, so a retry, every later batch and a rebuild of the
+        # version read it back instead of paying for it again. A new version
+        # is a new row and computes its own.
+        document_summary_val = extra_payload.get("document_summary", "")
+        document_language_val = extra_payload.get("document_language") or None
         if not document_summary_val and document_text:
             from knowledge_ingest import contextual
 
@@ -1015,12 +1076,14 @@ async def _enrich_document(
                 title=title,
                 language=document_language_val,
             )
-            # Persist on extra_payload so callers (qdrant_store) can store it
-            # on the artifact row for cache hits on re-ingest.
-            if extra_payload is None:
-                extra_payload = {}
-            extra_payload["document_summary"] = document_summary_val
-            extra_payload["document_language"] = document_language_val
+            summary_patch = {
+                "document_summary": document_summary_val,
+                "document_language": document_language_val,
+            }
+            if document_summary_val:
+                async with tenant_scoped_connection(org_id) as conn:
+                    await pg_store.update_artifact_extra(conn, artifact_id, summary_patch)
+            extra_payload.update(summary_patch)
 
         t0 = time.monotonic()
         enriched_chunks = await enrichment.enrich_chunks(
@@ -1086,17 +1149,17 @@ async def _enrich_document(
         # change that happened while this task was queued or running.
         # SPEC-TI-003-FOLLOWUP-001 AC-1: tenant_scoped_connection so kb_config +
         # insert_parent_chunks see the RLS GUC for this org.
+        # Fresh, right before the writes: minutes of model work lie between
+        # this and the check at job start.
+        if not await _still_current_for_write(org_id, artifact_id, source_connector_id):
+            _abandon(
+                "enrichment_aborted_not_current",
+                artifact_id=artifact_id,
+                kb_slug=kb_slug,
+                path=path,
+                org_id=org_id,
+            )
         async with tenant_scoped_connection(org_id) as conn:
-            if not await pg_store.artifact_is_active(conn, artifact_id):
-                logger.info(
-                    "enrichment_aborted_artifact_superseded",
-                    artifact_id=artifact_id,
-                    kb_slug=kb_slug,
-                    path=path,
-                    org_id=org_id,
-                )
-                return False
-
             extra_payload["visibility"] = await kb_config.get_kb_visibility(conn, org_id, kb_slug)
 
             # SPEC-RAG-PARENT-CHILD-001: persist parents to Postgres NOW so the
@@ -1119,10 +1182,7 @@ async def _enrich_document(
                     if parent_idx is not None and 0 <= parent_idx < len(inserted_ids):
                         parent_chunk_ids[i] = inserted_ids[parent_idx]
 
-        # Step 4: Upsert enriched chunks to Qdrant. This checkpoint is fresh;
-        # the earlier pre-LLM check may be served from the <=5s cache.
-        if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
-            return False
+        # Step 4: Upsert enriched chunks to Qdrant.
         t0 = time.monotonic()
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,
@@ -1143,10 +1203,24 @@ async def _enrich_document(
         )
         qdrant_ms = int((time.monotonic() - t0) * 1000)
 
-        await _set_direct_upload_index_status(
-            {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-            "synced",
-        )
+        # A delete or replacement that landed between the active check above
+        # and the upsert has already cleaned this artifact's points, so the
+        # points just written would belong to no row and nothing would remove
+        # them. Parent chunks need no such check: their foreign key rejects an
+        # insert for a deleted row and cascades on a later delete.
+        if not await _still_current_for_write(org_id, artifact_id, source_connector_id):
+            await qdrant_store.delete_artifacts(org_id, [artifact_id], [])
+            _abandon(
+                "enrichment_points_removed_artifact_inactive",
+                artifact_id=artifact_id,
+                kb_slug=kb_slug,
+                path=path,
+                org_id=org_id,
+            )
+        await _link_graph_fields(org_id, artifact_id)
+
+        if chunk_offset is None:
+            await _finish("enrichment", artifact_id, DONE)
 
         total_ms = int((time.monotonic() - t_total) * 1000)
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
@@ -1169,21 +1243,15 @@ async def _enrich_document(
             qdrant_ms=qdrant_ms,
             total_ms=total_ms,
         )
-        return True
 
     except enrichment.EnrichmentError as exc:
         if is_llm_capacity_error(exc):
             # The task re-queues the job for later (_defer_after_llm_capacity);
             # the artifact is not failed and this is not an error.
-            raise _EnrichmentDeferred(
-                str(exc),
-                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-            ) from exc
+            raise _EnrichmentDeferred(str(exc)) from exc
         # Fail-loudly (SPEC-KB-021): LLM enrichment failure must propagate so
-        # Procrastinate retries the job.  Raw chunks from Phase 1 stay in Qdrant
-        # as a temporary fallback; they will be overwritten on successful retry.
-        # After max_attempts the job lands in permanent-failed state — visible in
-        # logs and the Procrastinate dashboard.
+        # Procrastinate retries the job. Raw chunks from Phase 1 stay in Qdrant
+        # meanwhile; after the last attempt the document records failed.
         total_ms = int((time.monotonic() - t_total) * 1000)
         logger.exception(
             "enrichment_failed_will_retry",
@@ -1194,31 +1262,4 @@ async def _enrich_document(
             artifact_id=artifact_id,
             total_ms=total_ms,
         )
-        if not chunk_offset:
-            await _set_direct_upload_index_status(
-                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-                "failed",
-            )
         raise  # Procrastinate retry handles this
-
-    except Exception:
-        # Non-enrichment failures (embedding, Qdrant, network): log and swallow.
-        # Raw vectors remain in Qdrant — document is still searchable with
-        # basic embeddings.  These are infrastructure issues, not data quality
-        # issues, so retrying the enrichment LLM call would not help.
-        total_ms = int((time.monotonic() - t_total) * 1000)
-        logger.exception(
-            "enrichment_infra_failed",
-            kb_slug=kb_slug,
-            path=path,
-            org_id=org_id,
-            artifact_id=artifact_id,
-            chunk_offset=chunk_offset,
-            total_ms=total_ms,
-        )
-        if not chunk_offset:
-            await _set_direct_upload_index_status(
-                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-                "failed",
-            )
-    return False

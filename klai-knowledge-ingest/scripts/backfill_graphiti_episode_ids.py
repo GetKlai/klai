@@ -3,7 +3,7 @@
 Usage (in a knowledge-ingest container):
 
     docker exec klai-core-knowledge-ingest-1 \
-        python -m scripts.backfill_graphiti_episode_ids --org-id <org_id> [--dry-run]
+        python -m scripts.backfill_graphiti_episode_ids --org-id <org_id> [--execute]
 
 Idempotent: rows that already carry ``graphiti_episode_ids`` are left unchanged.
 """
@@ -17,6 +17,7 @@ import sys
 import structlog
 
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation
 
 logger = structlog.get_logger()
 
@@ -67,9 +68,15 @@ async def run(org_id: str, dry_run: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--org-id", required=True, help="Zitadel org id (one tenant per run)")
-    parser.add_argument("--dry-run", action="store_true", help="Report the plan, change nothing")
+    parser.add_argument("--execute", action="store_true", help="Write the ids; plan without it")
     args = parser.parse_args()
-    return asyncio.run(run(args.org_id, args.dry_run))
+    guard_cli("backfill_graphiti_episode_ids", args.execute)
+    return asyncio.run(_run_locked(args.org_id, args.execute))
+
+
+async def _run_locked(org_id: str, execute: bool) -> int:
+    async with kb_operation(org_id, None, execute=execute):
+        return await run(org_id, dry_run=not execute)
 
 
 if __name__ == "__main__":

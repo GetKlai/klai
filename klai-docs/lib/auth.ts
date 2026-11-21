@@ -1,87 +1,77 @@
 /**
- * Zitadel Bearer token validation for docs-app API routes.
+ * Caller identity for docs-app API routes.
  *
- * The editor UI lives in the portal SPA (klai-portal) which already has a
- * Zitadel OIDC session. The portal sends the access token as a Bearer header
- * on every API call. This module validates that token against Zitadel's JWKS
- * endpoint — no separate OAuth2 flow needed.
+ * Two kinds of caller reach the API, both from inside the cluster (Caddy
+ * answers 404 on /docs/api/*) and both with X-Internal-Secret set to
+ * DOCS_INTERNAL_SECRET:
  *
- * For a future standalone version of Klai Docs (outside the portal context),
- * a full OAuth2/PKCE flow using next-auth would be added here alongside the
- * Bearer validation. See docs/architecture.md for details.
+ * - portal-api's BFF proxy: it has checked the user's active membership of the
+ *   session's organisation and asserts it in X-Klai-Verified-User-Id /
+ *   -Org-Id / -Org-Slug. That user reaches only the asserted organisation.
+ * - service callers (portal-api provisioning, klai-knowledge-mcp), naming the
+ *   acting user in X-User-ID and, when acting for one organisation, its
+ *   Zitadel org id in X-Org-ID.
+ *
+ * A request without that secret identifies nobody; a session token is not read.
+ * Each identification through the proxy assertion logs one
+ * `docs_auth_identified` line with the kind only.
  */
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { db } from "./db";
 
-const ISSUER = process.env.AUTH_ZITADEL_ISSUER ?? "https://auth.getklai.com";
+export type AuthPayload =
+  | { kind: "proxy_assertion"; sub: string; org_id: string; org_slug: string }
+  | { kind: "service"; sub: string; org_id?: string };
 
-// JWKS is fetched once and cached by the jose library
-const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/oauth/v2/keys`));
+function logIdentified(kind: AuthPayload["kind"]): void {
+  console.info(JSON.stringify({ event: "docs_auth_identified", kind }));
+}
 
-export type AuthPayload = JWTPayload & {
-  sub: string;
-  /** Zitadel org ID claim */
-  "urn:zitadel:iam:user:resourceowner:id"?: string;
-  /** Resolved org ID — set from JWT claim or X-Org-ID header */
-  org_id?: string;
-};
-
-/**
- * Validate a Bearer token from the Authorization header.
- * Returns the JWT payload on success, null if missing or invalid.
- */
-export async function validateBearer(
-  authHeader: string | null
-): Promise<AuthPayload | null> {
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7);
-  try {
-    const { payload } = await jwtVerify(token, JWKS, { issuer: ISSUER });
-    return payload as AuthPayload;
-  } catch {
-    return null;
-  }
+function matchesSecret(incoming: string | null, expected: string): boolean {
+  if (!incoming) return false;
+  // Equal-length digests let timingSafeEqual compare without leaking how much
+  // of the secret matched or how long it is.
+  const digest = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(digest(incoming), digest(expected));
 }
 
 /**
- * Convenience: extract the Bearer token from a Next.js Request and validate it.
- */
-export async function requireAuth(
-  request: Request
-): Promise<AuthPayload | null> {
-  return validateBearer(request.headers.get("authorization"));
-}
-
-/**
- * Accept either a Zitadel Bearer token OR an internal service secret.
- *
- * Internal service calls (e.g. klai-knowledge-mcp) set:
- *   X-Internal-Secret: <DOCS_INTERNAL_SECRET>
- *   X-User-ID:         <zitadel user UUID>
- *
- * When the secret matches, X-User-ID is trusted as the acting user.
- * Bypasses Zitadel JWT validation for same-cluster service calls only.
+ * Resolve the caller: with the docs secret, the proxy assertion or X-User-ID
+ * names it. Returns null when no caller can be established.
  */
 export async function requireAuthOrService(
   request: Request
 ): Promise<AuthPayload | null> {
+  const h = request.headers;
   const secret = process.env.DOCS_INTERNAL_SECRET;
-  if (secret) {
-    const incoming = request.headers.get("x-internal-secret");
-    if (incoming === secret) {
-      const sub = request.headers.get("x-user-id");
-      if (!sub) return null;
-      const org_id = request.headers.get("x-org-id") ?? undefined;
-      return { sub, org_id, iss: "internal-service" } as AuthPayload;
+  if (secret && matchesSecret(h.get("x-internal-secret"), secret)) {
+    const verifiedUser = h.get("x-klai-verified-user-id");
+    if (verifiedUser !== null) {
+      const org_id = h.get("x-klai-verified-org-id");
+      const org_slug = h.get("x-klai-verified-org-slug");
+      if (!verifiedUser || !org_id || !org_slug) return null;
+      logIdentified("proxy_assertion");
+      return { kind: "proxy_assertion", sub: verifiedUser, org_id, org_slug };
     }
+    const sub = h.get("x-user-id");
+    if (!sub) return null;
+    return { kind: "service", sub, org_id: h.get("x-org-id") ?? undefined };
   }
-  const payload = await validateBearer(request.headers.get("authorization"));
-  if (payload) {
-    payload.org_id =
-      (payload["urn:zitadel:iam:user:resourceowner:id"] as string) ?? undefined;
-  }
-  return payload;
+  return null;
+}
+
+/**
+ * A caller identified by the proxy assertion reaches only the organisation the
+ * portal verified their membership of. A service caller reaches any
+ * organisation unless an org id binds it to one.
+ */
+export function callerMayAccessOrg(
+  payload: AuthPayload,
+  org: { slug: string; zitadel_org_id: string }
+): boolean {
+  if (payload.kind === "proxy_assertion") return payload.org_slug === org.slug;
+  return !payload.org_id || payload.org_id === org.zitadel_org_id;
 }
 
 /**
@@ -113,7 +103,7 @@ export async function requireOrgAccess(
   orgSlug: string
 ): Promise<OrgAccessResult> {
   const payload = await requireAuthOrService(request);
-  if (!payload?.sub) {
+  if (!payload) {
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
 
@@ -122,8 +112,7 @@ export async function requireOrgAccess(
     return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
 
-  // Verify the caller's org matches the requested org
-  if (payload.org_id && payload.org_id !== org.zitadel_org_id) {
+  if (!callerMayAccessOrg(payload, org)) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
 

@@ -1,7 +1,7 @@
 # Partner API — Conversation Threading & Long Context
 
 > Integration guidance for partners using `POST /partner/v1/chat/completions`.
-> Platform internals live in `docs/architecture/conversation-state.md`.
+> Platform internals live in `docs/architecture/chat-system.md` §9.
 
 ## The contract: you own the thread
 
@@ -32,7 +32,11 @@ Do not let the array grow forever. Klai's own surfaces use windows too:
 the Klai widget keeps the last 80 messages; the Klai HubSpot integration
 sends the last 6 turns at max 1 200 chars each. A sliding window of the
 last 6–12 turns is enough for almost all support flows — the knowledge
-path only uses the last 3 prior turns for query rewriting anyway.
+path reads the last 6 messages for its search and its reading of the case
+(each clipped); the whole array goes to the answer model, where the
+gateway drops the oldest turns above a token budget when the request uses
+`klai-primary` (the default); with `model: klai-fast` nothing is trimmed
+(`chat-system.md` §9).
 
 Hard limits to design against:
 
@@ -105,10 +109,12 @@ which is intentionally still a trigger — it is rejected with a 400
 "ambiguous" error instead of silently falling back to passthrough; omit the
 field entirely to use the key's configured knowledge bases).
 
-Fields that only make sense in the knowledge path (`response_format`,
-`tools`, `tool_choice`, `parallel_tool_calls`, `prompt_cache_key`) are
-rejected with a 400 (fail-loud) when combined with a value that routes to
-the knowledge path, instead of being silently ignored.
+Fields that only exist on the general passthrough (`response_format`,
+`parallel_tool_calls`, `prompt_cache_key`) are rejected with a 400
+(fail-loud) when combined with a value that routes to the knowledge path,
+instead of being silently ignored. `tools` and `tool_choice` are not in
+that set: on the knowledge path a partner key gets a 400 for them
+(`klai-portal/backend/app/api/partner.py:981-982`).
 
 ## What the knowledge path answers with
 

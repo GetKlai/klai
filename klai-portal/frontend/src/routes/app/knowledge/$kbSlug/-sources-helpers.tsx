@@ -11,7 +11,7 @@ import {
 import { SiAirtable, SiConfluence, SiGithub, SiGoogledrive, SiNotion } from '@icons-pack/react-simple-icons'
 import { Badge } from '@/components/ui/badge'
 import * as m from '@/paraglide/messages'
-import type { Source } from './-sources-types'
+import type { CrawlCoverage, Source } from './-sources-types'
 
 /**
  * Threshold (minutes) after which a pending upload is considered stuck.
@@ -188,6 +188,35 @@ export function FailedItemsWarning({ source }: { source: Source }) {
       {m.kb_connector_failed_items({ count: String(failedCount) })}
     </span>
   )
+}
+
+function crawlCoverageSentence(c: CrawlCoverage): string | null {
+  // Nothing was read, so there is no progress to report and no round length to estimate.
+  if (c.pages_read <= 0) return null
+  // A round is every address the source knows that exists, read at pages_read per night.
+  const nights = String(Math.ceil((c.pages_read + c.addresses_waiting) / c.pages_read))
+  const read = String(c.pages_read)
+  if (c.stopped_by === 'page_limit') {
+    return m.kb_crawl_coverage_page_limit({ read, total: String(c.pages_read + c.addresses_waiting), nights })
+  }
+  if (c.stopped_by === 'site_rate_limit') return m.kb_crawl_coverage_rate_limit({ read, nights })
+  if (c.stopped_by === 'attempt_limit') return m.kb_crawl_coverage_attempt_limit()
+  if (c.stopped_by === null && c.addresses_gone * 2 > c.addresses_known) {
+    return m.kb_crawl_coverage_gone({ count: String(c.addresses_gone) })
+  }
+  return null
+}
+
+/**
+ * Plain-language note under a website source: what the last crawl read and
+ * what follows in the next nights. Same warning tone as FailedItemsWarning,
+ * because nothing is broken, it is information.
+ */
+export function CrawlCoverageNote({ source }: { source: Source }) {
+  if (source.kind !== 'connector' || !source.sync_coverage) return null
+  const sentence = crawlCoverageSentence(source.sync_coverage)
+  if (!sentence) return null
+  return <span className="block text-xs text-[var(--color-muted-foreground)]">{sentence}</span>
 }
 
 export function SourceIcon({ source }: { source: Source }) {

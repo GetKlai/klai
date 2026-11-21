@@ -1,5 +1,4 @@
 import logging
-from datetime import date, timedelta
 
 import httpx
 
@@ -35,70 +34,10 @@ class MoneybirdService:
             # Moneybird Bearer token verbatim when the API echoed it back.
             raise RuntimeError(sanitized)
 
-    async def create_contact(
-        self,
-        company_name: str,
-        email: str | None = None,
-        firstname: str | None = None,
-        lastname: str | None = None,
-        address: str | None = None,
-        zipcode: str | None = None,
-        city: str | None = None,
-        country: str = "NL",
-        tax_number: str | None = None,
-        chamber_of_commerce: str | None = None,
-        send_invoices_to_email: str | None = None,
-    ) -> dict:
-        contact: dict = {"company_name": company_name, "country": country}
-        if email:
-            contact["email"] = email
-        if firstname:
-            contact["firstname"] = firstname
-        if lastname:
-            contact["lastname"] = lastname
-        if address:
-            contact["address1"] = address
-        if zipcode:
-            contact["zipcode"] = zipcode
-        if city:
-            contact["city"] = city
-        if tax_number:
-            contact["tax_number"] = tax_number
-        if chamber_of_commerce:
-            contact["chamber_of_commerce"] = chamber_of_commerce
-        if send_invoices_to_email:
-            contact["send_invoices_to_email"] = send_invoices_to_email
-        resp = await self._http.post("/contacts.json", json={"contact": contact})
-        await self._raise_for_status(resp)
-        return resp.json()
-
     async def get_mandate_url(self, contact_id: str) -> str:
         resp = await self._http.post(f"/contacts/{contact_id}/moneybird_payments_mandate/url.json")
         await self._raise_for_status(resp)
         return resp.json()["url"]
-
-    async def create_subscription(
-        self,
-        contact_id: str,
-        product_id: str,
-        frequency_type: str,
-        quantity: int = 1,
-        reference: str | None = None,
-    ) -> dict:
-        start_date = (date.today() + timedelta(days=1)).isoformat()
-        payload: dict = {
-            "contact_id": contact_id,
-            "product_id": product_id,
-            "frequency_type": frequency_type,
-            "frequency": 1,
-            "start_date": start_date,
-            "quantity": quantity,
-        }
-        if reference:
-            payload["reference"] = reference
-        resp = await self._http.post("/subscriptions.json", json={"subscription": payload})
-        await self._raise_for_status(resp)
-        return resp.json()
 
     async def cancel_subscription(self, subscription_id: str) -> None:
         resp = await self._http.delete(f"/subscriptions/{subscription_id}.json")

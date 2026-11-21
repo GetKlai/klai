@@ -11,6 +11,7 @@ compliance requirement.
 from __future__ import annotations
 
 import copy
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -175,7 +176,10 @@ class CookieJar:
     """
 
     def __init__(self, cookies: list[Any], base_host: str) -> None:
-        now = datetime.now(UTC)
+        # time.time(), not datetime.now(): the stdlib jar that parses a
+        # Set-Cookie resolves Max-Age against time.time(), and the jar must
+        # judge expiry on the same clock.
+        now = datetime.fromtimestamp(time.time(), UTC)
         self.cookies: list[dict[str, Any]] = copy.deepcopy(
             [
                 c

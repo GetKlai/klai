@@ -14,7 +14,8 @@ _ENV_FILE = Path(__file__).parent.parent.parent / ".env"
 # host fails at boot rather than silently shipping.
 #
 # Bridge IP `172.18.0.1` is the docker0 gateway used in current prod to
-# reach the cross-stack `whisper-server` on the gpu-01 host. Documented
+# reach the transcription service's load balancer on the gpu-01 host (tunnel
+# on host port 8000; the allowlisted names are the legacy whisper-server's). Documented
 # inline so the `validator-env-parity` pitfall does not re-bite.
 _WHISPER_ALLOWED_HOSTS = frozenset(
     {

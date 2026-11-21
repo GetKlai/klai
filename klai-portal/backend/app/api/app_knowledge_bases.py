@@ -27,7 +27,6 @@ from app.models.groups import PortalGroup
 from app.models.kb_uploads import KBUpload
 from app.models.knowledge_bases import RESERVED_KB_SLUGS, PortalGroupKBAccess, PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalUser
-from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services import docs_client, kb_uploads_repo, knowledge_ingest_client
 from app.services.access import (
     get_user_role_for_kb,
@@ -38,6 +37,8 @@ from app.services.access import (
 from app.services.audit import log_event
 from app.services.connector_credentials import credential_store
 from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
+from app.services.klai_connector_client import klai_connector_client
+from app.services.knowledge_gap_report import article_gap_group_count, knowledge_gap_clusters
 from app.services.zitadel import zitadel
 
 # SPEC-PORTAL-KB-OWNERSHIP-001 REQ-1.1 — header-based admin-override token.
@@ -173,7 +174,6 @@ class KBStatsSummary(BaseModel):
     items: int  # vector chunks in Qdrant
     connectors: int  # portal_connectors rows for this KB
     chunks: int = 0  # SPEC-PORTAL-KENNIS-001: parent_chunks count from knowledge schema
-    gaps_7d: int  # open retrieval gaps pointing at this KB (7 days)
     usage_30d: int  # knowledge.queried events for this KB (30 days)
     unique_users_30d: int  # distinct users that queried this KB (30 days)
     active_days_30d: int  # distinct days with at least one query (30 days, max 30)
@@ -418,7 +418,6 @@ async def knowledge_bases_stats_summary(
     kb_slugs = [kb.slug for kb in kbs]
     slug_by_id = {kb.id: kb.slug for kb in kbs}
 
-    gap_cutoff = datetime.now(tz=dt.UTC) - timedelta(days=7)
     usage_cutoff = datetime.now(tz=dt.UTC) - timedelta(days=30)
 
     # Connectors per KB (org-scoped, grouped).
@@ -450,19 +449,6 @@ async def knowledge_bases_stats_summary(
         slug = slug_by_id.get(kb_id)
         if slug is not None:
             visible_uploads_by_slug[slug] = count
-
-    # Open gaps per KB in the last 7 days (best-effort via nearest_kb_slug).
-    gaps_result = await db.execute(
-        select(PortalRetrievalGap.nearest_kb_slug, func.count(PortalRetrievalGap.id))
-        .where(
-            PortalRetrievalGap.org_id == org.id,
-            PortalRetrievalGap.nearest_kb_slug.in_(kb_slugs),
-            PortalRetrievalGap.resolved_at.is_(None),
-            PortalRetrievalGap.occurred_at >= gap_cutoff,
-        )
-        .group_by(PortalRetrievalGap.nearest_kb_slug)
-    )
-    gaps_by_slug: dict[str, int] = {slug: count for slug, count in gaps_result.all() if slug is not None}
 
     # Usage from knowledge.queried product events for the last 30 days.
     # Each event carries a kb_slugs[] array (a single retrieve call may target
@@ -527,7 +513,6 @@ async def knowledge_bases_stats_summary(
             items=items_count,
             connectors=connectors_count,
             chunks=items_count,
-            gaps_7d=gaps_by_slug.get(kb.slug, 0),
             usage_30d=queries,
             unique_users_30d=users,
             active_days_30d=active_days,
@@ -1018,21 +1003,11 @@ async def get_kb_stats(
             exc_info=True,
         )
 
-    # KB-scoped gap count (7 days) — filtered by nearest_kb_slug
+    # The number the Knowledge gaps screen lists by default (org-wide: the chat
+    # signals name the articles a turn found, not their knowledge base).
     org_gap_count_7d: int | None = None
     try:
-        from app.models.retrieval_gaps import PortalRetrievalGap
-
-        gap_cutoff = datetime.now(tz=dt.UTC) - timedelta(days=7)
-        gap_result = await db.execute(
-            select(func.count()).where(
-                PortalRetrievalGap.org_id == org.id,
-                PortalRetrievalGap.nearest_kb_slug == kb.slug,
-                PortalRetrievalGap.occurred_at >= gap_cutoff,
-                PortalRetrievalGap.resolved_at.is_(None),
-            )
-        )
-        org_gap_count_7d = gap_result.scalar_one()
+        org_gap_count_7d = article_gap_group_count(await knowledge_gap_clusters(db, org_id=org.id, days=7))
     except Exception:
         logger.warning(
             "kb_stats_gap_count_failed",
@@ -1081,6 +1056,7 @@ class SourceOut(BaseModel):
     created_at: datetime | None = None  # for uploads — sort key
     index_status: str | None = None  # "synced", "pending", or "not_synced" for uploads; None for connectors
     can_replace: bool = False  # upload came from a file and can be overwritten by a newer file
+    sync_coverage: dict | None = None  # website sources: what the last crawl read and left for later
 
 
 class SourcesResponse(BaseModel):
@@ -1478,7 +1454,33 @@ async def list_kb_sources(
             )
         )
 
+    crawlers = [s for s in sources if s.connector_type == "web_crawler" and s.status == "completed"]
+    coverages = await asyncio.gather(*(_last_crawl_coverage(s.id, org.zitadel_org_id) for s in crawlers))
+    for source, coverage in zip(crawlers, coverages, strict=True):
+        source.sync_coverage = coverage
+
     return SourcesResponse(sources=sources)
+
+
+# Short on purpose: the sentence is optional and every website source asks on each page load.
+_COVERAGE_TIMEOUT_S = 2.0
+
+
+async def _last_crawl_coverage(connector_id: str, zitadel_org_id: str) -> dict | None:
+    """Coverage of a website source's last sync run, None when unknown.
+
+    It only adds a sentence to a row, so an unreachable connector service must
+    not take the whole sources list down with it.
+    """
+    try:
+        runs = await klai_connector_client.get_sync_runs(
+            connector_id, org_id=zitadel_org_id, limit=1, timeout=_COVERAGE_TIMEOUT_S
+        )
+    # ValueError covers a non-JSON body and a pydantic ValidationError; TypeError a body of the wrong shape.
+    except (httpx.HTTPError, ValueError, TypeError):
+        logger.warning("crawl_coverage_unavailable", connector_id=connector_id, exc_info=True)
+        return None
+    return runs[0].coverage if runs else None
 
 
 @router.get(

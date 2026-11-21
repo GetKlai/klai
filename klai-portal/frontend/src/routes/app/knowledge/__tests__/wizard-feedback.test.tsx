@@ -45,21 +45,20 @@ describe('AuthProbeFeedback', () => {
     expect(screen.getByText(/go back to step 3 and answer yes/i)).toBeTruthy()
   })
 
-  it('exposes match_reasons on auth_failed_still_walled', () => {
+  it('shows one plain warning on a failed cookie test, without diagnostics', () => {
     render(
       <AuthProbeFeedback
         result={{
           classification: 'auth_failed_still_walled',
-          match_reasons: ['session_cookie_minimal_body', 'end_of_body_login_marker'],
+          match_reasons: ['login_gate_still_present_with_cookies'],
           word_count: 10,
           auth_guard: null,
         }}
       />,
     )
-    expect(
-      screen.getByText(/session_cookie_minimal_body/),
-    ).toBeTruthy()
-    expect(screen.getByText(/end_of_body_login_marker/)).toBeTruthy()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByText(/still logged out with these cookies/i)).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/login_gate_still_present|Detected/)
   })
 
   it('shows credentials rejected message on 401/403', () => {

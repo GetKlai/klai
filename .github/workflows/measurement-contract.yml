@@ -16,9 +16,16 @@ permissions:
 
 jobs:
   meting:
+    # Our Renovate runs as the GitHub App "klai-renovate", whose login is
+    # klai-renovate[bot], not renovate[bot]: with the wrong name every
+    # fix(deps) PR failed this check and sat unmerged for up to ten days
+    # (#2214, #2242, #2264 on 2026-11-09) while the chore(deps) ones passed
+    # on the title alone. A dependency bump has no measurement of its own; the
+    # deploy's probes and the error watch measure it after the merge.
     if: >-
-      github.event.pull_request.user.login != 'renovate[bot]'
+      !endsWith(github.event.pull_request.user.login, 'renovate[bot]')
       && !startsWith(github.event.pull_request.title, 'chore(deps)')
+      && !startsWith(github.event.pull_request.title, 'fix(deps)')
     runs-on: ubuntu-latest
     steps:
       - name: Require a Meting line in the PR body

@@ -181,6 +181,29 @@ class TestReaperFinalisesTerminalRemote:
         portal.report_sync_status.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_a_crawl_that_needs_a_new_login_ends_as_auth_error(self) -> None:
+        # A nightly run is finalised here, not by someone opening the page,
+        # and AUTH_ERROR is what makes the portal show "log in again".
+        row = _row(started_at=datetime.now(UTC) - timedelta(minutes=10))
+        reaper, _, _, portal, _ = _make_reaper(
+            candidate_rows=[row],
+            status_responses=[
+                {
+                    "job_id": "abc123",
+                    "status": "failed",
+                    "pages_done": 0,
+                    "pages_total": 0,
+                    "error": "login_required:no_cookies_for:login.example.org",
+                },
+            ],
+        )
+
+        await reaper.tick()
+
+        assert row.status == SyncStatus.AUTH_ERROR
+        assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.AUTH_ERROR
+
+    @pytest.mark.asyncio
     async def test_failed_partial_remote_writes_failed_with_error(self) -> None:
         old = datetime.now(UTC) - timedelta(hours=25)
         row = _row(started_at=old)

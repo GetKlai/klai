@@ -997,6 +997,54 @@ class TestDeleteScribeArtifacts:
         mock_s3.delete_objects.assert_not_called()
 
 
+class TestDeleteKbImages:
+    @staticmethod
+    def _bucket(keys: set[str]) -> MagicMock:
+        def _list(_bucket: str, prefix: str, recursive: bool) -> list[SimpleNamespace]:
+            assert recursive
+            return [SimpleNamespace(object_name=k) for k in sorted(keys) if k.startswith(prefix)]
+
+        def _remove(_bucket: str, objs: list[SimpleNamespace]) -> object:
+            for o in objs:
+                keys.discard(o.name)
+            return iter(())
+
+        client = MagicMock()
+        client.list_objects = MagicMock(side_effect=_list)
+        client.remove_objects = MagicMock(side_effect=_remove)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_every_knowledge_base_image_of_the_org_is_deleted_and_no_other_orgs(self) -> None:
+        state = _make_state(zitadel_org_id="100")
+        keys = {"100/images/kb-a/1.png", "100/images/personal-u1/2.png", "1000/images/kb-a/1.png"}
+
+        with (
+            patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings,
+            patch("klai_image_storage.storage.Minio", return_value=self._bucket(keys)),
+        ):
+            mock_settings.garage_s3_endpoint = "garage:3900"
+            mock_settings.garage_kb_bucket = "klai-images"
+            from app.services.provisioning.deprovisioning_steps import _delete_kb_images
+
+            await _delete_kb_images(state)
+            assert keys == {"1000/images/kb-a/1.png"}
+            # A rerun after a later step failed finds nothing and succeeds.
+            await _delete_kb_images(state)
+
+        assert keys == {"1000/images/kb-a/1.png"}
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_s3_endpoint(self) -> None:
+        """Without storage configured the images cannot be shown gone, so the step fails."""
+        with patch("app.services.provisioning.deprovisioning_steps.settings") as mock_settings:
+            mock_settings.garage_s3_endpoint = ""
+            from app.services.provisioning.deprovisioning_steps import _delete_kb_images
+
+            with pytest.raises(RuntimeError, match="garage_s3_endpoint"):
+                await _delete_kb_images(_make_state(zitadel_org_id="100"))
+
+
 # ---------------------------------------------------------------------------
 # Step 11 — _delete_litellm_team
 # ---------------------------------------------------------------------------
@@ -1440,19 +1488,20 @@ class TestFinalizePostgresDelete:
 
 
 class TestStepsList:
-    def test_has_21_entries(self) -> None:
-        """STEPS must contain exactly 21 entries.
+    def test_has_22_entries(self) -> None:
+        """STEPS must contain exactly 22 entries.
 
         Original SPEC-INFRA-TENANT-DELETE-001 had 17 steps. SPEC-INFRA-TENANT-DELETE-002
         G3 + G6 inserted two adjacent wipes-via-internal-endpoint steps after
         ``_delete_falkordb_graph``: ``_wipe_knowledge_postgres`` (G3) and
         ``_wipe_klai_connector_state`` (G6). Tenant deprovisioning must also
         explicitly remove portal-owned Zitadel users before deleting the tenant
-        org, and Scribe now has a first-class service wipe. Total: 17 + 2 + 1 + 1 = 21.
+        org, Scribe has a first-class service wipe, and the knowledge-base images
+        in object storage have their own step. Total: 17 + 2 + 1 + 1 + 1 = 22.
         """
         from app.services.provisioning.deprovisioning_steps import STEPS
 
-        assert len(STEPS) == 21
+        assert len(STEPS) == 22
 
     def test_external_service_wipes_are_before_finalize(self) -> None:
         """External service-owned tenant rows must be wiped before portal finalizes.
@@ -1469,6 +1518,7 @@ class TestStepsList:
         from app.services.provisioning.deprovisioning_steps import (
             STEPS,
             _delete_falkordb_graph,
+            _delete_kb_images,
             _finalize_postgres_delete,
             _wipe_klai_connector_state,
             _wipe_knowledge_postgres,
@@ -1476,12 +1526,14 @@ class TestStepsList:
         )
 
         idx_falkordb = STEPS.index(_delete_falkordb_graph)
+        idx_images = STEPS.index(_delete_kb_images)
         idx_kp = STEPS.index(_wipe_knowledge_postgres)
         idx_kc = STEPS.index(_wipe_klai_connector_state)
         idx_scribe = STEPS.index(_wipe_scribe_state)
         idx_finalize = STEPS.index(_finalize_postgres_delete)
 
         assert idx_falkordb < idx_kp < idx_finalize, "G3 step must come AFTER falkordb and BEFORE finalize"
+        assert idx_falkordb < idx_images < idx_finalize, "KB images must go AFTER falkordb and BEFORE finalize"
         assert idx_falkordb < idx_kc < idx_finalize, "G6 step must come AFTER falkordb and BEFORE finalize"
         assert idx_falkordb < idx_scribe < idx_finalize, "Scribe step must come AFTER falkordb and BEFORE finalize"
 

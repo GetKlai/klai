@@ -160,7 +160,7 @@ async def _run_batch(
 ) -> tuple[AsyncMock, MagicMock]:
     from knowledge_ingest import enrichment_tasks
 
-    enrich = AsyncMock(return_value=True)
+    enrich = AsyncMock(return_value=None)
     bulk = MagicMock()
     bulk.configure.return_value.defer_async = AsyncMock()
     app = MagicMock(enrich_document_bulk=bulk)
@@ -270,6 +270,19 @@ async def test_prechunked_document_routes_on_its_points_not_on_a_rechunk_of_its_
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="contract to meet: chunks a caller supplied survive enrichment at any document size",
+)
+async def test_few_caller_chunks_survive_enrichment_with_their_speaker_turns(mem_client):
+    caller_chunks = ["Ann: hello there", "Bo: hi Ann"]
+    await _write_raw(caller_chunks)
+
+    enrich, _ = await _run_batch(offset=0, size=200, extra={"document_text": "hello there hi Ann"})
+
+    assert enrich.await_args.kwargs["chunks"] == caller_chunks
+
+
 async def test_sparse_result_count_mismatch_is_a_loud_error_not_a_silent_drop(mem_client):
     short = AsyncMock(return_value=_sparse_for(["only one"]))
     with patch.object(qs.sparse_embedder, "embed_sparse_batch", short):
@@ -284,39 +297,34 @@ async def test_sparse_result_count_mismatch_is_a_loud_error_not_a_silent_drop(me
             )
 
 
-async def _fail_enrichment(chunk_offset: int | None) -> AsyncMock:
+async def test_an_infrastructure_failure_in_enrichment_is_raised_not_swallowed():
+    """It used to be logged and swallowed, so the job "succeeded" with raw points
+    only and nothing said so. Now it propagates: the job is retried, and the
+    task records failed on its last attempt (enrichment_tasks._fail_if_last_attempt)."""
     from knowledge_ingest import enrichment_tasks
 
     status = AsyncMock()
-    with (
-        patch.object(enrichment_tasks, "_set_direct_upload_index_status", status),
-        patch.object(
-            enrichment_tasks.enrichment, "enrich_chunks", AsyncMock(side_effect=RuntimeError("x"))
-        ),
-    ):
-        written = await enrichment_tasks._enrich_document(
-            org_id=ORG,
-            kb_slug=KB,
-            path=PATH,
-            document_text="body",
-            chunks=["body"],
-            title="T",
-            artifact_id=ART,
-            user_id=None,
-            extra_payload={"document_summary": "s", "document_language": "en"},
-            synthesis_depth=0,
-            chunk_offset=chunk_offset,
-        )
-    assert written is False
-    return status
-
-
-async def test_failed_later_batch_leaves_the_document_status_alone():
-    status = await _fail_enrichment(chunk_offset=200)
+    for offset in (None, 0, 200):
+        with (
+            patch.object(enrichment_tasks, "_finish", status),
+            patch.object(
+                enrichment_tasks.enrichment,
+                "enrich_chunks",
+                AsyncMock(side_effect=RuntimeError("embedding service unreachable")),
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            await enrichment_tasks._enrich_document(
+                org_id=ORG,
+                kb_slug=KB,
+                path=PATH,
+                document_text="body",
+                chunks=["body"],
+                title="T",
+                artifact_id=ART,
+                user_id=None,
+                extra_payload={"document_summary": "s", "document_language": "en"},
+                synthesis_depth=0,
+                chunk_offset=offset,
+            )
     status.assert_not_awaited()
-
-
-async def test_failed_first_batch_or_whole_document_still_sets_failed():
-    for offset in (0, None):
-        status = await _fail_enrichment(chunk_offset=offset)
-        assert status.await_args.args[1] == "failed"

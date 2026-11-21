@@ -28,6 +28,7 @@ before this step existed.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from typing import Literal, NamedTuple
 
 import structlog
@@ -35,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core.config import Settings
 from app.services.chat_safety import _last_user_message
-from app.services.quotes import words_stand_in
+from app.services.quotes import WORD, words_stand_in
 from app.services.turn_judge import conversation_excerpt, every_field_required, structured_judge_call
 
 logger = structlog.get_logger()
@@ -85,6 +86,13 @@ _MAX_QUERY_CHARS = 500
 # Visitor wants that are a route, not a knowledge question.
 CONTACT_WANTS = frozenset({"human", "contact", "appointment"})
 _NO_SUBJECTS = "(none: every subject is handled)"
+# The gateway masks the model's input as <ENTITY_TYPE_n> (klai_pii_text_masking.py), while the visitor's
+# message is checked unmasked.
+_PLACEHOLDER = re.compile(r"<[A-Z][A-Z_]*_\d+>")
+_EMAIL = re.compile(r"\S+@\S+")
+# A word the model mended while copying ("emdewerker" -> "medewerker") still counts; a shorter one must be exact.
+_SAME_WORD_SHARE = 0.8
+_MIN_MENDED_WORD = 4
 
 
 class Case(BaseModel):
@@ -230,6 +238,43 @@ def named_product(text: str, products: list[str]) -> str:
     return ""
 
 
+def _words_without_digits(text: str) -> list[str]:
+    return [word for word in WORD.findall(_PLACEHOLDER.sub(" ", text).lower()) if not word.isdigit()]
+
+
+def _contact_quote_stands_in(quote: str, latest: str) -> bool:
+    """The quote stands in the latest message, but for what the model could not copy verbatim.
+
+    That is a placeholder where the message has an address or name (the gateway
+    masks the model's input), a spelling difference in a word (the model mended
+    a typo), and a number (the quote mixed in one from an earlier message). The
+    words left must still follow each other in the latest message, so a quote
+    taken from an earlier message does not verify.
+    """
+    if words_stand_in(quote, latest):
+        return True
+    needles = _words_without_digits(quote)
+    if not needles:
+        # Only placeholders: the visitor sent just an address or number, which is the wish itself.
+        return bool(_PLACEHOLDER.search(quote)) and not _words_without_digits(_EMAIL.sub(" ", latest))
+    words = [
+        next(
+            (
+                needle
+                for needle in needles
+                if word == needle
+                or (
+                    min(len(word), len(needle)) >= _MIN_MENDED_WORD
+                    and SequenceMatcher(None, word, needle).ratio() >= _SAME_WORD_SHARE
+                )
+            ),
+            word,
+        )
+        for word in _words_without_digits(_EMAIL.sub(" ", latest))
+    ]
+    return words_stand_in(" ".join(needles), " ".join(words))
+
+
 def _verified_routes(case: Case, latest: str) -> Case:
     """The case with each route its quote does not carry taken back.
 
@@ -241,7 +286,7 @@ def _verified_routes(case: Case, latest: str) -> Case:
     out-of-scope subject an answered one.
     """
     update: dict[str, object] = {}
-    if case.wants in CONTACT_WANTS and not words_stand_in(case.wants_quote, latest):
+    if case.wants in CONTACT_WANTS and not _contact_quote_stands_in(case.wants_quote, latest):
         update["wants"] = "knowledge"
     if case.out_of_scope and not words_stand_in(case.out_of_scope_quote, latest):
         update["out_of_scope"] = False

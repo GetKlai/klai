@@ -48,6 +48,10 @@ if [[ "$all" == *".State.Running"* ]]; then echo 'true'; exit 0; fi
 if [[ "$all" == *" LASTSAVE" ]]; then date +%s%N; exit 0; fi
 if [[ "$all" == *" BGSAVE" ]]; then echo 'Background saving started'; exit 0; fi
 if [[ "$all" == *" INFO persistence" ]]; then echo 'rdb_last_bgsave_status:ok'; exit 0; fi
+# The facts backup.sh records before each save and snapshot.
+if [[ "$all" == *" INFO keyspace" ]]; then printf '# Keyspace\ndb0:keys=3,expires=0,avg_ttl=0\n'; exit 0; fi
+if [[ "$all" == *" GRAPH.LIST" ]]; then exit 0; fi
+if [[ "$all" == *"/stats"* ]]; then echo '{"indexes":{}}'; exit 0; fi
 # pg_dumpall writes to stdout; STUB_EMPTY_DUMP_USER makes one dump come out empty.
 if [[ "$all" == *pg_dumpall* ]]; then
     [[ -n "${STUB_EMPTY_DUMP_USER:-}" && "$all" == *"-U $STUB_EMPTY_DUMP_USER"* ]] || echo '-- dump'
@@ -68,6 +72,7 @@ if [[ "$1" == "run" ]]; then
     # The Qdrant API calls answer in JSON.
     case "$all" in
         *curlimages/curl*" -o "*) ;;
+        *"/points/count"*) echo '{"result":{"count":3}}' ;;
         *"-X POST"*) echo '{"result":{"name":"snap-1"}}' ;;
         *"-X DELETE"*) echo '{}' ;;
         *curlimages/curl*) echo '{"result":{"collections":[{"name":"docs"}]}}' ;;

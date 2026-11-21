@@ -14,10 +14,12 @@ and has built-in rate limiting with exponential backoff.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
+from uuid import UUID
 
 import httpx
-from notion_client import Client
+from notion_client import APIErrorCode, APIResponseError, Client
 from notion_sync import fetch_blocks_recursive
 from notion_sync.client import RateLimitedNotionClient
 from notion_sync.extract import extract_block_text, extract_rich_text
@@ -39,6 +41,36 @@ _SKIP_BLOCK_TYPES = frozenset({"child_page", "child_database"})
 # The URLs are Notion-hosted S3 presigned URLs that expire in ~1h and
 # produce garbage when chunked. Captions are useful; URLs are not.
 _MEDIA_BLOCK_TYPES = frozenset({"image", "video", "file", "pdf"})
+
+
+# A Notion ID as it appears in a link or in the API: 32 hex digits, dashed or
+# not. It must end the path, so the view ID in a link's query string is not taken.
+_NOTION_ID = re.compile(
+    r"([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12})(?:[/?#]|$)", re.IGNORECASE
+)
+
+
+def _database_id(entry: str) -> str:
+    """Return the database ID in a filter entry in the dashed form the API reports.
+
+    The filter compares against parent.database_id, which Notion returns dashed.
+    An entry is whatever was pasted into the portal: a link, or an ID with or
+    without dashes.
+    """
+    match = _NOTION_ID.search(entry.strip())
+    if not match:
+        raise ValueError(f"Notion database filter entry {entry!r} holds no database ID.")
+    return str(UUID(match.group(1)))
+
+
+def _is_trashed(page: dict[str, Any]) -> bool:
+    """Whether a page object is in the trash.
+
+    Notion-Version 2025-09-03 (the notion-client 3.1.0 default) returns both
+    ``in_trash`` and the deprecated ``archived`` flag; later API versions drop
+    ``archived``, so both are read and either one means the page is gone.
+    """
+    return bool(page.get("in_trash") or page.get("archived"))
 
 
 class NotionAdapter(BaseAdapter):
@@ -68,14 +100,15 @@ class NotionAdapter(BaseAdapter):
             access_token (required): Notion integration token.
             page_ids (optional): List of specific Notion page IDs to sync.
                 When set, only these pages are synced — search is skipped entirely.
-            database_ids (optional): List of Notion database IDs. When set,
-                only pages whose parent references one of these databases are
-                synced. Applied as a post-fetch filter on parent.database_id
+            database_ids (optional): List of Notion database IDs or links. When
+                set, only pages whose parent references one of these databases
+                are synced. Applied as a post-fetch filter on parent.database_id
                 (works for both the pre- and post-2025-09-03 API parent shapes).
             max_pages (optional): Safety limit on total pages synced. Default 500.
 
         Raises:
-            ValueError: If access_token is missing.
+            ValueError: If access_token is missing, or a database_ids entry
+                holds no Notion ID.
         """
         config: dict[str, Any] = connector.config
         access_token = config.get("access_token")
@@ -87,7 +120,7 @@ class NotionAdapter(BaseAdapter):
         return {
             "access_token": access_token,
             "page_ids": config.get("page_ids", []),
-            "database_ids": config.get("database_ids", []),
+            "database_ids": [_database_id(entry) for entry in config.get("database_ids", [])],
             "max_pages": config.get("max_pages", 500),
         }
 
@@ -114,7 +147,10 @@ class NotionAdapter(BaseAdapter):
             page_ids: List of Notion page UUIDs to fetch.
 
         Returns:
-            List of Notion page objects (skips archived or missing pages).
+            List of Notion page objects. A page that is trashed, deleted or no
+            longer shared with the integration is left out, because it is gone
+            for the connector. Any other error raises: a page that failed to load
+            for a transient reason would otherwise be read as deleted.
         """
         pages: list[dict[str, Any]] = []
         for page_id in page_ids:
@@ -124,12 +160,34 @@ class NotionAdapter(BaseAdapter):
                     client.notion.pages.retrieve,
                     page_id=page_id,
                 )
-                if page.get("archived", False):
-                    continue
-                pages.append(page)
-            except Exception:
-                logger.warning("Failed to retrieve Notion page %s — skipping", page_id)
+            except APIResponseError as err:
+                # Notion answers object_not_found both for a deleted page and for
+                # one the integration can no longer see.
+                if err.code != APIErrorCode.ObjectNotFound:
+                    raise
+                logger.info("Notion page %s is gone or no longer shared", page_id)
+                continue
+            if _is_trashed(page):
+                continue
+            pages.append(page)
         return pages
+
+    @staticmethod
+    def _require_databases(client: RateLimitedNotionClient, database_ids: list[str]) -> None:
+        """Fail the listing when a filtered database cannot be read.
+
+        The filter matches pages on parent.database_id, so an ID that belongs to
+        a page, or to a database not shared with the integration, matches nothing
+        and the sync would complete at zero documents. Notion's error names the ID.
+
+        Runs synchronously — call via asyncio.to_thread.
+        """
+        for database_id in database_ids:
+            client._execute_with_retry(  # noqa: SLF001
+                f"retrieve database {database_id}",
+                client.notion.databases.retrieve,
+                database_id=database_id,
+            )
 
     @staticmethod
     def _search_all_pages(
@@ -178,7 +236,7 @@ class NotionAdapter(BaseAdapter):
             for page in response.get("results", []):
                 if page.get("object") != "page":
                     continue
-                if page.get("archived", False):
+                if _is_trashed(page):
                     continue
                 if db_filter:
                     # Match on parent.database_id, not parent.type: since Notion
@@ -271,9 +329,16 @@ class NotionAdapter(BaseAdapter):
                 "Listing all Notion pages (connector=%s, database_filter=%s)",
                 connector_id, bool(database_ids),
             )
+            await asyncio.to_thread(self._require_databases, client, database_ids)
             pages = await asyncio.to_thread(
                 self._search_all_pages, client, max_pages, database_ids or None
             )
+        # Every page id is either returned or confirmed gone, so the pinned
+        # listing is complete; a search listing is complete unless max_pages
+        # cut it off (a listing of exactly max_pages may have been cut, too).
+        self._record_listing(
+            connector, complete=bool(page_ids) or len(pages) < max_pages, reason="max_pages_reached"
+        )
 
         refs = [
             DocumentRef(
@@ -290,6 +355,55 @@ class NotionAdapter(BaseAdapter):
 
         logger.info("Listed %d Notion pages (connector=%s)", len(refs), connector_id)
         return refs
+
+    async def confirm_gone(self, connector: Any, source_refs: list[str]) -> set[str]:
+        """Confirm each page missing from a search listing before it is deleted.
+
+        Notion's search index lags behind edits and sharing, so absence from
+        search is no proof a page is gone; a wrong delete drops the page from
+        answers and re-ingests it with all its model work on the next sync. A
+        page counts as gone only when Notion answers object_not_found, the page
+        is trashed, or it now falls outside the configured database filter. Any
+        other answer or error keeps it. A ``page_ids`` listing already retrieved
+        every page, so its missing refs need no second call.
+        """
+        cfg = self._extract_config(connector)
+        if cfg["page_ids"]:
+            return set(source_refs)
+        return await asyncio.to_thread(
+            self._confirm_gone_sync,
+            self._build_sync_client(cfg["access_token"]),
+            source_refs,
+            set(cfg["database_ids"]),
+        )
+
+    @staticmethod
+    def _confirm_gone_sync(
+        client: RateLimitedNotionClient,
+        source_refs: list[str],
+        database_ids: set[str],
+    ) -> set[str]:
+        gone: set[str] = set()
+        for page_id in source_refs:
+            try:
+                page = client._execute_with_retry(  # noqa: SLF001
+                    f"retrieve page {page_id}",
+                    client.notion.pages.retrieve,
+                    page_id=page_id,
+                )
+            except APIResponseError as err:
+                if err.code == APIErrorCode.ObjectNotFound:
+                    gone.add(page_id)
+                else:
+                    logger.warning("Keeping Notion page %s: retrieve failed (%s)", page_id, err.code)
+                continue
+            except Exception:
+                logger.warning("Keeping Notion page %s: retrieve failed", page_id, exc_info=True)
+                continue
+            outside_filter = bool(database_ids) and page.get("parent", {}).get("database_id") not in database_ids
+            if _is_trashed(page) or outside_filter:
+                gone.add(page_id)
+        return gone
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
         """Fetch page content as plain-text bytes using notion-sync-lib.

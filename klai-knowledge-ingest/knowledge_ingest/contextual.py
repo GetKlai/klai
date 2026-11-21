@@ -8,7 +8,7 @@ each chunk — for an 8000-token document with 20 chunks that is 160K input
 tokens of redundant payload.
 
 This module replaces that pattern with Anthropic's: generate a 1-2-sentence
-summary of the document ONCE, cache it, and prepend the (much smaller)
+summary of the document once per version and prepend the (much smaller)
 summary to every chunk's enrichment prompt instead of the full document.
 
 Two responsibilities:
@@ -20,15 +20,12 @@ Two responsibilities:
 
 2. ``generate_document_summary(text, title, language, …)`` — call klai-ingest
    via the LiteLLM proxy and return a 1-2-sentence summary capped at the
-   token budget. Returns an empty string on any failure — callers fall back
-   to the legacy full-document prompt path (REQ-2 of SPEC-RAG-CONTEXTUAL-001).
+   token budget. A failed call raises ``EnrichmentError``, so a rate limit or
+   a spent budget reaches the enrichment job's retry and capacity deferral.
 
-Caching:
-    Per-document summary is persisted on ``knowledge.artifacts.extra.document_summary``
-    keyed by content_hash. This module only generates the summary; the
-    persistence/lookup lives at the enrichment-task layer where artifact
-    rows are already being read/written. Re-ingesting the same content
-    returns the cached summary at zero cost.
+The summary is computed once per document version: the enrichment task
+stores it on the version's ``knowledge.artifacts.extra`` and every later run
+for that version reads it from there.
 """
 
 from __future__ import annotations
@@ -40,6 +37,8 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.enrichment import EnrichmentError
+from knowledge_ingest.llm_capacity import is_llm_capacity_error
 from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
@@ -177,15 +176,17 @@ async def generate_document_summary(
     *,
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> str:
-    """Return a 1-2-sentence summary of ``text``, or "" on failure.
+    """Return a 1-2-sentence summary of ``text`` ("" for blank text).
 
     Calls ``klai-ingest`` via the LiteLLM proxy with a low-temperature prompt
     in the requested language (auto-detected when ``language`` is None).
 
-    Fail-open: any HTTP/transport/parse error logs a warning and returns
-    an empty string. Callers that get "" back fall back to the legacy
-    full-document enrichment prompt — chunks are still embedded, just
-    without the summary-driven context. (SPEC-RAG-CONTEXTUAL-001 REQ-2.)
+    A failed call raises ``EnrichmentError`` instead of returning "": the
+    chunk prompts would then fall back to the document context window (up to
+    ``enrichment_max_document_tokens``, 2,000, per chunk instead of a two-line
+    summary), so a rate limit answered that way
+    would raise the token use exactly when the limit is reached. The job's
+    retry and capacity deferral handle it like a failed chunk call.
     """
     if not text or not text.strip():
         return ""
@@ -221,13 +222,17 @@ async def generate_document_summary(
             )
             resp.raise_for_status()
             data = resp.json()
-        content = data["choices"][0]["message"]["content"].strip()
-        return content
+        summary = data["choices"][0]["message"]["content"].strip()
+        if not summary:
+            # An empty answer is a failed call too: returned as "", the chunk
+            # prompts would take the document context window without a trace.
+            raise ValueError("the model returned an empty summary")
+        return summary
     except Exception as exc:
-        logger.warning(
+        (logger.info if is_llm_capacity_error(exc) else logger.warning)(
             "contextual_summary_failed",
             title=title[:80] if title else None,
             language=language,
             error=str(exc)[:200],
         )
-        return ""
+        raise EnrichmentError(f"document summary failed: {exc}") from exc

@@ -31,14 +31,16 @@ parent_chunks re-applies the Qdrant ``parent_chunk_id`` payload patch.
 This repairs half-failed runs where PostgreSQL inserts succeeded but the
 Qdrant payload update failed.
 
-Run from inside the knowledge-ingest container:
+Run from inside the knowledge-ingest container. Without ``--execute`` it only
+counts the artifacts; ``--execute`` writes and needs the owner's approval marker:
 
-    docker exec klai-core-knowledge-ingest-1 \\
-        python scripts/backfill_docling_parent_chunks.py
+    python -m scripts.backfill_docling_parent_chunks
+    python -m scripts.backfill_docling_parent_chunks --execute
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -52,6 +54,7 @@ import structlog
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.operations import guard_cli, kb_operation
 
 logger = structlog.get_logger()
 
@@ -276,7 +279,7 @@ def _parse_pg_dsn(dsn: str) -> dict[str, object]:
     }
 
 
-async def main() -> int:
+async def main(execute: bool) -> int:
     # Connect as klai superuser to bypass RLS for the cross-org listing,
     # then set tenant context per-artifact for the actual inserts.
     dsn = (
@@ -297,6 +300,9 @@ async def main() -> int:
     try:
         targets = await _list_docling_artifacts_without_parents(conn)
         print(f"Found {len(targets)} active docling artifacts to verify/backfill.")
+        if not execute:
+            print("dry run: nothing written")
+            return 0
 
         total_inserted = 0
         outcomes: dict[str, int] = {}
@@ -325,5 +331,15 @@ async def main() -> int:
         await conn.close()
 
 
+async def _run_locked(execute: bool) -> int:
+    # Spans every org, so it holds the all-orgs key.
+    async with kb_operation(None, None, execute=execute):
+        return await main(execute)
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    parser = argparse.ArgumentParser(description="Backfill parent chunks of docling artifacts")
+    parser.add_argument("--execute", action="store_true", help="Write; count without it")
+    args = parser.parse_args()
+    guard_cli("backfill_docling_parent_chunks", args.execute)
+    raise SystemExit(asyncio.run(_run_locked(args.execute)))

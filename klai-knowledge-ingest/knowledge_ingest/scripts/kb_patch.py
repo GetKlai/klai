@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -60,6 +59,7 @@ from knowledge_ingest import (
     sparse_embedder,
 )
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.qdrant_store import COLLECTION, get_client
 
 _BATCH = 200
@@ -105,10 +105,13 @@ async def patch_org(
     if kb_slug and kb_slug not in settings:
         raise ValueError(f"knowledge base {kb_slug!r} not found for org {org_id}")
     slugs = [kb_slug] if kb_slug else sorted(settings)
-    return {
-        slug: await _patch_kb(client, org_id, slug, *settings[slug], only=only, execute=execute)
-        for slug in slugs
-    }
+    results = {}
+    for slug in slugs:
+        async with kb_operation(org_id, [slug], execute=execute):
+            results[slug] = await _patch_kb(
+                client, org_id, slug, *settings[slug], only=only, execute=execute
+            )
+    return results
 
 
 async def _anchors_by_url(org_id: str, kb_slug: str, points: list) -> dict[str, list[str]]:
@@ -283,12 +286,7 @@ def main() -> None:
     parser.add_argument("--only", choices=["aliases", "products", "all"], default="all")
     parser.add_argument("--execute", action="store_true", help="embed and write the changes")
     args = parser.parse_args()
-    # The user's yes for this one run (docs/runbooks/kb-patch.md) is carried as
-    # INGEST_OK=1; without it a write is refused before anything is read.
-    if args.execute and os.environ.get("INGEST_OK") != "1":
-        parser.exit(
-            2, "kb_patch: --execute needs INGEST_OK=1, set after the user's yes for this run\n"
-        )
+    guard_cli("kb_patch", args.execute)
     asyncio.run(_main(args))
 
 

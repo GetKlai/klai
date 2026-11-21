@@ -19,7 +19,7 @@ because they are retained, so the guard never fired.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -27,12 +27,22 @@ import pytest
 
 import knowledge_ingest
 from knowledge_ingest import enrichment_tasks, queues
-from knowledge_ingest.connector_state import FenceState
 from knowledge_ingest.episode_text import MAX_TEXT_CHARS
 from knowledge_ingest.routes import ingest as ingest_route
 
 _ARTIFACT_ID = "0f9c1a2b-3d4e-4f50-9a61-72b83c94d5e6"
 _ORG_ID = "368884765035593759"
+
+
+# procrastinate's own JobAborted (``real_procrastinate``), so an abandoned job is
+# asserted to be what the worker records as ``aborted`` and does not retry.
+JobAborted: type[BaseException]
+
+
+@pytest.fixture(autouse=True)
+def _job_aborted(real_procrastinate):
+    global JobAborted
+    JobAborted = real_procrastinate.exceptions.JobAborted
 
 
 class _CapturingApp:
@@ -67,7 +77,7 @@ def graphiti_task() -> object:
 @asynccontextmanager
 async def _fake_conn(org_id):
     assert org_id == _ORG_ID
-    yield SimpleNamespace()
+    yield SimpleNamespace(fetchrow=AsyncMock(return_value=None), execute=AsyncMock())
 
 
 async def _run(
@@ -75,8 +85,6 @@ async def _run(
     *,
     exists: bool,
     active: bool,
-    resource_key: str | None = None,
-    fence_state: FenceState = FenceState.ACTIVE,
 ):
     """Run the task against a stubbed pg_store; return the ingest_episode mock."""
     ingest_episode = AsyncMock(return_value="episode-uuid")
@@ -103,17 +111,13 @@ async def _run(
         patch.object(knowledge_ingest, "pg_store", pg_store),
         patch.object(knowledge_ingest, "graph", graph_module),
         patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
-        patch(
-            "knowledge_ingest.connector_state.check_connector_resource_fence",
-            new=AsyncMock(return_value=fence_state),
-        ),
+        suppress(JobAborted),
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,
             org_id=_ORG_ID,
             content_type="text/markdown",
             belief_time_start=0,
-            resource_key=resource_key,
         )
     return ingest_episode
 
@@ -175,27 +179,6 @@ async def test_active_artifact_still_reaches_the_graph(graphiti_task):
 
 
 @pytest.mark.asyncio
-async def test_rebuild_fences_old_graphiti_generation_but_allows_new_generation(graphiti_task):
-    old_job = await _run(
-        graphiti_task,
-        exists=True,
-        active=True,
-        resource_key="connector:368884765035593759:support:connector-1:old-run",
-        fence_state=FenceState.STALE_GENERATION,
-    )
-    new_job = await _run(
-        graphiti_task,
-        exists=True,
-        active=True,
-        resource_key="connector:368884765035593759:support:connector-1:new-run",
-        fence_state=FenceState.ACTIVE,
-    )
-
-    old_job.assert_not_awaited()
-    new_job.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_deleted_artifact_still_aborts(graphiti_task):
     """SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07 must keep holding."""
     ingest_episode = await _run(graphiti_task, exists=False, active=False)
@@ -211,7 +194,9 @@ async def test_short_document_creates_one_episode_and_records_both_id_keys(graph
     ingest_episode.assert_awaited_once()
     assert ingest_episode.call_args.kwargs["document_text"] == "One short sentence."
     pg_store.append_graphiti_episode_id.assert_awaited_once_with(ANY, _ARTIFACT_ID, "episode-1")
-    assert pg_store.update_artifact_extra.await_args_list[0].args[2] == {
+    # [0] marks where this extraction's parts start (see the ingest_graphiti_episode test
+    # in tests/graph_contract/test_new_extraction_replaces_on_completion.py).
+    assert pg_store.update_artifact_extra.await_args_list[1].args[2] == {
         "graphiti_episode_part_count": 1,
         "graphiti_episode_complete": False,
         "graphiti_episode_ids_version": 2,
@@ -260,7 +245,7 @@ async def test_partial_failure_records_episodes_created_before_the_error(graphit
 
     assert ingest_episode.await_count == 2
     pg_store.append_graphiti_episode_id.assert_awaited_once_with(ANY, _ARTIFACT_ID, "episode-1")
-    assert pg_store.update_artifact_extra.await_count == 1
+    assert pg_store.update_artifact_extra.await_count == 2
     graph_module.flush_entity_graph_data.assert_not_awaited()
 
 
@@ -316,6 +301,7 @@ async def test_deletion_between_episode_parts_aborts_before_the_next_write(graph
         patch.object(knowledge_ingest, "pg_store", pg_store),
         patch.object(knowledge_ingest, "graph", graph_module),
         patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
+        pytest.raises(JobAborted),
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,

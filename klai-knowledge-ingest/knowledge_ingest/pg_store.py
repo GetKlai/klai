@@ -20,6 +20,14 @@ import asyncpg
 import structlog
 from klai_kb_slugs import personal_kb_slug
 
+from knowledge_ingest.derived_state import (
+    FAILED,
+    PENDING,
+    ProductState,
+    born_pending,
+    product_state,
+)
+
 logger = structlog.get_logger()
 
 _SENTINEL = 253402300800  # 9999-12-31 — sentinel value for "still active"
@@ -220,7 +228,7 @@ async def create_artifact(
     """
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
-    extra_json = json.dumps(extra) if extra else "{}"
+    extra_json = json.dumps({**(extra or {}), **born_pending()})
     parent_ids = _normalise_uuid_strings(derived_from)
 
     async def _insert_artifact_row() -> str:
@@ -370,14 +378,24 @@ async def get_personal_artifact(
     org_id: str,
     user_id: str,
 ) -> dict | None:
-    """Get a single active personal artifact, or None if not found / wrong user."""
+    """Get a deletable personal artifact, or None if not found / wrong user."""
+    # Deletable means newest version of its document with no other live row
+    # on its path: the active version, or a document whose delete closed it
+    # but failed before the purge finished, so a retried delete finds it. A
+    # replaced version never matches.
     row = await conn.fetchrow(
         """
         SELECT id, path
-        FROM knowledge.artifacts
+        FROM knowledge.artifacts a
         WHERE id = $1 AND org_id = $2 AND user_id = $3
           AND kb_slug = $4
-          AND belief_time_end = $5
+          AND a.superseded_by IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM knowledge.artifacts live
+              WHERE live.org_id = a.org_id AND live.kb_slug = a.kb_slug
+                AND live.path = a.path AND live.belief_time_end = $5
+                AND live.id <> a.id
+          )
         """,
         artifact_id,
         org_id,
@@ -464,6 +482,27 @@ async def set_superseded_by(
     )
 
 
+# Every row reachable backwards along ``superseded_by`` from the rows in $2:
+# the given versions plus every version they replaced, bound to the caller's
+# organisation ($1) at every step. The walk has no depth limit, because a
+# hard delete has to reach the oldest version (one document in production has
+# 43). UNION, not UNION ALL, discards a row already visited, so a corrupt
+# cycle ends the recursion instead of hanging it.
+_HISTORY_CTE = """
+WITH RECURSIVE history AS (
+    SELECT a.id
+    FROM knowledge.artifacts a
+    WHERE a.org_id = $1 AND a.id = ANY($2::uuid[])
+
+    UNION
+
+    SELECT p.id
+    FROM history h
+    JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
+)
+"""
+
+
 async def get_episode_ids_for_document_history(
     conn: asyncpg.Connection,
     org_id: str,
@@ -489,28 +528,14 @@ async def get_episode_ids_for_document_history(
     all (a navigation page, #1148). Neither is an episode uuid, and renaming
     one would match nothing.
 
-    depth < 100 bounds the walk. ``superseded_by`` points forward in time so a
-    cycle should be impossible, but an unbounded recursive CTE that meets one
-    hangs the ingest request. Truncating here costs completeness, never
-    correctness: a missed ancestor keeps its current name and the backfill
-    still reaches it.
+    The walk follows the whole chain and stops on a cycle (see
+    ``_HISTORY_CTE``).
     """
     if not artifact_ids:
         return []
     rows = await conn.fetch(
-        """
-        WITH RECURSIVE history AS (
-            SELECT a.id, 0 AS depth
-            FROM knowledge.artifacts a
-            WHERE a.org_id = $1 AND a.id = ANY($2::uuid[])
-
-            UNION ALL
-
-            SELECT p.id, h.depth + 1
-            FROM history h
-            JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
-            WHERE h.depth < 100
-        )
+        _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
+        + """
         SELECT DISTINCT stored_episode.episode_id
         FROM knowledge.artifacts a
         CROSS JOIN LATERAL jsonb_array_elements_text(
@@ -531,35 +556,6 @@ async def get_episode_ids_for_document_history(
         artifact_ids,
     )
     return [str(row["episode_id"]) for row in rows]
-
-
-async def soft_delete_connector_artifacts_by_source_ref(
-    conn: asyncpg.Connection,
-    org_id: str,
-    kb_slug: str,
-    connector_id: str,
-    source_ref: str,
-) -> int:
-    """Close active versions of one connector document before external cleanup."""
-    rows = await conn.fetch(
-        """
-        UPDATE knowledge.artifacts
-        SET belief_time_end = $5
-        WHERE org_id = $1
-          AND kb_slug = $2
-          AND extra::jsonb->>'source_connector_id' = $3
-          AND extra::jsonb->>'source_ref' = $4
-          AND belief_time_end = $6
-        RETURNING id
-        """,
-        org_id,
-        kb_slug,
-        connector_id,
-        source_ref,
-        int(time.time()),
-        _SENTINEL,
-    )
-    return len(rows)
 
 
 async def list_connector_artifact_ids_by_source_ref(
@@ -587,112 +583,198 @@ async def list_connector_artifact_ids_by_source_ref(
     return [str(row["id"]) for row in rows]
 
 
-async def delete_connector_artifacts_by_source_ref(
+async def list_document_heads(
     conn: asyncpg.Connection,
     org_id: str,
-    kb_slug: str,
-    connector_id: str,
-    source_ref: str,
-) -> int:
-    """Hard-delete every PostgreSQL row owned by one connector source_ref."""
-    params = (org_id, kb_slug, connector_id, source_ref)
+    path: str,
+    kb_slug: str | None,
+    connector_id: str | None = None,
+) -> list[str]:
+    """Return the newest row of every document stored under ``path``.
 
+    A head is a row nothing has replaced (``superseded_by IS NULL``): the
+    active version, or the last version of a document that was closed without
+    a successor and not yet purged. Earlier versions hang off it through
+    ``superseded_by`` and are reached by :func:`list_document_history`.
+    ``kb_slug=None`` searches every knowledge base of the organisation, which a
+    caller needs when it does not know where the document was added (scribe).
+    ``connector_id`` limits the heads to that connector's documents.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT id::text AS id
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND path = $2
+          AND ($3::text IS NULL OR kb_slug = $3)
+          AND ($4::text IS NULL OR extra->>'source_connector_id' = $4)
+          AND superseded_by IS NULL
+        """,
+        org_id,
+        path,
+        kb_slug,
+        connector_id,
+    )
+    return [str(row["id"]) for row in rows]
+
+
+# index_status of a row whose delete has started but not finished. It marks
+# the row as a purge to retry (the crawler picks these up again) and keeps
+# reindex from reopening a half-cleaned document.
+PURGE_PENDING = "deleting"
+
+
+async def close_artifacts(conn: asyncpg.Connection, org_id: str, artifact_ids: list[str]) -> None:
+    """Close these rows and mark them as being purged.
+
+    Closing stops search and the enrichment and graph workers from using the
+    active rows. The marker is set on every given row, closed or not, so a
+    retry of a half-failed delete is recognisable as such.
+    """
+    await conn.execute(
+        """
+        UPDATE knowledge.artifacts
+        SET belief_time_end = CASE WHEN belief_time_end = $4 THEN $3 ELSE belief_time_end END,
+            index_status = $5,
+            index_status_changed_at = $3
+        WHERE org_id = $1
+          AND id = ANY($2::uuid[])
+        """,
+        org_id,
+        artifact_ids,
+        int(time.time()),
+        _SENTINEL,
+        PURGE_PENDING,
+    )
+
+
+async def list_connector_paths_pending_purge(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, connector_id: str
+) -> list[str]:
+    """Return the paths of this connector's documents whose purge did not finish."""
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT path
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND extra->>'source_connector_id' = $3
+          AND superseded_by IS NULL
+          AND index_status = $4
+        ORDER BY path
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        PURGE_PENDING,
+    )
+    return [str(row["path"]) for row in rows]
+
+
+async def list_document_history(
+    conn: asyncpg.Connection,
+    org_id: str,
+    artifact_ids: list[str],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Return every version of these documents and the paths only they still use.
+
+    The ids cover the given rows and every version they replaced. The
+    ``(kb_slug, path)`` pairs are the paths of those versions that no active
+    row holds: per-path state (vector points, crawled_pages, page_links) may
+    be removed for those, while a path a live document has since taken over
+    must be left alone.
+    """
+    rows = await conn.fetch(
+        _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
+        + """
+        SELECT a.id::text AS id, a.kb_slug, a.path,
+               NOT EXISTS (
+                   SELECT 1 FROM knowledge.artifacts live
+                   WHERE live.org_id = $1
+                     AND live.kb_slug = a.kb_slug
+                     AND live.path = a.path
+                     AND live.belief_time_end = $3
+               ) AS path_unused
+        FROM knowledge.artifacts a
+        WHERE a.org_id = $1 AND a.id IN (SELECT id FROM history)
+        """,
+        org_id,
+        artifact_ids,
+        _SENTINEL,
+    )
+    ids = [str(row["id"]) for row in rows]
+    paths = sorted({(row["kb_slug"], row["path"]) for row in rows if row["path_unused"]})
+    return ids, paths
+
+
+async def delete_artifacts(
+    conn: asyncpg.Connection,
+    org_id: str,
+    artifact_ids: list[str],
+    paths: list[tuple[str, str]],
+) -> int:
+    """Hard-delete these artifact rows and every PostgreSQL row derived from them.
+
+    ``parent_chunks`` and ``artifact_images`` follow through ON DELETE
+    CASCADE. ``paths`` are the ``(kb_slug, path)`` pairs no live row uses any
+    more (see :func:`list_document_history`); their crawl metadata goes too.
+    Tables without an ``org_id`` column are only touched for ids this
+    organisation owns, so a foreign id in ``artifact_ids`` matches nothing.
+    """
+    kb_slugs = [kb_slug for kb_slug, _ in paths]
+    urls = [path for _, path in paths]
     async with conn.transaction():
-        await conn.execute(
-            """
-            UPDATE knowledge.artifacts SET superseded_by = NULL
-            WHERE superseded_by IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
+        owned = await conn.fetch(
+            "SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND id = ANY($2::uuid[])",
+            org_id,
+            artifact_ids,
         )
+        owned_ids = [row["id"] for row in owned]
         await conn.execute(
-            """
-            DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
+            "UPDATE knowledge.artifacts SET superseded_by = NULL "
+            "WHERE org_id = $1 AND superseded_by = ANY($2::uuid[])",
+            org_id,
+            owned_ids,
         )
-        await conn.execute(
-            """
-            DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
-        )
-        await conn.execute(
-            """
-            DELETE FROM knowledge.derivations
-            WHERE child_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            ) OR parent_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
-        )
+        for statement in (
+            "DELETE FROM knowledge.embedding_queue WHERE artifact_id = ANY($1::uuid[])",
+            "DELETE FROM knowledge.artifact_entities WHERE artifact_id = ANY($1::uuid[])",
+            "DELETE FROM knowledge.derivations "
+            "WHERE child_id = ANY($1::uuid[]) OR parent_id = ANY($1::uuid[])",
+        ):
+            await conn.execute(statement, owned_ids)
         await conn.execute(
             """
             DELETE FROM knowledge.crawled_pages
-            WHERE org_id = $1 AND kb_slug = $2 AND url IN (
-                SELECT path FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
+            WHERE org_id = $1
+              AND (kb_slug, url) IN (SELECT * FROM unnest($2::text[], $3::text[]))
             """,
-            *params,
+            org_id,
+            kb_slugs,
+            urls,
         )
         await conn.execute(
             """
             DELETE FROM knowledge.page_links
-            WHERE org_id = $1 AND kb_slug = $2 AND (
-                from_url IN (
-                    SELECT path FROM knowledge.artifacts
-                    WHERE org_id = $1 AND kb_slug = $2
-                      AND extra::jsonb->>'source_connector_id' = $3
-                      AND extra::jsonb->>'source_ref' = $4
-                ) OR to_url IN (
-                    SELECT path FROM knowledge.artifacts
-                    WHERE org_id = $1 AND kb_slug = $2
-                      AND extra::jsonb->>'source_connector_id' = $3
-                      AND extra::jsonb->>'source_ref' = $4
-                )
-            )
+            WHERE org_id = $1
+              AND ((kb_slug, from_url) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+                OR (kb_slug, to_url) IN (SELECT * FROM unnest($2::text[], $3::text[])))
             """,
-            *params,
+            org_id,
+            kb_slugs,
+            urls,
         )
         result = await conn.fetchval(
             """
             WITH deleted AS (
                 DELETE FROM knowledge.artifacts
-                WHERE org_id = $1
-                  AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
+                WHERE org_id = $1 AND id = ANY($2::uuid[])
                 RETURNING id
             )
             SELECT COUNT(*) FROM deleted
             """,
-            *params,
+            org_id,
+            artifact_ids,
         )
     return int(result or 0)
 
@@ -759,118 +841,6 @@ async def count_active_connector_artifact_paths(
     return count or 0
 
 
-async def soft_delete_stale_connector_artifacts(
-    conn: asyncpg.Connection,
-    org_id: str,
-    kb_slug: str,
-    connector_id: str,
-    stale_paths: list[str],
-) -> int:
-    """Retire active connector artifacts for stale paths and scrub crawl metadata."""
-    if not stale_paths:
-        return 0
-
-    now = int(time.time())
-    async with conn.transaction():
-        await conn.execute(
-            """UPDATE knowledge.artifacts SET superseded_by = NULL
-               WHERE superseded_by IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.derivations WHERE child_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               ) OR parent_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.crawled_pages
-               WHERE org_id = $1 AND kb_slug = $2 AND url = ANY($3::text[])""",
-            org_id,
-            kb_slug,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.page_links
-               WHERE org_id = $1 AND kb_slug = $2
-                 AND (from_url = ANY($3::text[]) OR to_url = ANY($3::text[]))""",
-            org_id,
-            kb_slug,
-            stale_paths,
-        )
-        result = await conn.fetchval(
-            """
-            WITH retired AS (
-              UPDATE knowledge.artifacts
-              SET belief_time_end = $5
-              WHERE org_id = $1
-                AND kb_slug = $2
-                AND path = ANY($4::text[])
-                AND belief_time_end = $6
-                AND extra IS NOT NULL
-                AND extra::jsonb->>'source_connector_id' = $3
-              RETURNING id
-            )
-            SELECT COUNT(*) FROM retired
-            """,
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-            now,
-            _SENTINEL,
-        )
-    return int(result or 0)
-
-
 async def get_episode_ids(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> list[str]:
     """Return Graphiti episode UUIDs for all artifacts in a KB.
 
@@ -901,7 +871,9 @@ async def delete_kb(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> None
     """Hard-delete all PostgreSQL records for a knowledge base.
 
     Removes: artifacts, artifact_entities, derivations, embedding_queue,
-    kb_config, crawl_jobs — all scoped to (org_id, kb_slug).
+    kb_config, crawl_jobs, crawl_url_memory, crawled_pages, page_links and
+    connector_resource_fences — all scoped to (org_id, kb_slug). Parent
+    chunks, image rows and crawl frontiers follow through ON DELETE CASCADE.
 
     Does NOT delete knowledge.entities: entities are org-scoped and may be
     shared across multiple KBs within the same org.
@@ -953,12 +925,25 @@ async def delete_kb(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> None
             kb_slug,
         )
         await conn.execute(
+            "DELETE FROM knowledge.crawl_url_memory WHERE org_id = $1 AND kb_slug = $2",
+            org_id,
+            kb_slug,
+        )
+        await conn.execute(
             "DELETE FROM knowledge.crawled_pages WHERE org_id = $1 AND kb_slug = $2",
             org_id,
             kb_slug,
         )
         await conn.execute(
             "DELETE FROM knowledge.page_links WHERE org_id = $1 AND kb_slug = $2",
+            org_id,
+            kb_slug,
+        )
+        # The fences belong to the KB. A connector job that checks its fence
+        # after this reads the missing row as "deleted" and stops; a sync that
+        # is already past that check can still write.
+        await conn.execute(
+            "DELETE FROM knowledge.connector_resource_fences WHERE org_id = $1 AND kb_slug = $2",
             org_id,
             kb_slug,
         )
@@ -1183,13 +1168,18 @@ async def get_orphan_image_keys_for_connector(
 
 
 async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str) -> set[str]:
-    """Return every Graphiti episode UUID still referenced by an artifact for this org.
+    """Every Graphiti episode uuid ANY artifact row of this org records, current or not.
 
-    The list key is authoritative when present; the scalar fallback keeps rows
-    written before GetKlai/klai#1176 visible to the org-wide janitor.
-
-    Excludes the ``no-chunks`` sentinel that artifacts use when an
-    article had no extractable text.
+    The org-wide sweep after a connector purge keeps exactly this set, so it
+    only removes true orphans: episodes no row records. Replaced versions'
+    episodes are history the owner removes per run, after seeing the dry-run
+    counts of ``scripts/prune_stale_graph.py``, which selects with
+    ``get_current_graph_episode_uuids_for_org`` instead. Nothing removes them
+    implicitly. In steady state the two sets agree, because a new extraction
+    deletes its predecessors' episodes itself
+    (``ingest_graphiti_episode(replace_stale=True)``) and a deliberately
+    skipped version deletes them at ingest; so the sweep can stay this
+    conservative for good.
     """
     rows = await conn.fetch(
         """
@@ -1206,18 +1196,177 @@ async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str)
           ) AS stored_episode(episode_id)
          WHERE a.org_id = $1
            AND stored_episode.episode_id <> 'no-chunks'
+           AND stored_episode.episode_id NOT LIKE 'skipped:%'
         """,
         org_id,
     )
-    # "no-chunks" and "skipped:<reason>" are sentinels, not episode uuids: the
-    # first from backfill.py, the second from a page held out of the graph
-    # deliberately (#1148). Treating either as alive would have the caller ask
-    # FalkorDB about an episode that never existed.
-    return {
-        r["episode_uuid"]
-        for r in rows
-        if r["episode_uuid"] != "no-chunks" and not r["episode_uuid"].startswith("skipped:")
-    }
+    return {r["episode_uuid"] for r in rows}
+
+
+_GRAPH_STATE_KEYS = (
+    "graph_state",
+    "graph_reason",
+    "graphiti_episode_id",
+    "graphiti_episode_ids",
+    "graphiti_episode_complete",
+    "graphiti_exhausted_at",
+    "graphiti_quarantined_at",
+)
+
+
+async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[dict]:
+    """Every artifact row of the org with what the graph rules need to know about it.
+
+    ``episode_ids`` are the real uuids the row records (sentinels dropped).
+    ``graph_state`` is ``derived_state.product_state(..., "graph")``, and
+    ``finished`` means it is final for the current-content walk: ``done`` or
+    ``not_applicable``. A row that is not finished has an extraction queued,
+    running or failed. A row whose delete is in progress (``PURGE_PENDING``) is
+    never active: the document is going, so it has no current graph content.
+    ``source_connector_id``/``source_ref`` and ``kb_slug``/``path``
+    identify the document when ``superseded_by`` does not link its versions.
+    """
+    from knowledge_ingest.derived_state import DONE, NOT_APPLICABLE, product_state
+
+    records = await conn.fetch(
+        """
+        SELECT id::text AS id,
+               superseded_by::text AS superseded_by,
+               belief_time_end = $2 AND index_status <> $3 AS active,
+               created_at,
+               kb_slug,
+               path,
+               extra::jsonb->>'source_connector_id' AS source_connector_id,
+               extra::jsonb->>'source_ref' AS source_ref,
+               episode_ids,
+               (SELECT jsonb_object_agg(key, value)
+                  FROM jsonb_each(a.extra::jsonb)
+                 WHERE key = ANY($4::text[])) AS graph_fields
+        FROM (
+            SELECT a.*,
+                   ARRAY(
+                       SELECT episode_id
+                       FROM jsonb_array_elements_text(
+                           CASE
+                               WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                                   THEN a.extra::jsonb->'graphiti_episode_ids'
+                               WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                                   THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                               ELSE '[]'::jsonb
+                           END
+                       ) AS stored_episode(episode_id)
+                       WHERE episode_id <> 'no-chunks' AND episode_id NOT LIKE 'skipped:%'
+                   ) AS episode_ids
+            FROM knowledge.artifacts AS a
+            WHERE a.org_id = $1
+        ) AS a
+        """,
+        org_id,
+        _SENTINEL,
+        PURGE_PENDING,
+        list(_GRAPH_STATE_KEYS),
+    )
+    rows = []
+    for record in records:
+        row = dict(record)
+        fields = row.pop("graph_fields")
+        state = product_state(json.loads(fields) if isinstance(fields, str) else fields, "graph")
+        row["graph_state"] = state
+        row["finished"] = state.state in (DONE, NOT_APPLICABLE)
+        rows.append(row)
+    return rows
+
+
+def current_extractions(rows: list) -> dict[str, tuple[set[str], bool]]:
+    """Active row id -> (its current graph episodes, whether a finished extraction backs them).
+
+    The walk rule is described in ``get_current_graph_episode_uuids_for_org``.
+    """
+    predecessors: dict[str, list] = {}
+    for row in rows:
+        if row["superseded_by"]:
+            predecessors.setdefault(row["superseded_by"], []).append(row)
+    result: dict[str, tuple[set[str], bool]] = {}
+    for row in rows:
+        if not row["active"]:
+            continue
+        ids: set[str] = set()
+        finished = False
+        seen = {row["id"]}
+        level = [row]
+        # The same walk as _HISTORY_CTE: to the end of the chain, and a row
+        # already visited (a corrupt cycle) is not walked again.
+        while level:
+            for version in level:
+                ids.update(version["episode_ids"])
+            finished = any(version["finished"] for version in level)
+            if finished:
+                break
+            level = [
+                older
+                for version in level
+                for older in predecessors.get(version["id"], [])
+                if older["id"] not in seen
+            ]
+            seen.update(older["id"] for older in level)
+        result[row["id"]] = (ids, finished)
+    return result
+
+
+async def get_current_graph_episode_uuids_for_org(
+    conn: asyncpg.Connection, org_id: str
+) -> set[str]:
+    """The Graphiti episode uuids that are the CURRENT graph content of this org.
+
+    Postgres keeps every version of a document; the graph holds the facts of
+    one: its newest finished extraction. Walking back from the active row along
+    ``superseded_by``, every version's episodes are kept up to and including
+    the first finished one (``get_graph_rows_for_org``). So an active row whose
+    extraction is still running or failed keeps its own partial, resumable
+    episodes AND the previous finished extraction, which is only replaced once
+    the new one is complete; a version held out of the graph or without text
+    ends the walk with nothing, so the document has no graph content. Removed
+    documents (no active row) have none either.
+
+    This is the selection of ``scripts/prune_stale_graph.py``; the org-wide
+    sweep deliberately uses the broader ``get_alive_episode_uuids_for_org``.
+    """
+    extractions = current_extractions(await get_graph_rows_for_org(conn, org_id))
+    return {episode_id for ids, _ in extractions.values() for episode_id in ids}
+
+
+# Built once at import from two constants; every value is a bound parameter.
+_FORGET_REPLACED_EPISODE_IDS_SQL = (
+    _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
+    + """
+    UPDATE knowledge.artifacts
+    SET extra = extra::jsonb
+                || '{"graphiti_episode_ids": [], "graphiti_episode_id": null}'::jsonb
+    WHERE org_id = $1
+      AND id IN (SELECT id FROM history)
+      AND id <> ALL($2::uuid[])
+      AND (extra::jsonb ? 'graphiti_episode_ids' OR extra::jsonb ? 'graphiti_episode_id')
+    """
+)
+
+
+async def forget_replaced_episode_ids(
+    conn: asyncpg.Connection, org_id: str, artifact_id: str
+) -> None:
+    """Clear the recorded episode ids of every earlier version of this row.
+
+    Called right after those episodes were deleted from the graph, so a closed
+    row lists episodes only while they exist. Same walk as
+    ``get_episode_ids_for_document_history`` (``_HISTORY_CTE``: to the end,
+    cycle-safe), without the row itself. Only replaced versions are touched,
+    never a document head, so ``scripts/purge_deleted_documents.py`` (which
+    judges heads) reads the same rows as before.
+    """
+    # The scan flags any composed string passed to execute(). This one is two
+    # module constants joined at import, run through asyncpg with $1/$2 bound.
+    await conn.execute(  # nosemgrep: sqlalchemy-execute-raw-query
+        _FORGET_REPLACED_EPISODE_IDS_SQL, org_id, [artifact_id]
+    )
 
 
 async def get_active_image_hashes_for_kb(
@@ -1359,8 +1508,14 @@ async def delete_connector_crawl_jobs(
     Counterpart to ``delete_connector_artifacts``. Without this, every
     connector delete left an audit trail of orphan crawl_jobs that the
     UI cannot reach but that the next deployment Sentry alert / dashboard
-    audit treats as live history. Returns the number of rows deleted.
+    audit treats as live history. The connector's crawl memory goes with its
+    job history. Returns the number of crawl_jobs rows deleted.
     """
+    await conn.execute(
+        "DELETE FROM knowledge.crawl_url_memory WHERE org_id = $1 AND connector_id = $2",
+        org_id,
+        connector_id,
+    )
     result = await conn.fetchval(
         """WITH deleted AS (
              DELETE FROM knowledge.crawl_jobs
@@ -1495,6 +1650,18 @@ async def get_crawled_page_markdown(
     return row["raw_markdown"] if row else None
 
 
+async def get_crawled_pages_markdown(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str
+) -> list[tuple[str, str]]:
+    rows = await conn.fetch(
+        "SELECT url, raw_markdown FROM knowledge.crawled_pages "
+        "WHERE org_id = $1 AND kb_slug = $2 AND raw_markdown IS NOT NULL",
+        org_id,
+        kb_slug,
+    )
+    return [(row["url"], row["raw_markdown"]) for row in rows]
+
+
 async def get_crawled_page_hashes(
     conn: asyncpg.Connection,
     org_id: str,
@@ -1512,6 +1679,33 @@ async def get_crawled_page_hashes(
         urls,
     )
     return {row["url"]: (row["raw_html_hash"], row["content_hash"]) for row in rows}
+
+
+async def get_active_document_texts(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    paths: list[str],
+) -> dict[str, str]:
+    """Return {path: document_text} of the active version of each path (single query).
+
+    ``document_text`` is what ingest_document stored for that version.
+    ``crawled_pages.raw_markdown`` is not used: a noise skip overwrites it
+    without replacing the active version. Rows without a stored text
+    (written before ``document_text`` existed) are left out.
+    """
+    if not paths:
+        return {}
+    rows = await conn.fetch(
+        "SELECT path, extra::jsonb->>'document_text' AS document_text FROM knowledge.artifacts "
+        "WHERE org_id = $1 AND kb_slug = $2 AND path = ANY($3::text[]) "
+        "AND belief_time_end = $4 AND extra::jsonb->>'document_text' IS NOT NULL",
+        org_id,
+        kb_slug,
+        paths,
+        _SENTINEL,
+    )
+    return {row["path"]: row["document_text"] for row in rows}
 
 
 async def has_active_connector_artifact_for_url(
@@ -1584,88 +1778,6 @@ async def upsert_page_links(
         """,
         rows,
     )
-
-
-async def get_page_episode_ids(
-    conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> list[str]:
-    """Return Graphiti episode UUIDs for artifacts matching a specific page path.
-
-    Like get_episode_ids() but scoped to a single page. Used during page deletion
-    to clean up Graphiti graph nodes before soft-deleting the artifact.
-    """
-    rows = await conn.fetch(
-        """SELECT DISTINCT stored_episode.episode_id
-           FROM knowledge.artifacts AS a
-           CROSS JOIN LATERAL jsonb_array_elements_text(
-               CASE
-                   WHEN a.extra::jsonb ? 'graphiti_episode_ids'
-                       THEN a.extra::jsonb->'graphiti_episode_ids'
-                   WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
-                       THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
-                   ELSE '[]'::jsonb
-               END
-           ) AS stored_episode(episode_id)
-           WHERE a.org_id = $1 AND a.kb_slug = $2 AND a.path = $3
-             AND stored_episode.episode_id <> 'no-chunks'""",
-        org_id,
-        kb_slug,
-        path,
-    )
-    return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
-
-
-async def cleanup_page_metadata(
-    conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> None:
-    """Hard-delete metadata records (derivations, artifact_entities, embedding_queue)
-    for all artifacts matching this page path.
-
-    Must be called BEFORE soft_delete_artifact to avoid FK issues.
-    Follows the same pattern as delete_kb() but scoped to a single page.
-    """
-    async with conn.transaction():
-        # Nullify self-references first to avoid FK violations
-        await conn.execute(
-            """UPDATE knowledge.artifacts SET superseded_by = NULL
-               WHERE superseded_by IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.derivations WHERE child_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               ) OR parent_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
 
 
 async def update_artifact_extra(
@@ -1909,6 +2021,46 @@ async def count_sources_per_kb(
     return {row["kb_slug"]: int(row["sources_count"] or 0) for row in rows}
 
 
+# The extra keys the enrichment reader (derived_state.product_state) reads.
+_ENRICHMENT_FIELDS_SQL = """
+            jsonb_build_object(
+                'enrichment_state', a.extra->'enrichment_state',
+                'enrichment_reason', a.extra->'enrichment_reason',
+                'enrichment_state_at', a.extra->'enrichment_state_at',
+                'llm_enrichment_skipped', a.extra->'llm_enrichment_skipped',
+                'source_connector_id', a.extra->'source_connector_id'
+            ) AS enrichment_fields"""
+
+
+def _enrichment_state(row: asyncpg.Record) -> tuple[ProductState, dict]:
+    fields = row["enrichment_fields"]
+    fields = json.loads(fields) if isinstance(fields, str) else (fields or {})
+    return product_state(fields, "enrichment", index_status=row["index_status"]), fields
+
+
+def _upload_status(row: asyncpg.Record) -> dict:
+    """The status the portal shows for an upload: its text, then its enrichment.
+
+    ``index_status`` says whether the version's text is searchable; the portal's
+    badge has always meant "processed", so an enrichment that is still pending
+    or has failed shows as such (``derived_state``). A failure of either wins
+    over pending: a reindex whose job could not be queued must show failed,
+    not waiting. The time is that of the transition shown.
+    """
+    enrichment, fields = _enrichment_state(row)
+    status, changed_at = row["index_status"], row["index_status_changed_at"]
+    for shown in (FAILED, PENDING):
+        if status == shown:
+            break
+        if enrichment.state == shown:
+            status, changed_at = shown, fields.get("enrichment_state_at") or changed_at
+            break
+    return {
+        "index_status": status,
+        "index_status_changed_at": int(changed_at) if changed_at is not None else None,
+    }
+
+
 async def list_kb_sources(
     conn: asyncpg.Connection, org_id: str, kb_slug: str
 ) -> dict[str, list[dict]]:
@@ -1917,7 +2069,12 @@ async def list_kb_sources(
     Returns ``{"connectors": [...], "uploads": [...]}`` where:
       - connectors: one row per distinct ``source_connector_id`` found in
         artifacts.extra, with aggregate items_count + items_failed_count
-        (active artifacts with index_status='failed') + chunks_count
+        + chunks_count. ``items_failed_count`` is the portal's "N pages
+        failed": active versions whose text failed to index or whose
+        enrichment failed (``derived_state.product_state``), the pages search
+        serves without, or with less than, their processed text. A failed
+        graph extraction is not counted: the page is fully searchable, and
+        that failure is the ``derived_product_failed`` alert's.
       - uploads: one row per artifact whose ``source_connector_id`` is null
         (direct file/url/text/image uploads), with chunks_count
 
@@ -1925,40 +2082,44 @@ async def list_kb_sources(
     sync status, and last_sync_at from the portal-side ``connectors`` table.
     Knowledge-ingest does NOT know connector display metadata.
     """
-    # Connectors: one row per source_connector_id, with aggregate counts.
-    # items_count and items_failed_count both use COUNT(DISTINCT a.id [FILTER]) —
-    # the LEFT JOIN to parent_chunks fans out one row per chunk, so a plain
-    # COUNT(*) FILTER would overcount artifacts with >1 chunk. COUNT(DISTINCT)
-    # collapses the fanout back to one count per artifact regardless of how
-    # many chunk rows the join produced for it.
+    # Connectors: one row per active version, aggregated per source_connector_id
+    # here, because whether a version's enrichment failed is the reader's call
+    # (legacy rows included), not a SQL filter's.
     connector_rows = await conn.fetch(
         """
         SELECT
             a.extra::jsonb->>'source_connector_id' AS connector_id,
-            COUNT(DISTINCT a.id) AS items_count,
-            COUNT(DISTINCT a.id) FILTER (WHERE a.index_status = 'failed') AS items_failed_count,
-            COUNT(pc.id) AS chunks_count
+            a.index_status AS index_status,
+            (SELECT COUNT(*) FROM knowledge.parent_chunks pc
+             WHERE pc.artifact_id = a.id) AS chunks_count,"""  # noqa: S608 -- constant SQL
+        + _ENRICHMENT_FIELDS_SQL
+        + """
         FROM knowledge.artifacts a
-        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.org_id = $1
           AND a.kb_slug = $2
           AND a.belief_time_end = $3
           AND a.extra::jsonb->>'source_connector_id' IS NOT NULL
-        GROUP BY a.extra::jsonb->>'source_connector_id'
         """,
         org_id,
         kb_slug,
         _SENTINEL,
     )
-    connectors = [
-        {
-            "connector_id": row["connector_id"],
-            "items_count": int(row["items_count"] or 0),
-            "items_failed_count": int(row["items_failed_count"] or 0),
-            "chunks_count": int(row["chunks_count"] or 0),
-        }
-        for row in connector_rows
-    ]
+    by_connector: dict[str, dict] = {}
+    for row in connector_rows:
+        entry = by_connector.setdefault(
+            row["connector_id"],
+            {
+                "connector_id": row["connector_id"],
+                "items_count": 0,
+                "items_failed_count": 0,
+                "chunks_count": 0,
+            },
+        )
+        entry["items_count"] += 1
+        entry["chunks_count"] += int(row["chunks_count"] or 0)
+        if row["index_status"] == FAILED or _enrichment_state(row)[0].state == FAILED:
+            entry["items_failed_count"] += 1
+    connectors = list(by_connector.values())
 
     # Direct uploads: one row per artifact without source_connector_id
     upload_rows = await conn.fetch(
@@ -1978,7 +2139,9 @@ async def list_kb_sources(
             a.created_at AS created_at,
             COUNT(pc.id) AS chunks_count,
             a.index_status AS index_status,
-            a.index_status_changed_at AS index_status_changed_at
+            a.index_status_changed_at AS index_status_changed_at,"""
+        + _ENRICHMENT_FIELDS_SQL
+        + """
         FROM knowledge.artifacts a
         LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.org_id = $1
@@ -2002,12 +2165,7 @@ async def list_kb_sources(
             "content_type": row["content_type"],
             "created_at": int(row["created_at"]),
             "chunks_count": int(row["chunks_count"] or 0),
-            "index_status": row["index_status"],
-            "index_status_changed_at": (
-                int(row["index_status_changed_at"])
-                if row["index_status_changed_at"] is not None
-                else None
-            ),
+            **_upload_status(row),
         }
         for row in upload_rows
     ]
@@ -2085,6 +2243,46 @@ async def list_artifacts_for_connector(
     return items, int(total or 0)
 
 
+async def list_connector_source_refs(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    after: str,
+    limit: int,
+) -> list[dict]:
+    """One page of the source_refs stored for a connector, each with its paths.
+
+    Rows of every version count, not only active ones: a connector delete that
+    closed the active row but failed on Qdrant or the graph leaves only closed
+    rows, and the connector must still see that ref to retry the delete. The
+    paths come along because a row is matched by path at ingest: an unchanged
+    document re-ingested under a new ref (branch switch, renamed repository)
+    keeps its old ref, so the connector must not delete a ref whose path it
+    still lists.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT extra::jsonb->>'source_ref' AS source_ref,
+               array_agg(DISTINCT path ORDER BY path) AS paths
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND extra::jsonb->>'source_connector_id' = $3
+          AND extra::jsonb->>'source_ref' > $4
+        GROUP BY 1
+        ORDER BY 1
+        LIMIT $5
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        after,
+        limit,
+    )
+    return [{"source_ref": str(row["source_ref"]), "paths": list(row["paths"])} for row in rows]
+
+
 async def list_chunks_for_artifact(
     conn: asyncpg.Connection,
     org_id: str,
@@ -2137,68 +2335,83 @@ async def set_artifact_index_status(
     artifact_id: str,
     org_id: str,
     status: str,
+    *,
+    reopen: bool = False,
 ) -> dict | None:
     """Update index_status on a direct-upload artifact scoped to org_id.
 
     Returns a dict with ``{"artifact_id": str, "path": str}`` when the
-    artifact was found and updated, or ``None`` when it does not exist /
-    belongs to a different org.
+    artifact was found and updated, or ``None`` when it does not exist,
+    belongs to a different org, or is not eligible.
+
+    Without ``reopen`` only the active version is eligible. With ``reopen``
+    (the user's reindex action) a closed head is reopened as well: the
+    portal shows an upload whose artifact was closed without a successor
+    (for example by the drift repair) as not synced and offers reindex to
+    repair it. A REPLACED version is never reopened: it has a successor, or
+    another row is active for the same knowledge base and path. Neither is a
+    row whose delete has started (``PURGE_PENDING``); repeating the delete
+    finishes it instead.
     """
-    async with conn.transaction():
-        artifact = await conn.fetchrow(
-            """
-            SELECT id, kb_slug, path, belief_time_end
-            FROM knowledge.artifacts
-            WHERE id = $1::uuid
-              AND org_id = $2
-              AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
-            """,
-            artifact_id,
-            org_id,
-        )
-        if artifact is None:
-            return None
-
-        if artifact["belief_time_end"] != _SENTINEL:
-            now = int(time.time())
-            await conn.execute(
-                """
-                UPDATE knowledge.artifacts
-                SET belief_time_end = $1
-                WHERE org_id = $2
-                  AND kb_slug = $3
-                  AND path = $4
-                  AND belief_time_end = $5
-                  AND id <> $6::uuid
-                """,
-                now,
-                org_id,
-                artifact["kb_slug"],
-                artifact["path"],
-                _SENTINEL,
-                artifact_id,
-            )
-
-        row = await conn.fetchrow(
-            """
-            UPDATE knowledge.artifacts
-            SET index_status = $1,
-                index_status_changed_at = $5,
-                belief_time_end = $2
-            WHERE id = $3::uuid
-              AND org_id = $4
-              AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
-            RETURNING id::text AS artifact_id, path
-            """,
-            status,
-            _SENTINEL,
-            artifact_id,
-            org_id,
-            int(time.time()),
-        )
+    row = await conn.fetchrow(
+        """
+        UPDATE knowledge.artifacts a
+        SET index_status = $1,
+            index_status_changed_at = $5,
+            belief_time_end = $2
+        WHERE a.id = $3::uuid
+          AND a.org_id = $4
+          AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
+          AND (
+              a.belief_time_end = $2
+              OR (
+                  $6::bool
+                  AND a.superseded_by IS NULL
+                  AND a.index_status <> $7
+                  AND NOT EXISTS (
+                      SELECT 1 FROM knowledge.artifacts live
+                      WHERE live.org_id = a.org_id AND live.kb_slug = a.kb_slug
+                        AND live.path = a.path AND live.belief_time_end = $2
+                        AND live.id <> a.id
+                  )
+              )
+          )
+        RETURNING a.id::text AS artifact_id, a.path
+        """,
+        status,
+        _SENTINEL,
+        artifact_id,
+        org_id,
+        int(time.time()),
+        reopen,
+        PURGE_PENDING,
+    )
     if row is None:
         return None
     return {"artifact_id": row["artifact_id"], "path": row["path"]}
+
+
+async def finish_pending_index_status(
+    conn: asyncpg.Connection, artifact_id: str, status: str
+) -> None:
+    """Move ``index_status`` from ``pending`` to ``status``; any other value stays.
+
+    ``index_status`` is the state of the version's searchable text. It is
+    ``pending`` only while that text is being (re)written: between the row's
+    creation and the end of the ingest request, and during a reindex whose
+    enrichment job rewrites the points. Enrichment ending moves it on; a row
+    that is already ``synced`` (raw chunks written at ingest) is left alone.
+    """
+    await conn.execute(
+        """
+        UPDATE knowledge.artifacts
+        SET index_status = $2, index_status_changed_at = $3
+        WHERE id = $1::uuid AND index_status = 'pending'
+        """,
+        artifact_id,
+        status,
+        int(time.time()),
+    )
 
 
 async def set_artifact_ingest_status(
@@ -2290,6 +2503,58 @@ async def mark_stale_pending_artifacts_failed(
     ]
 
 
+_PRODUCT_TASKS = {
+    "enrichment": [
+        "knowledge_ingest.enrichment_tasks.enrich_document_interactive",
+        "knowledge_ingest.enrichment_tasks.enrich_document_bulk",
+    ],
+    "graph": ["knowledge_ingest.enrichment_tasks.ingest_graphiti_episode"],
+}
+
+
+async def stale_pending_products(
+    conn: asyncpg.Connection, *, cutoff: int, limit: int = 500
+) -> list[dict]:
+    """Products of current versions pending since before ``cutoff`` with no job to finish them.
+
+    The age is the product's own ``_state_at``: a reindex, a graph refresh or a
+    rebuild puts an old version's product back to pending right before it
+    works on it. Whatever ``index_status`` says: a request can die after the
+    text was written and before the product was queued. Only current versions
+    are read, and the oldest wait comes first.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT artifact_id, org_id, kb_slug, product, pending_since
+        FROM (
+            SELECT a.id::text AS artifact_id, a.org_id, a.kb_slug, p.product,
+                   (a.extra->>(p.product || '_state_at'))::bigint AS pending_since
+            FROM knowledge.artifacts a
+            CROSS JOIN LATERAL (VALUES ('enrichment', $3::text[]), ('graph', $4::text[]))
+                AS p(product, tasks)
+            WHERE a.belief_time_end = $1 AND a.index_status <> $5
+              AND a.extra->>(p.product || '_state') = 'pending'
+              AND NOT EXISTS (
+                  SELECT 1 FROM procrastinate_jobs pj
+                  WHERE pj.task_name = ANY(p.tasks)
+                    AND pj.status IN ('todo', 'doing')
+                    AND pj.args->>'artifact_id' = a.id::text
+              )
+        ) AS waiting
+        WHERE pending_since < $2
+        ORDER BY pending_since
+        LIMIT $6
+        """,
+        _SENTINEL,
+        cutoff,
+        _PRODUCT_TASKS["enrichment"],
+        _PRODUCT_TASKS["graph"],
+        PURGE_PENDING,
+        limit,
+    )
+    return [dict(row) for row in rows]
+
+
 async def update_artifact_display_name(
     conn: asyncpg.Connection,
     artifact_id: str,
@@ -2338,7 +2603,8 @@ async def get_kb_upload_artifact(
     """Fetch a single direct-upload artifact for ownership / existence check.
 
     Returns a dict with ``{"artifact_id": str, "path": str, "user_id": str | None}``
-    or ``None`` when the artifact does not exist or is not a direct upload.
+    or ``None`` when the artifact does not exist, is not a direct upload, or
+    is not deletable (see :func:`get_personal_artifact`).
     """
     row = await conn.fetchrow(
         """
@@ -2346,11 +2612,17 @@ async def get_kb_upload_artifact(
             id::text AS artifact_id,
             path,
             user_id
-        FROM knowledge.artifacts
+        FROM knowledge.artifacts a
         WHERE id = $1::uuid
           AND org_id = $2
           AND kb_slug = $3
-          AND belief_time_end = $4
+          AND a.superseded_by IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM knowledge.artifacts live
+              WHERE live.org_id = a.org_id AND live.kb_slug = a.kb_slug
+                AND live.path = a.path AND live.belief_time_end = $4
+                AND live.id <> a.id
+          )
           AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
         """,
         artifact_id,

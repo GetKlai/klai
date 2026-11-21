@@ -209,7 +209,7 @@ services:
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
     logging: *log-rotation
-    image: mongo:9.0.4
+    image: mongo:9.0.8
     restart: unless-stopped
     ulimits:
       nofile:
@@ -269,7 +269,7 @@ services:
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -291,7 +291,7 @@ services:
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
     logging: *log-rotation
-    image: getmeili/meilisearch:v1.56.0
+    image: getmeili/meilisearch:v1.57.0
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -320,7 +320,7 @@ services:
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
     logging: *log-rotation
-    image: ghcr.io/zitadel/zitadel:v4.20.0
+    image: ghcr.io/zitadel/zitadel:v4.20.5
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -382,7 +382,7 @@ services:
   # ─── LiteLLM ──────────────────────────────────────────────────────────────
   litellm:
     logging: *log-rotation
-    image: ghcr.io/berriai/litellm:v1.106.6
+    image: ghcr.io/berriai/litellm:v1.108.4
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
@@ -468,7 +468,6 @@ services:
       # Required: LiteLLM's mistral provider falls back to MISTRAL_API_KEY when
       # a deployment's key is empty, which would bill klai-ingest to the chat org.
       MISTRAL_VIBE_KEY: "${MISTRAL_VIBE_KEY:?set the Vibe-scoped key used by klai-ingest}"
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       SEARXNG_API_BASE: ${SEARXNG_INSTANCE_URL}
       DISABLE_ADMIN_UI: "True"
       PORTAL_API_URL: http://portal-api:8010
@@ -689,7 +688,7 @@ services:
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
     logging: *log-rotation
-    image: ollama/ollama:0.40.13
+    image: ollama/ollama:0.40.15
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
@@ -1022,7 +1021,7 @@ services:
   # validator-env-parity).
   vaultwarden:
     logging: *log-rotation
-    image: vaultwarden/server:1.37.4
+    image: vaultwarden/server:1.37.5
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
@@ -1168,10 +1167,9 @@ services:
       # ─── Vexa (meeting bot) ─────────────────────────────────────
       VEXA_API_KEY: ${VEXA_BOT_MANAGER_API_KEY}
       VEXA_WEBHOOK_SECRET: ${VEXA_WEBHOOK_SECRET}
-      # Vexa meeting-api base URL. Prod routes through the api-gateway
-      # (:8000) — NOT the raw meeting-api (:8080). Overrides the
-      # config.py default to match pre-SPEC-SEC-ENVFILE-SCOPE-001 behaviour.
-      VEXA_MEETING_API_URL: ${VEXA_MEETING_API_URL:-http://api-gateway:8000}
+      # Vexa meeting-api base URL: the raw meeting-api (:8080) on the dedicated
+      # vexa12-portal network; no gateway is deployed in Vexa 0.12.
+      VEXA_MEETING_API_URL: ${VEXA_MEETING_API_URL:-http://vexa12-meeting-api:8080}
       # Reserved for Vexa admin-API calls (tenant provisioning, quota).
       # @MX:NOTE in config.py — no runtime reader yet; kept declared so
       # a future admin-api caller picks up the real token, matching the
@@ -1323,7 +1321,7 @@ services:
 
   victoriametrics:
     logging: *log-rotation
-    image: victoriametrics/victoria-metrics:v1.155.0
+    image: victoriametrics/victoria-metrics:v1.156.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -1435,7 +1433,7 @@ services:
 
   cadvisor:
     logging: *log-rotation
-    image: ghcr.io/google/cadvisor:v0.60.6
+    image: ghcr.io/google/cadvisor:v0.61.1
     restart: unless-stopped
     privileged: false
     cap_add:
@@ -1462,7 +1460,7 @@ services:
 
   alloy:
     logging: *log-rotation
-    image: grafana/alloy:v1.21.3
+    image: grafana/alloy:v1.22.0
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -1493,7 +1491,7 @@ services:
 
   grafana:
     logging: *log-rotation
-    image: grafana/grafana:13.3.0
+    image: grafana/grafana:13.3.1
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
@@ -1619,7 +1617,7 @@ services:
       # Empty by default so OpenAI-compatible TEI uses its loaded snapshot
       # without warning about BAAI/bge-m3 vs snapshot-path model IDs.
       TEI_MODEL: ${TEI_MODEL:-}
-      TEI_RERANKER_URL: http://172.18.0.1:7998
+      INFINITY_RERANKER_URL: http://172.18.0.1:7998
       LITELLM_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
@@ -1683,7 +1681,7 @@ services:
 
   gitea:
     logging: *log-rotation
-    image: gitea/gitea:28.2.0
+    image: gitea/gitea:28.4.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -1743,7 +1741,6 @@ services:
       GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN}
       AUTH_SECRET: ${DOCS_AUTH_SECRET}
       AUTH_TRUST_HOST: "true"
-      AUTH_ZITADEL_ISSUER: https://auth.${DOMAIN}
       AUTH_ZITADEL_CLIENT_ID: ${DOCS_ZITADEL_CLIENT_ID}
       AUTH_ZITADEL_CLIENT_SECRET: ${DOCS_ZITADEL_CLIENT_SECRET}
       NEXT_PUBLIC_BASE_DOMAIN: ${DOMAIN}
@@ -2119,7 +2116,7 @@ services:
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
     logging: *log-rotation
-    image: qdrant/qdrant:v1.20.0
+    image: qdrant/qdrant:v1.20.2
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
@@ -2141,8 +2138,18 @@ services:
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
     logging: *log-rotation
-    image: falkordb/falkordb:6.0.3
+    image: falkordb/falkordb:6.0.4
     restart: unless-stopped
+    # Persistence is the RDB snapshot only (save 3600 1 300 100 60 10000), written again
+    # on SIGTERM. Docker's default 10 s before SIGKILL left no margin: the background save
+    # of the 1.3 GB dump (~204k edges) took 7 s in 2026-11, and a kill mid-save loses every
+    # write since the last snapshot while Postgres already records those extractions as
+    # complete (290 of 10,922 recorded episode ids were found missing, clustered on
+    # restart days). 60 s covers a dump about eight times larger and stays below the
+    # `stop -t 120` that datastore-rollback.sh uses. Do not switch on `appendonly yes`
+    # casually: a Redis started with it and no AOF files ignores dump.rdb, so restoring a
+    # snapshot backup would come up as an empty graph.
+    stop_grace_period: 60s
     # SPEC-GRAPH-SCALE-001 REQ-2: the image bakes FALKORDB_ARGS="MAX_QUEUED_QUERIES 25
     # TIMEOUT 1000 RESULTSET_SIZE 10000" into its own Dockerfile (FalkorDB/FalkorDB#1826),
     # an undocumented 1 s read-query cap that graphiti's brute-force similarity scans
@@ -2216,10 +2223,6 @@ services:
       # appears. Indexes are created + recall-verified per tenant by
       # `docker exec klai-core-knowledge-ingest-1 python -m scripts.verify_graph_ann`.
       GRAPH_ANN_ENABLED: "true"
-      # Graphiti performs several sequential LLM calls per episode and shares
-      # the klai-ingest alias budget with enrichment and taxonomy work.
-      GRAPHITI_LLM_RPS: ${GRAPHITI_LLM_RPS:-0.5}
-      GRAPHITI_EPISODE_DELAY: ${GRAPHITI_EPISODE_DELAY:-10.0}
       PORTAL_URL: http://portal-api:8010
       PORTAL_INTERNAL_TOKEN: ${PORTAL_API_INTERNAL_SECRET}
       # SPEC-RAG-EVAL-001 — RAGAS evaluation harness calls /retrieve on
@@ -2407,7 +2410,7 @@ services:
   # candidate first, then editing here.
   firecrawl-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
@@ -2439,7 +2442,7 @@ services:
   # contract harness passes against it.
   firecrawl-rabbitmq:
     logging: *log-rotation
-    image: rabbitmq:4.4.0-alpine
+    image: rabbitmq:4.4.1-alpine
     restart: unless-stopped
     networks:
       - klai-net
@@ -2452,7 +2455,7 @@ services:
 
   firecrawl-api:
     logging: *log-rotation
-    image: ghcr.io/firecrawl/firecrawl:2.11.642
+    image: ghcr.io/firecrawl/firecrawl:2.11.804
     restart: unless-stopped
     environment:
       PORT: "3002"
@@ -2515,7 +2518,7 @@ services:
   # both were delivered to /opt/klai/.env BEFORE this service landed.
   calnode:
     logging: *log-rotation
-    image: ghcr.io/calnode/calnode:0.12.0
+    image: ghcr.io/calnode/calnode:0.14.0
     restart: unless-stopped
     environment:
       BASE_URL: https://cal.${DOMAIN}
@@ -2566,7 +2569,7 @@ services:
   # worker running (verified locally 2026-10-22).
   crm-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2615,7 +2618,7 @@ services:
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2647,7 +2650,7 @@ services:
   # 17 -> 18 went the same way, rehearsed against fider v0.38.2.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2681,7 +2684,7 @@ services:
   # health check.
   fider:
     logging: *log-rotation
-    image: getfider/fider:v0.38.2
+    image: getfider/fider:v0.40.0
     restart: unless-stopped
     environment:
       BASE_URL: https://feedback.${DOMAIN}
@@ -2726,7 +2729,7 @@ services:
   # 3.0.3 -> 3.4.0 in one run, 12 migrations), so no stepping is needed.
   umami:
     logging: *log-rotation
-    image: ghcr.io/umami-software/umami:3.4.1
+    image: ghcr.io/umami-software/umami:3.5.0
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://umami:${UMAMI_POSTGRES_PASSWORD}@umami-postgres:5432/umami
@@ -2772,7 +2775,7 @@ services:
   # SPEC-INFRA-COOLIFY-EXIT-001 T2 has the procedure and why it took four hops.
   crm:
     logging: *log-rotation
-    image: twentycrm/twenty:v2.53.1
+    image: twentycrm/twenty:v2.59.3
     restart: unless-stopped
     environment:
       SERVER_URL: https://crm.${DOMAIN}
@@ -2814,7 +2817,7 @@ services:
 
   crm-worker:
     logging: *log-rotation
-    image: twentycrm/twenty:v2.53.1
+    image: twentycrm/twenty:v2.59.3
     restart: unless-stopped
     command: ["yarn", "worker:prod"]
     environment:

@@ -1,137 +1,276 @@
-# Admin Role System
+# Roles, Products and the User Lifecycle
+
+What a portal user may do and how that is decided: the role ladder, the
+capabilities derived from it, the account type, how products and platform
+features are granted, groups, invitations, and the suspend, offboard and
+delete paths. Authentication itself is in [auth-flows.md](auth-flows.md) and
+[api-auth.md](api-auth.md).
+
+The source of truth is `klai-portal/backend/app/core/permissions.py`,
+`klai-portal/backend/app/core/profiles.py`,
+`klai-portal/backend/app/core/seats.py` and
+`klai-portal/backend/app/core/features.py`.
+
+## Where membership and role live
+
+A user's identity (name, e-mail, password, second factors) lives in Zitadel.
+Membership of a workspace is a row in `portal_users` with the Zitadel user id,
+the integer `org_id`, `role`, `seat_type` and `status`
+(`klai-portal/backend/app/models/portal.py:227-261`). One person can have rows
+in several workspaces; the session is bound to one of them
+([auth-flows.md](auth-flows.md), step 9).
+
+Every authenticated request resolves a `UserPermissions` snapshot in one
+query (`resolve_user_permissions`, `permissions.py:171-227`): user id, org id
+and slug, role, account type, plan, the org's platform unlocks, effective
+capabilities, effective products, KB limits and whether the caller is a
+platform admin. Handlers read that snapshot instead of querying again.
 
 ## Roles
 
-| Role | Value | Access |
-|------|-------|--------|
-| Admin | `admin` | Full access to `/admin/*` — users, billing, settings |
-| Member | `member` | Access to `/app/*` only |
+Five roles in a strict order, each including everything below it
+(`profiles.py:41-68`):
 
-## How roles are stored
+| Rank | Role | Default account type |
+|---|---|---|
+| 1 | `personal` | `chat` |
+| 2 | `company` | `chat` |
+| 3 | `kb_manager` | `knowledge` |
+| 4 | `group_manager` | `knowledge` |
+| 5 | `admin` | `knowledge` |
 
-Roles are stored in the portal database (`users` table, `role` column) as a string enum (`admin` / `member`). The default role for new users is `member`.
+The column default for a new `portal_users` row is `company`
+(`models/portal.py:232-245`). The founder of a workspace becomes `admin` at
+signup (`klai-portal/backend/app/api/signup.py:455`). The account-type mapping
+is `DEFAULT_SEAT_FOR_ROLE` (`seats.py:146-152`).
 
-The Zitadel user ID (`zitadel_user_id`) is the primary key linking the portal user record to the Zitadel identity.
+Gates are FastAPI dependencies on `get_caller`:
 
-## How roles are enforced
+- `get_caller_at_least(role)` answers 403 below the given role
+  (`permissions.py:380-399`). Members of the platform organisation pass every
+  role gate (`has_role_at_least`, `permissions.py:368-377`).
+- `require_capability(capability)` checks the effective capabilities
+  (`permissions.py:417-432`).
+- `require_product(product)` checks the effective products
+  (`permissions.py:402-414`); `knowledge.py` and `meetings.py` import that same
+  function (`klai-portal/backend/app/api/knowledge.py:20`,
+  `klai-portal/backend/app/api/meetings.py:25`). The products come from
+  `get_effective_products`, which returns none for a membership that is not
+  active (`klai-portal/backend/app/services/entitlements.py:25-41`).
+- `require_platform_unlocked(feature)` checks the org's platform unlocks
+  (`permissions.py:464-484`).
+- `require_platform_admin()` requires the `admin` role inside the platform
+  organisation (`permissions.py:435-461`).
 
-**Backend:** The `/api/admin/*` endpoints check the caller's role using the Bearer token:
+### What each role may do
 
-1. Validate Bearer token via Zitadel userinfo endpoint
-2. Look up the user in the portal database by `zitadel_user_id`
-3. Verify `role == "admin"` — return `403` otherwise
+Derived from the gates in the code:
 
-**Frontend:** The route guard at `/admin/*` reads the `is_admin` field from the portal user API:
+| Action | Minimum | Gate |
+|---|---|---|
+| Use chat and the personal knowledge base | `personal` | products, see below |
+| Add sources to an organisation knowledge base | `company` | `perms.effective_role == PERSONAL` is refused (`klai-portal/backend/app/api/app_knowledge_sources.py:157-165`, `klai-portal/backend/app/api/connectors.py:991`) |
+| Scribe and Docs, once unlocked for the workspace | `company` | `FEATURE_MIN_PROFILE` (`features.py:63-68`) |
+| URL and upload connectors | `personal` | `kb.connectors` (`klai-portal/backend/app/api/connectors.py:74`) |
+| External connectors, KB members, taxonomy, gaps, activity, organisation templates | `kb_manager` | `kb.connectors.external`, `kb.members`, `kb.taxonomy`, `kb.gaps`, `kb.activity`, `templates.manage_org` (`profiles.py:92-115`) |
+| Create organisation knowledge bases, no personal KB limits | `kb_manager` | `PROFILE_LIMITS` (`profiles.py:138-169`) |
+| Enter `/admin` in the interface | `kb_manager` | `klai-portal/frontend/src/routes/admin/route.tsx:18-21` |
+| Create, edit and delete groups and their members | `group_manager` | `klai-portal/backend/app/api/groups.py:143-425` |
+| Users, invitations, join requests, settings, API keys, widgets, Slack, MCP servers, billing, audit log, deleting the workspace | `admin` | `get_caller_at_least(ProfileRole.ADMIN)` in `klai-portal/backend/app/api/admin/` and the admin routers |
+| Platform area `/api/admin/platform/*`, platform unlocks, Shield | `admin` in the platform organisation | `require_platform_admin()` |
 
-- If `is_admin: false`: redirect to `/app`
-- The guard runs on every navigation to an `/admin/*` route
+### Capabilities and account type
 
-Additionally, `sessionStorage.getItem('klai:isAdmin')` is used post-2FA-setup to determine the redirect target (`/admin` or `/app`). This is a hint only — the real enforcement is always on the API.
+A capability is granted when the role has it (`PROFILE_CAPABILITIES`,
+`profiles.py:108-114`) and the user's account type unlocks the feature it maps
+to (`CAPABILITY_TO_SEAT_FEATURE`, `seats.py:97-111`). The `chat` account type
+unlocks `kb.connectors` only; `knowledge` unlocks the full set
+(`SEAT_FEATURES`, `seats.py:63-89`). An `admin` always receives the
+`knowledge` capability set whatever their account type
+(`_derive_effective_capabilities`, `permissions.py:113-153`).
 
-## Role management
+The account type (`portal_users.seat_type`, `chat` or `knowledge`) is also the
+billing axis. Invitations set it from the role (`suggest_seat`,
+`seats.py:155-166`); `PATCH /api/admin/users/{id}/seat` changes it on its own
+(`klai-portal/backend/app/api/admin/users.py:859`), and the users list flags a
+user whose account type differs from the role's default (`users.py:117-133`).
 
-Admins can change any other user's role via the admin users page (`/admin/users`). An admin cannot change their own role (the role selector is disabled for the current user).
+### KB limits
 
-**API endpoints:**
+`effective_kb_limits(role, plan)` takes the stricter of the role limit and
+the plan limit (`profiles.py:188-215`). `personal` and `company` may have five
+personal knowledge bases of twenty items each and may not create organisation
+knowledge bases; the three higher roles have no personal limits and may
+create them, unless the plan lowers that (`profiles.py:138-169`;
+`klai-portal/backend/app/core/plan_limits.py:98`).
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/admin/users` | List all users in the organisation |
-| `DELETE` | `/api/admin/users/{user_id}` | Remove a user |
-| `PATCH` | `/api/admin/users/{user_id}/role` | Change a user's role |
-| `POST` | `/api/admin/users/invite` | Invite a new user |
+## Products and platform unlocks
 
-All four endpoints require `role == "admin"` on the calling user.
+A user's products are `derive_user_products(role, account_type, platform_unlocked_features)`
+(`features.py:73-113`):
 
-## First admin
+- both account types grant `chat` and `knowledge` (`ACCOUNT_TYPE_PRODUCTS`,
+  `features.py:46-49`);
+- `scribe` and `docs` are added when the org has them unlocked and the role is
+  at least `company`.
 
-The first admin user is created during the signup flow when a new organisation is provisioned. The provisioning logic sets `role = "admin"` for the organisation creator.
+`portal_orgs.platform_unlocked_features` holds the org's unlocks
+(`models/portal.py:120-137`). The allowed values are `partner_api`, `widgets`,
+`custom_mcps`, `scribe`, `docs`, `librechat_quality_judge`,
+`knowledge_activity`, `knowledge_gaps` and `slack`
+(`klai-portal/backend/app/core/extensions_registry.py:30-54`). A new org starts
+with `partner_api`, `scribe` and `widgets` (`models/portal.py:28`). Only
+`scribe` and `docs` become products; the others gate features through
+`require_platform_unlocked` or, for partner keys, `assert_platform_unlocked`
+(`permissions.py:487-507`). Only platform admins change unlocks, through
+`PATCH /api/admin/orgs/{slug}/platform-unlocks`
+(`klai-portal/backend/app/api/admin/platform_unlocks.py:115`); a tenant admin reads
+the state of their own organisation at `GET /api/admin/extensions`
+(`klai-portal/backend/app/api/admin/extensions.py:77`).
 
-## Invitation flow
+Products are not assigned per user or per group; those endpoints answer 410
+Gone (see [api-auth.md](api-auth.md)).
 
-When an admin invites a user:
-1. A Zitadel user is created with an invitation code (`sendCodes: true` via Management API)
-2. A portal user record is created with the specified role
-3. Zitadel sends an invitation email via klai-mailer (`InviteUser` notification type)
-4. The invited user sets their password via the link in the email
+## Platform admin
 
-## User Groups
+`is_platform_admin` is true for every member of the organisation whose slug is
+`PLATFORM_ORG_SLUG` (`permissions.py:209`). Such members pass the tenant role
+gates; actions in the platform area additionally require the `admin` role
+there. The platform area manages organisations, users across tenants,
+messages, statistics and unlocks.
 
-Groups provide organizational structure within an org. Each group belongs to exactly one org.
+## Zitadel role grant
 
-### Data Model
+Authorisation comes from `portal_users.role`. Only `admin` is mirrored to
+Zitadel, as the `org:owner` grant; the other four roles get no grant
+(`_ZITADEL_ROLE_BY_PORTAL_ROLE`, `users.py:83-89`). A role change through
+`PATCH /api/admin/users/{id}/role` syncs that grant after commit
+(`users.py:830-835`).
 
-| Table | Columns |
-|-------|---------|
-| `portal_groups` | id, org_id, name, description, created_at, created_by |
-| `portal_group_memberships` | id, group_id, zitadel_user_id, is_group_admin, joined_at |
+## Groups
 
-- Group names are unique per org (case-insensitive)
-- ON DELETE CASCADE on memberships when group is deleted
+Groups give members access to content: knowledge bases shared with a group
+and meetings scoped to it (`klai-portal/backend/app/services/access.py:91-160`).
+They do not grant products (`groups.py:1-9`).
 
-### API Endpoints
+| Method | Path | Minimum role |
+|---|---|---|
+| GET | `/api/admin/groups` | `admin` |
+| POST | `/api/admin/groups` | `group_manager` |
+| PATCH, DELETE | `/api/admin/groups/{group_id}` | `group_manager` |
+| GET, POST | `/api/admin/groups/{group_id}/members` | `group_manager` |
+| DELETE | `/api/admin/groups/{group_id}/members/{user_id}` | `group_manager` |
+| PATCH | `/api/admin/groups/{group_id}/members/{user_id}` | `group_manager`; sets `is_group_admin` |
+| GET | `/api/admin/users/{user_id}/groups`, `/api/admin/group-memberships` | `admin` |
 
-| Method | Endpoint | Description | Role |
-|--------|----------|-------------|------|
-| GET | `/api/admin/groups` | List all groups | Admin |
-| POST | `/api/admin/groups` | Create group | Admin |
-| PATCH | `/api/admin/groups/{id}` | Update group | Admin |
-| DELETE | `/api/admin/groups/{id}` | Delete group | Admin |
-| GET | `/api/admin/groups/{id}/members` | List members | Admin |
-| POST | `/api/admin/groups/{id}/members` | Add member | Admin |
-| DELETE | `/api/admin/groups/{id}/members/{user_id}` | Remove member | Admin |
-| PATCH | `/api/admin/groups/{id}/members/{user_id}` | Toggle group admin | Admin |
+Group names are unique per organisation, case-insensitive
+(`klai-portal/backend/alembic/versions/q7r8s9t0u1v2_add_portal_groups.py:32`).
+A group admin may edit and delete meetings scoped to the group
+(`can_write_meeting`, `access.py:91-112`).
 
-### Group Admins
+## Invitations and joining
 
-Group admins can manage members of their group without needing the org-level admin role.
+`POST /api/admin/users/invite` (`users.py:512-728`, admin):
 
-## Group-Based Product Entitlements
+1. creates the person as a Zitadel user in the portal's Zitadel organisation
+   (`ZITADEL_PORTAL_ORG_ID`) with a pre-verified e-mail and no password
+   (`invite_user`, `klai-portal/backend/app/services/zitadel.py:258-300`); when
+   the e-mail already exists in Zitadel the existing identity is reused;
+2. grants `org:owner` in Zitadel only for the `admin` role;
+3. writes the `portal_users` row with the role and the account type derived
+   from it; an earlier `offboarded` row for the same person is reactivated
+   instead;
+4. sends the invitation code with a link to `/password/set` on the login host,
+   where the invitee chooses a password (`users.py:659-675`).
 
-Products are assigned at group level. Users inherit product access through group membership.
+`POST /api/admin/users/{id}/resend-invite` (`users.py:926`) sends a new code
+and, for an offboarded user, reactivates the row and, only when the Zitadel
+identity is inactive, the identity too (`reactivate_identity_if_inactive`,
+`klai-portal/backend/app/services/zitadel_identity_recovery.py:82-95`,
+`users.py:959`); a failed invite undoes only that reactivation. There is no
+seat cap on invitations (`users.py:531-537`).
 
-### How it works
+A person whose verified e-mail domain matches a workspace's `primary_domain`
+can ask to join it at login ([auth-flows.md](auth-flows.md), step 7). With
+`auto_accept_same_domain` they are added at once, otherwise a join request is
+filed. Admins handle requests under `/api/admin/join-requests`, with approve
+and deny endpoints; approval also works from the one-time link in the
+notification mail (`klai-portal/backend/app/api/admin/join_requests.py:63`,
+`:94-120`, `:217`).
 
-1. Org admin assigns products to a group via `portal_group_products`
-2. All members of that group inherit those products
-3. Effective products = union of direct (per-user) + inherited (via groups)
-4. JWT tokens are enriched with effective products (~15 min expiry)
+## Lifecycle
 
-### API Endpoints
+`portal_users.status` is `active`, `suspended` or `offboarded`, enforced by a
+check constraint (`models/portal.py:214`). All endpoints below require
+`admin` and are scoped to the caller's organisation.
 
-| Method | Endpoint | Description | Role |
-|--------|----------|-------------|------|
-| GET | `/api/admin/groups/{group_id}/products` | List group products | Admin |
-| POST | `/api/admin/groups/{group_id}/products` | Assign product | Admin |
-| DELETE | `/api/admin/groups/{group_id}/products/{product}` | Revoke product | Admin |
+| Method | Path | Effect |
+|---|---|---|
+| POST | `/api/admin/users/{id}/suspend` | `active` → `suspended`, audited (`users.py:1123-1158`) |
+| POST | `/api/admin/users/{id}/reactivate` | `suspended` → `active` (`users.py:1160-1187`) |
+| GET | `/api/admin/users/{id}/offboard-preview` | Knowledge bases that need a decision (`users.py:1189`) |
+| POST | `/api/admin/users/{id}/offboard` | Offboarding, below (`users.py:1257-1401`) |
+| GET | `/api/admin/users/{id}/delete-preview` | As the offboard preview (`users.py:1404`) |
+| POST | `/api/admin/users/{id}/delete` | Delete with knowledge-base decisions (`users.py:1423`) |
+| DELETE | `/api/admin/users/{id}` | Delete without decisions (`users.py:1041-1094`) |
+| PATCH | `/api/admin/users/{id}/role` | Change role; refuses to change the last admin (`users.py:767-859`) |
+| POST | `/api/admin/users/{id}/promote-admin`, `/demote-admin` | Demotion sets `company` and refuses to leave zero admins (`users.py:1521`, `:1579`) |
 
-### Per-user product toggles
+**Identity sync.** One Zitadel identity serves every workspace a person
+belongs to, and `portal_users.status` decides whether a membership is active.
+After the portal change is committed, suspend, reactivate, offboard, remove and
+leave all call `sync_identity_login`: it counts the person's active memberships
+and reads the identity's state, deactivates the identity when none is active,
+reactivates it when one is, and does nothing when the state already fits
+(`klai-portal/backend/app/services/zitadel_identity_recovery.py:57-80`). When
+the identity provider fails, the portal change stays, a
+`user.identity_sync_failed` audit row is written and the answer is 502;
+repeating the action runs the sync again (`users.py:1097-1120`).
 
-Per-user product assignment still works for backwards compatibility. The admin UI shows "Effective Products" (read-only) combining direct + inherited assignments.
+**A membership that is not active has no access** to its workspace, whatever
+the state of the identity. `refuse_inactive_membership` answers 403
+`user_suspended` or `user_offboarded`
+(`permissions.py:301-310`); it runs in `get_caller` (`permissions.py:271`) and
+in the internal permissions route (`klai-portal/backend/app/api/internal.py:532`).
+The products and capabilities of such a membership are empty, and completing a
+sign-in for a workspace's chat client requires an active membership of that
+workspace (`ZitadelClient._require_chat_membership`,
+`klai-portal/backend/app/services/zitadel.py:566-602`; the LibreChat user
+lookup refuses it too, `klai-portal/backend/app/services/internal_chat_identity.py:34-105`).
 
-## User Lifecycle
+**Suspend** sets the portal status to `suspended`, so every request of that
+session answers 403 `user_suspended`, while memberships, products and data stay
+as they were. Reactivation restores access.
 
-Users transition through three states:
+**Offboard** runs in one database transaction: it requires a decision
+(transfer or delete) for every knowledge base the preview lists, applies
+those decisions, hands the user's partner API keys to the acting admin or to
+the active admin named in `api_keys_transfer_to` (checked before any decision
+is applied, `users.py:1328-1330`, and moved at `users.py:1342`), revokes the
+user's MCP tokens (`users.py:1343`), removes the user's group memberships in
+this organisation, removes the internal chat cases kept for the user, sets
+`offboarded` and writes the audit row. After the commit it removes the linked
+GitHub organisation membership and runs the identity sync, so the Zitadel
+identity is deactivated only when the person has no other active membership
+(`users.py:1257-1401`). An offboarded user returns through a new invitation,
+which reactivates the row.
 
-| State | Description | Reversible |
-|-------|-------------|------------|
-| `active` | Normal access | — |
-| `suspended` | Access revoked, data preserved | Yes → reactivate |
-| `offboarded` | Cascading cleanup, non-reversible | No |
+**Delete with decisions** (`POST /api/admin/users/{id}/delete`) hands the API
+keys over the same way, checking the recipient before the Zitadel identity is
+touched (`users.py:1482-1484`).
 
-### API Endpoints
+**Delete** removes the `portal_users` row. The Zitadel identity is removed only
+when the person has no membership in another workspace, otherwise the identity
+sync runs; platform-admin identities cannot be deleted from a tenant
+(`users.py:1041-1094`). An admin cannot delete themselves this way.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/admin/users/{id}/suspend` | Suspend user |
-| POST | `/api/admin/users/{id}/reactivate` | Reactivate suspended user |
-| POST | `/api/admin/users/{id}/offboard` | Permanently offboard user |
+**Leave.** Any signed-in member can leave their workspace with
+`DELETE /api/admin/users/me`, which is registered before the delete route with
+a path parameter so that it is reachable. It is refused with 409 for the last
+admin, removes the member's row and the internal chat cases kept for them, and
+runs the identity sync (`users.py:997-1038`).
 
-### Suspension
-- Revokes access via Zitadel user deactivation
-- Preserves all data and memberships for potential reactivation
-
-### Offboarding
-- Destructive: cascading cleanup of memberships and product assignments
-- Non-reversible: user cannot be reactivated after offboarding
-- Requires confirmation dialog in the admin UI
+Deleting a whole workspace is a separate flow: `DELETE /api/admin/org/me` for
+its admin and the platform endpoints under `/api/admin/orgs/{slug}/`
+(`klai-portal/backend/app/api/admin/deprovision_org.py:137-360`); the runbook is
+[tenant-delete.md](../../docs/runbooks/tenant-delete.md).

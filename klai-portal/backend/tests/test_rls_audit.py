@@ -90,7 +90,7 @@ _ALLOWLIST: dict[str, str] = {
     ),
     # SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3 offboard orchestrator. Every entry
     # point (compute_offboard_preview, apply_dispositions,
-    # revoke_user_credentials) is called from admin/users.py routes that gate
+    # the credential handover) is called from admin/users.py routes that gate
     # on Depends(get_caller_at_least(ProfileRole.ADMIN)) — the upstream auth
     # dep runs set_tenant before any of these execute().
     "app/services/kb_offboarding.py": (
@@ -99,6 +99,10 @@ _ALLOWLIST: dict[str, str] = {
     # SPEC-SLACK-001: every function takes the request session of an
     # /api/admin/slack route (get_caller_at_least runs set_tenant) or of
     # /internal/slack/link-oauth after its explicit set_tenant for the token's org.
+    "app/services/knowledge_gap_report.py": (
+        "service layer — only called with the request session of the gap-cluster routes and the KB stats "
+        "route, both under get_caller (set_tenant); every query also names org_id"
+    ),
     "app/services/slack_integration.py": (
         "service layer — callers are admin_slack routes under get_caller and internal_slack after set_tenant"
     ),

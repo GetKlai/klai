@@ -39,8 +39,9 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from knowledge_ingest import enrichment_tasks, pg_store, qdrant_store
+from knowledge_ingest import document_purge, enrichment_tasks, pg_store
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.derived_state import queue_derived_work
 from knowledge_ingest.graph_refresh import maybe_refresh_stale_graph
 from knowledge_ingest.identity import assert_caller_identity_tenant_only
 
@@ -250,18 +251,28 @@ async def reindex_upload(
     artifact_id: str,
     org_id: str = Query(..., description="Zitadel org ID"),
 ) -> ReindexResponse:
-    """Set index_status='pending' and re-enqueue enrichment for a direct-upload artifact.
+    """Re-enqueue enrichment for a direct-upload artifact (index_status and enrichment pending).
 
-    Returns 404 when the artifact does not exist or belongs to a different org.
+    Returns 404 when the artifact does not exist, belongs to a different org,
+    or is a replaced version (see ``pg_store.set_artifact_index_status``).
     Returns 202 Accepted when the enrichment job has been enqueued.
     """
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     graph_refresh: str | None = None
     async with tenant_scoped_connection(verified_org_id) as conn:
         updated = await pg_store.set_artifact_index_status(
-            conn, artifact_id, verified_org_id, "pending"
+            conn, artifact_id, verified_org_id, "pending", reopen=True
         )
         if updated is not None:
+            await queue_derived_work(
+                conn,
+                artifact_id,
+                "enrichment",
+                enrichment_tasks.get_app().enrich_document_interactive.configure(
+                    queueing_lock=f"reindex:{verified_org_id}:{artifact_id}",
+                ),
+                artifact_id=artifact_id,
+            )
             artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
             if artifact is None:
                 raise RuntimeError(f"artifact {artifact_id} disappeared after status update")
@@ -288,28 +299,6 @@ async def reindex_upload(
                 )
     if updated is None:
         raise HTTPException(status_code=404, detail="artifact not found")
-
-    from procrastinate.exceptions import AlreadyEnqueued
-
-    proc_app = enrichment_tasks.get_app()
-    try:
-        await proc_app.enrich_document_interactive.configure(
-            queueing_lock=f"reindex:{verified_org_id}:{artifact_id}",
-        ).defer_async(artifact_id=artifact_id)
-    except AlreadyEnqueued:
-        # A reindex for this artifact is already queued (user double-clicked
-        # the sync button, or the queue is still draining). The queued job
-        # will pick up the current PG state, so "accepted" is the truthful
-        # answer — previously this raised an unhandled 500.
-        logger.info(
-            "reindex_already_enqueued",
-            artifact_id=artifact_id,
-            org_id=verified_org_id,
-            graph_refresh=graph_refresh,
-        )
-        return ReindexResponse(
-            artifact_id=artifact_id, index_status="pending", graph_refresh=graph_refresh
-        )
 
     logger.info(
         "reindex_enqueued",
@@ -369,10 +358,11 @@ async def delete_upload(
         ),
     ),
 ) -> None:
-    """Soft-delete a direct-upload artifact and remove its Qdrant chunks.
+    """Delete a direct upload and every earlier version of it from every store.
 
-    Returns 404 when the artifact does not exist.
+    Returns 404 when the artifact does not exist or is a replaced version.
     Returns 403 when ``user_id`` is provided but does not match the artifact owner.
+    A delete that failed halfway left the upload closed; repeating it finishes.
     """
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     async with tenant_scoped_connection(verified_org_id) as conn:
@@ -389,9 +379,9 @@ async def delete_upload(
                 detail="you can only delete your own uploads",
             )
 
-        await pg_store.soft_delete_artifact(conn, verified_org_id, kb_slug, artifact["path"])
+        heads = await pg_store.list_document_heads(conn, verified_org_id, artifact["path"], kb_slug)
+        await document_purge.purge_documents(conn, verified_org_id, heads)
 
-    await qdrant_store.delete_document(verified_org_id, kb_slug, artifact["path"])
     logger.info(
         "upload_deleted",
         artifact_id=artifact_id,

@@ -392,6 +392,7 @@ def _llm_request_body(
     tools: list[dict] | None,
     tool_choice: Any | None,
     delegated_org_id: str | None,
+    max_tokens: int,
     language_schema: str | None = None,
 ) -> dict[str, Any]:
     """The body of one generation call to LiteLLM.
@@ -400,16 +401,24 @@ def _llm_request_body(
     master key, which belongs to no tenant, so LiteLLM's PII enforcer only masks
     the text for its org when the org travels with the call. ``language_schema``
     is the decided reply language the output shape enforces
-    (:func:`reply_language_schema`), with or without tools: probed on
-    29 October 2026, the model answers in the shape and still calls a tool
-    as a tool call when it wants one.
+    (:func:`reply_language_schema`), but never beside tools: with both, the
+    production model dropped the shape and wrote free text that did not stop
+    on 8 of 8 replayed internal turns, against 0 of 6 with either one alone
+    (17 November 2026, SPEC-CHAT-INTERNAL-ROUTE-001 §1). ``max_tokens`` is the
+    writer's output cap (``Settings.chat_writer_max_tokens``).
     """
-    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": stream}
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": stream,
+        "max_tokens": max_tokens,
+    }
     if tools:
         body["tools"] = tools
         if tool_choice is not None:
             body["tool_choice"] = tool_choice
-    if language_schema:
+    elif language_schema:
         body["response_format"] = reply_language_schema(language_schema)
     with_feature_tag(body, "portal:partner-chat-answer")
     return with_delegated_org(body, delegated_org_id)

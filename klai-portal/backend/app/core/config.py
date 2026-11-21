@@ -282,7 +282,7 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
 
     # Vexa meeting API (agentic-runtime)
-    vexa_meeting_api_url: str = "http://vexa-meeting-api:8080"
+    vexa_meeting_api_url: str = "http://vexa12-meeting-api:8080"
     # vexa_admin_token was "reserved for a future admin surface" since SPEC-VEXA-003
     # and never gained a reader. Vexa 0.12 deploys its own admin-api with its own
     # VEXA12_ADMIN_TOKEN, so the reservation can no longer be redeemed by this
@@ -305,6 +305,11 @@ class Settings(BaseSettings):
     litellm_base_url: str = "http://litellm:4000"
     extraction_model: str = "klai-fast"
     synthesis_model: str = "klai-primary"
+    # The output cap of every chat writer call (widget_write.write_reply). Of
+    # 1,725 writer calls in fourteen days below 1,500 tokens the 99th
+    # percentile was 618 tokens, so a valid reply is not cut; a reply that
+    # does not stop is (SPEC-CHAT-INTERNAL-ROUTE-001 §4).
+    chat_writer_max_tokens: int = 2000
     feedback_triage_model: str = "klai-fast"
     # SPEC-CHAT-QUALITY-LOOP-001 REQ-2: same underlying model as klai-medium
     # (Mistral Medium 3.5, same reason RAGAS faithfulness moved off klai-fast:
@@ -320,6 +325,14 @@ class Settings(BaseSettings):
     # small model caught 22% of answers stating something the articles do not,
     # this one 96%.
     answer_grounding_model: str = "klai-medium"
+    # The writer of a widget or partner-key turn whose request asks for the
+    # default alias klai-primary (widget_turn._write). Measured on 44 real
+    # widget turns, two answers each, read blind by two readers: an invented
+    # step, button or cause stood in 38 and 40 of 88 answers of the small
+    # model against 24 and 21 of the medium one, at the same median latency
+    # (1.25 s against 1.1 s). The gateway has no fallback for this alias, so
+    # the writer retries once on the requested alias (widget_write._generate).
+    widget_writer_model: str = "klai-medium"
     # Two paraphrases of a first question for retrieval (SPEC-RAG-ANSWER-
     # JUDGES-001, 2.33). The roomier model for the same reason as above: this
     # call runs on every first widget turn and must not eat the answer quota.
@@ -417,10 +430,13 @@ class Settings(BaseSettings):
     widget_jwt_secret: str = ""  # PORTAL_API_WIDGET_JWT_SECRET
 
     # REQ-8 (SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): widget_messages retention.
-    # Rows older than this many days are deleted daily by the background loop.
-    # Lowered from 90 to 7 (SPEC-CHAT-QUALITY-LOOP-001 open item #2, decided
-    # 2026-09-11): global, all tenants, no per-org override exists today.
-    widget_messages_retention_days: int = 7  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
+    # Rows older than this many days are deleted daily by the background loop,
+    # which also clears the visitor details and judge reasoning past the term.
+    # 90 days since 2026-11-12 (was 7 from 2026-09-11): long enough to replay a
+    # failure against a new version and check the nightly judge afterwards.
+    # portal_orgs.widget_messages_retention_days overrides it per org.
+    # Rule: docs/architecture/conversation-retention-and-learning.md.
+    widget_messages_retention_days: int = 90  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
 
     # Conversations quiet for at least this many minutes get an outcome
     # label ('resolved' / 'escalated' / 'abandoned' / 'unknown') by the

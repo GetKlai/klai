@@ -25,6 +25,7 @@ def _row(
     kb_slug: str = "kb1",
     path: str = "a.md",
     created_at: int = 1700000000,
+    index_status: str = "synced",
 ) -> dict:
     return {
         "artifact_id": artifact_id,
@@ -32,12 +33,23 @@ def _row(
         "kb_slug": kb_slug,
         "path": path,
         "created_at": created_at,
+        "index_status": index_status,
     }
+
+
+def _db_row(artifact_id: str, extra: dict | None = None, **kwargs) -> dict:
+    """A selected row as Postgres returns it: the reader decides from ``extra``."""
+    extra = {"document_text": "Text.", "enrichment_state": "failed"} if extra is None else extra
+    return {**_row(artifact_id, **kwargs), "extra": extra}
 
 
 def _make_conn(rows: list[dict]) -> MagicMock:
     conn = MagicMock()
     conn.fetch = AsyncMock(return_value=rows)
+    conn.fetchrow = AsyncMock(
+        return_value={"org_id": "org1", "kb_slug": "kb1", "without_text": 0, "held": 0}
+    )
+    conn.execute = AsyncMock()
     return conn
 
 
@@ -94,8 +106,8 @@ async def test_select_failed_artifacts_uses_expected_filters_no_scoping():
     assert "$2::text IS NULL OR a.org_id = $2" in sql
     assert "$3::text IS NULL OR a.kb_slug = $3" in sql
     assert "ORDER BY a.created_at ASC" in sql
-    assert "LIMIT $4" in sql
-    assert params == [_SENTINEL, None, None, 500]
+    assert "LIMIT $8" in sql
+    assert params == [_SENTINEL, None, None, "enrichment", None, "deleting", None, 500]
 
 
 @pytest.mark.asyncio
@@ -105,16 +117,25 @@ async def test_select_failed_artifacts_applies_org_and_kb_scoping():
     await script._select_failed_artifacts(conn, org_id="org1", kb_slug="kb1", limit=10)
 
     _sql, *params = conn.fetch.call_args.args
-    assert params == [_SENTINEL, "org1", "kb1", 10]
+    assert params == [_SENTINEL, "org1", "kb1", "enrichment", None, "deleting", None, 10]
 
 
 @pytest.mark.asyncio
-async def test_select_failed_artifacts_maps_rows_to_dicts():
-    conn = _make_conn([_row("11111111-2222-3333-4444-555555555555")])
+async def test_select_failed_artifacts_selects_what_the_reader_calls_failed():
+    """A failed raw write next to a finished enrichment is not a missing
+    enrichment; a legacy upload whose index_status carried the failure is."""
+    conn = _make_conn(
+        [
+            _db_row("enrichment-failed"),
+            _db_row("raw-write-failed", {"enrichment_state": "done"}, index_status="failed"),
+            _db_row("legacy-upload", {}, index_status="failed"),
+            _db_row("legacy-connector", {"source_connector_id": "c1"}, index_status="failed"),
+        ]
+    )
 
     result = await script._select_failed_artifacts(conn, org_id=None, kb_slug=None, limit=500)
 
-    assert result == [_row("11111111-2222-3333-4444-555555555555")]
+    assert [row["artifact_id"] for row in result] == ["enrichment-failed", "legacy-upload"]
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +145,7 @@ async def test_select_failed_artifacts_maps_rows_to_dicts():
 
 @pytest.mark.asyncio
 async def test_dry_run_prints_summary_and_never_requeues(capsys):
-    rows = [_row("a1"), _row("a2", org_id="org2", kb_slug="kb2")]
+    rows = [_db_row("a1"), _db_row("a2", org_id="org2", kb_slug="kb2")]
     conn = _make_conn(rows)
 
     with (
@@ -161,12 +182,12 @@ async def test_no_artifacts_selected_returns_early_without_requeue():
 
 @pytest.mark.asyncio
 async def test_execute_defers_enrich_document_bulk_with_requeue_lock():
-    rows = [_row("a1"), _row("a2")]
+    rows = [_db_row("a1"), _db_row("a2")]
     conn = _make_conn(rows)
     fake_app = _FakeApp()
 
     with (
-        patch.object(script, "cross_org_admin_connection", return_value=_conn_ctx(conn)),
+        patch.object(script, "cross_org_admin_connection", side_effect=lambda: _conn_ctx(conn)),
         patch.object(script, "_procrastinate_app", return_value=_app_ctx(fake_app)),
     ):
         await script.main(dry_run=False, limit=1000, org_id=None, kb_slug=None)
@@ -181,12 +202,12 @@ async def test_execute_defers_enrich_document_bulk_with_requeue_lock():
 
 @pytest.mark.asyncio
 async def test_execute_emits_done_summary_log_event():
-    rows = [_row("a1")]
+    rows = [_db_row("a1")]
     conn = _make_conn(rows)
     fake_app = _FakeApp()
 
     with (
-        patch.object(script, "cross_org_admin_connection", return_value=_conn_ctx(conn)),
+        patch.object(script, "cross_org_admin_connection", side_effect=lambda: _conn_ctx(conn)),
         patch.object(script, "_procrastinate_app", return_value=_app_ctx(fake_app)),
         structlog.testing.capture_logs() as captured,
     ):
@@ -208,10 +229,13 @@ async def test_execute_emits_done_summary_log_event():
 async def test_already_enqueued_is_skipped_and_does_not_stop_the_batch():
     rows = [_row("a1"), _row("a2"), _row("a3")]
     fake_app = _FakeApp(fail_for={"a2"})
+    conn = _make_conn([])
 
-    with patch.object(script, "_procrastinate_app", return_value=_app_ctx(fake_app)):
-        enqueued, skipped = await script._requeue(rows)
+    with (
+        patch.object(script, "_procrastinate_app", return_value=_app_ctx(fake_app)),
+        patch.object(script, "cross_org_admin_connection", side_effect=lambda: _conn_ctx(conn)),
+    ):
+        outcomes = await script._requeue(rows)
 
     assert fake_app.enrich_document_bulk.defer_calls == ["a1", "a2", "a3"]
-    assert enqueued == 2
-    assert skipped == 1
+    assert (outcomes["enqueued"], outcomes["skipped_already_enqueued"]) == (2, 1)

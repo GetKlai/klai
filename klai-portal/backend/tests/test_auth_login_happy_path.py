@@ -61,10 +61,9 @@ async def test_password_totp_login_happy_path(fake_redis: Any, monkeypatch: pyte
         patch("app.api.auth.zitadel") as mock_zitadel,
         patch("app.api.auth.audit") as mock_audit,
         patch("app.api.auth.emit_event"),
-        patch("app.api.auth._resolve_and_enforce_mfa", AsyncMock(return_value=None)),
+        patch("app.api.auth._resolve_and_enforce_mfa", AsyncMock(return_value=(None, ["totp"]))),
     ):
         mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-happy", "zorg-happy"))
-        mock_zitadel.has_totp = AsyncMock(return_value=True)
         mock_zitadel.create_session_with_password = AsyncMock(return_value=_session_ok())
         mock_audit.log_event = AsyncMock()
 
@@ -98,7 +97,7 @@ async def test_password_totp_login_happy_path(fake_redis: Any, monkeypatch: pyte
         patch("app.api.auth.audit") as mock_audit,
         patch("app.api.auth._finalize_and_set_cookie") as mock_finalize,
     ):
-        mock_zitadel.update_session_with_totp = AsyncMock(
+        mock_zitadel.update_session_with_otp = AsyncMock(
             return_value={"sessionId": "sess-happy", "sessionToken": "tok-happy-renewed"}
         )
         mock_audit.log_event = AsyncMock()

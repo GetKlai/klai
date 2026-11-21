@@ -123,8 +123,9 @@ markers = [
     "benchmark: constant-time regression benchmarks (run with: pytest -m benchmark)",
     "postgres: real-PostgreSQL RLS regression tests (need RLS_TEST_DATABASE_URL)",
     "vexa_live: contract probe against a running Vexa meeting-api (needs VEXA_CONTRACT_BASE_URL)",
+    "zitadel_live: login and enrolment against a real Zitadel (deploy/tests/zitadel-login-contract.sh)",
 ]
-addopts = "-m 'not benchmark and not postgres and not vexa_live'"
+addopts = "-m 'not benchmark and not postgres and not vexa_live and not zitadel_live'"
 
 [tool.ruff]
 line-length = 120

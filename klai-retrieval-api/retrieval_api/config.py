@@ -50,10 +50,6 @@ class Settings(BaseSettings):
     graph_search_timeout: float = 5.0
     graphiti_llm_model: str = "klai-fast"
 
-    # Model used by the synthesis (chat) layer.
-    # Toggle via env var: RETRIEVAL_API_SYNTHESIS_MODEL=klai-claude
-    synthesis_model: str = "klai-primary"
-
     # Source-aware selection (SPEC-KB-021)
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
@@ -102,7 +98,6 @@ class Settings(BaseSettings):
     router_min_source_label_count: int = 4
     router_margin_single: float = 0.15
     router_margin_dual: float = 0.08
-    router_llm_fallback: bool = False
     router_centroid_ttl_seconds: int = 600
 
     # Portal events — set to emit product_events to the portal database.

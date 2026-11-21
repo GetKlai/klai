@@ -62,10 +62,9 @@ def _patch_common(mock_pg, results, fetch_outcomes, ingest_side_effect):
             new_callable=AsyncMock,
         ),
         patch("knowledge_ingest.adapters.crawler.pg_store", mock_pg),
-        patch(
-            "knowledge_ingest.adapters.crawler.qdrant_store.delete_document",
-            new_callable=AsyncMock,
-        ),
+        # The purge itself is covered against real PostgreSQL in
+        # tests/integration/test_document_purge_postgres.py.
+        patch("knowledge_ingest.adapters.crawler._purge_stale_paths", mock_pg.purge_stale_paths),
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
@@ -102,6 +101,8 @@ async def test_stale_reconcile_skipped_when_any_page_timed_out():
 
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()
@@ -112,7 +113,7 @@ async def test_stale_reconcile_skipped_when_any_page_timed_out():
     mock_pg.list_stale_connector_artifact_paths = AsyncMock(
         return_value=["https://example.com/e"],
     )
-    mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=1)
+    mock_pg.purge_stale_paths = AsyncMock(return_value=1)
 
     patches = _patch_common(mock_pg, results, fetch_outcomes, _fake_ingest)
     for p in patches:
@@ -137,7 +138,7 @@ async def test_stale_reconcile_skipped_when_any_page_timed_out():
     # The core assertion: an incomplete crawl (any real fetch failure) must
     # never even ask "what's stale" — let alone delete anything.
     mock_pg.list_stale_connector_artifact_paths.assert_not_awaited()
-    mock_pg.soft_delete_stale_connector_artifacts.assert_not_awaited()
+    mock_pg.purge_stale_paths.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -157,6 +158,8 @@ async def test_stale_reconcile_still_runs_when_crawl_is_fully_fetched():
 
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()
@@ -165,7 +168,7 @@ async def test_stale_reconcile_still_runs_when_crawl_is_fully_fetched():
     mock_pg.list_stale_connector_artifact_paths = AsyncMock(
         return_value=["https://getklai.com/"],
     )
-    mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=1)
+    mock_pg.purge_stale_paths = AsyncMock(return_value=1)
 
     patches = _patch_common(mock_pg, results, fetch_outcomes, _fake_ingest)
     for p in patches:
@@ -188,7 +191,7 @@ async def test_stale_reconcile_still_runs_when_crawl_is_fully_fetched():
             p.stop()
 
     mock_pg.list_stale_connector_artifact_paths.assert_awaited_once()
-    mock_pg.soft_delete_stale_connector_artifacts.assert_awaited_once()
+    mock_pg.purge_stale_paths.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -228,6 +231,8 @@ async def test_page_that_is_gone_lets_stale_cleanup_retire_it_but_an_auth_error_
 
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()
@@ -235,7 +240,7 @@ async def test_page_that_is_gone_lets_stale_cleanup_retire_it_but_an_auth_error_
     mock_pg.upsert_page_links = AsyncMock()
     mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[removed])
     mock_pg.count_active_connector_artifact_paths = AsyncMock(return_value=4)
-    mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=1)
+    mock_pg.purge_stale_paths = AsyncMock(return_value=1)
 
     patches = _patch_common(mock_pg, results, fetch_outcomes, _fake_ingest)
     for p in patches:
@@ -260,16 +265,18 @@ async def test_page_that_is_gone_lets_stale_cleanup_retire_it_but_an_auth_error_
     if retired:
         current = mock_pg.list_stale_connector_artifact_paths.await_args.kwargs["current_paths"]
         assert removed not in current
-        stale = mock_pg.soft_delete_stale_connector_artifacts.await_args.kwargs["stale_paths"]
+        stale = mock_pg.purge_stale_paths.await_args.args[4]
         assert stale == [removed]
     else:
         mock_pg.list_stale_connector_artifact_paths.assert_not_awaited()
-        mock_pg.soft_delete_stale_connector_artifacts.assert_not_awaited()
+        mock_pg.purge_stale_paths.assert_not_awaited()
 
 
 def _pg_mock(stale_paths: list[str], stored_count: int) -> MagicMock:
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()
@@ -277,7 +284,7 @@ def _pg_mock(stale_paths: list[str], stored_count: int) -> MagicMock:
     mock_pg.upsert_page_links = AsyncMock()
     mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=stale_paths)
     mock_pg.count_active_connector_artifact_paths = AsyncMock(return_value=stored_count)
-    mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=len(stale_paths))
+    mock_pg.purge_stale_paths = AsyncMock(return_value=len(stale_paths))
     return mock_pg
 
 
@@ -338,7 +345,9 @@ async def test_crawl_with_gone_pages_does_not_bulk_retire_the_stored_source(
     await _run_job(mock_pg, results, fetch_outcomes)
 
     mock_pg.list_stale_connector_artifact_paths.assert_awaited_once()
-    assert mock_pg.soft_delete_stale_connector_artifacts.await_count == int(retired)
+    # The purge still runs to retry unfinished deletes; the guard empties the
+    # stale list it is given.
+    assert mock_pg.purge_stale_paths.await_args.args[4] == (stale if retired else [])
 
 
 @pytest.mark.asyncio
@@ -352,7 +361,7 @@ async def test_crawl_without_gone_pages_keeps_retiring_every_stale_page():
 
     await _run_job(mock_pg, results, fetch_outcomes)
 
-    assert mock_pg.soft_delete_stale_connector_artifacts.await_args.kwargs["stale_paths"] == stale
+    assert mock_pg.purge_stale_paths.await_args.args[4] == stale
 
 
 @pytest.mark.asyncio

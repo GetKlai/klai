@@ -123,6 +123,10 @@ class PersistSkipReason(StrEnum):
     NON_TEXT_CONTENT = "non_text_content"
     EXCLUDED_BY_KB_CONFIG = "excluded_by_kb_config"
     TAXONOMY_CLASSIFY_FAILED = "taxonomy_classify_failed"
+    # An automated source delivered a version that keeps under half of the
+    # stored version's words; the stored version stays until the same
+    # version is seen again 12 hours later (routes/ingest.py).
+    SHRUNKEN_VERSION_HELD = "shrunken_version_held"
 
 
 # Convenience sets — handy for migrations or runtime validation.

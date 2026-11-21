@@ -11,10 +11,10 @@ interfaces, not Klai's live production hosts or operator procedures.
 
 | Component | Responsibility |
 |-----------|----------------|
-| `klai-scribe/whisper-server` | Public reference image for the self-hosted Whisper-compatible speech-to-text backend. |
-| Transcription backend | OpenAI-compatible speech-to-text endpoint selected by `WHISPER_SERVER_URL` / `TRANSCRIPTION_SERVICE_URL`. Klai production operates this from private infrastructure; self-hosters can run a compatible backend behind an allowed Scribe hostname. |
-| `scribe-api` | Product API for transcription workflows, status, and integration with the portal. |
-| Vexa meeting stack | Meeting bot lifecycle and live transcript collection. |
+| Transcription backend | OpenAI-compatible speech-to-text endpoint selected by `WHISPER_SERVER_URL` / `TRANSCRIPTION_SERVICE_URL`. In Klai's stack it is the transcription service of the GPU compose file: two faster-whisper `large-v3-turbo` workers on CUDA behind an nginx least-connections balancer that serves `/v1/audio/transcriptions` (`deploy/docker-compose.gpu.yml:110-200`). Self-hosters can run any compatible backend behind an allowed Scribe hostname. |
+| `klai-scribe/whisper-server` | Public reference image for a Whisper-compatible backend. It is built and published by `.github/workflows/whisper-server.yml` and is in no compose file, so nothing in the Klai stack runs it (`deploy/VERSIONS.md:11`). |
+| `scribe-api` | Product API for transcription workflows, status, and integration with the portal: upload, normalisation, a job queue held in a Postgres table, summaries through LiteLLM, hand-off to a knowledge base (`klai-scribe/scribe-api/app/api/transcribe.py:158-477`, `klai-scribe/scribe-api/app/services/jobs.py:1-14`). |
+| Vexa meeting stack | Meeting bot lifecycle and live transcript collection (`vexa12-*` services in `deploy/docker-compose.yml:1949-2078`). Its bots reach the transcription backend through a forwarding service on the bot network (`deploy/docker-compose.yml:1923-1934`). |
 | `klai-portal` | User-facing transcription controls and tenant/product management. |
 | public build workflows | Build, scan, and publish container images. |
 | private infra workflows | Deploy Klai production instances and verify live service health. |
@@ -24,7 +24,7 @@ interfaces, not Klai's live production hosts or operator procedures.
 Contributors can work on:
 
 - Scribe API behavior and tests
-- Whisper reference image code and dependency updates
+- Whisper reference image code and dependency updates (the image is a reference for self-hosters and is not part of the Klai deployment)
 - Portal transcription UI and product flows
 - public image build and security scan workflows
 - local or self-hosted deployment templates
@@ -64,15 +64,17 @@ The public repository owns build-time concerns:
 
 - source code
 - Docker image definitions
-- the public Whisper reference image
+- the public Whisper reference image (published, not deployed by Klai)
 - tests
 - vulnerability scans
 - GHCR image publication
 
 Production deployment is a private operations concern. Klai's production deploy
 automation consumes public image tags and runs from `GetKlai/klai-infra`.
-Live GPU compose files, tunnel procedures, Uptime Kuma push scripts, and
-transcription-service bump runbooks belong there, not in this public repository.
+The GPU compose file in this repository (`deploy/docker-compose.gpu.yml`) is
+only validated by public CI (`.github/workflows/validate-gpu-compose.yml:40-49`)
+and is never synced or deployed from here. Tunnel procedures, status-page push
+scripts, and transcription-service bump runbooks belong in the private repository.
 
 Self-hosters should provide their own host inventory, secret management, and
 deployment automation. The public `deploy/` directory is a template, not a copy

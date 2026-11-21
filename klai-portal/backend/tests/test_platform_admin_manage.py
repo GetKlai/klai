@@ -115,7 +115,7 @@ async def test_platform_delete_keeps_global_identity_when_other_memberships_exis
             ),
         ),
         patch("app.services.kb_offboarding.compute_offboard_preview", new=AsyncMock(return_value=preview)),
-        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(0, 0))),
+        patch("app.services.kb_offboarding.delete_user_api_keys", new=AsyncMock(return_value=0)),
         patch(
             "app.api.admin.platform_manage.delete_user_with_state_machine",
             new=orchestrator_mock,
@@ -549,11 +549,14 @@ async def test_platform_invite_reactivates_offboarded_tenant_member() -> None:
         patch("app.api.admin.platform_manage._sync_zitadel_role_grant", new=AsyncMock()) as sync_role,
         patch("app.api.admin.platform_manage.log_event", new=AsyncMock()),
         patch("app.api.admin.platform_manage.zitadel") as zitadel,
+        patch(
+            "app.api.admin.platform_manage.reactivate_identity_if_inactive",
+            new=AsyncMock(side_effect=_record_unlock),
+        ),
     ):
         zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
         zitadel.find_user_id_by_email = AsyncMock(return_value="target-user")
         zitadel.grant_user_role = AsyncMock()
-        zitadel.unlock_user = AsyncMock(side_effect=_record_unlock)
         zitadel.send_invite_code = AsyncMock(side_effect=_record_send_invite)
         zitadel.remove_user = AsyncMock()
         zitadel.deactivate_user = AsyncMock()

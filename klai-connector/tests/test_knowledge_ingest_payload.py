@@ -204,9 +204,11 @@ async def test_ingest_client_rejects_oversized_content_before_http_request() -> 
     await client.aclose()
 
 
-def test_client_content_limit_matches_knowledge_ingest_request_contract() -> None:
-    models_path = Path(__file__).parents[2] / "klai-knowledge-ingest" / "knowledge_ingest" / "models.py"
-    namespace = run_path(str(models_path))
+def test_client_content_limit_matches_knowledge_ingest_request_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    ingest_root = Path(__file__).parents[2] / "klai-knowledge-ingest"
+    # models.py imports from its own package, so that package has to be importable here.
+    monkeypatch.syspath_prepend(str(ingest_root))
+    namespace = run_path(str(ingest_root / "knowledge_ingest" / "models.py"))
     ingest_request = namespace["IngestRequest"]
     content_field = ingest_request.model_fields["content"]
     downstream_limit = next(
@@ -216,10 +218,9 @@ def test_client_content_limit_matches_knowledge_ingest_request_contract() -> Non
     assert downstream_limit == MAX_INGEST_CONTENT_CHARS
 
 
-def test_connector_payload_forwards_sync_generation() -> None:
-    payload = _build_payload(**_base_kwargs(), resource_generation="sync-run-42")
-
-    assert payload["resource_generation"] == "sync-run-42"
+def test_connector_payload_carries_no_sync_run() -> None:
+    """Derived work belongs to the document; a sync run must not own or cancel it."""
+    assert "resource_generation" not in _build_payload(**_base_kwargs())
 
 
 @pytest.mark.asyncio
@@ -249,3 +250,25 @@ async def test_ingest_document_reports_whether_knowledge_changed(body: dict, cha
     )
 
     assert result is changed
+
+
+@pytest.mark.asyncio
+async def test_ingest_document_reports_none_when_knowledge_ingest_holds_the_version() -> None:
+    client = KnowledgeIngestClient(base_url="http://knowledge-ingest:8100", internal_secret="placeholder-secret")
+    await client._client.aclose()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"status": "held", "reason": "shrunken_version_held", "chunks": 0})
+    client._client = MagicMock()
+    client._client.post = AsyncMock(return_value=response)
+
+    result = await client.ingest_document(
+        org_id="org-1",
+        kb_slug="support",
+        path="doc.md",
+        content="hello",
+        source_connector_id="connector-1",
+        source_ref="doc.md",
+    )
+
+    assert result is None

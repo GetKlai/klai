@@ -57,7 +57,6 @@ function makeWidget(): WidgetDetailResponse {
       collect_user_info: false,
       page_context_enabled: false,
       widget_position: 'right',
-      booking_url: null,
     },
     kb_access: [],
   }

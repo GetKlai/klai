@@ -92,7 +92,6 @@ def _request(sub_queries: list[str]) -> RetrieveRequest:
         query="volledige meerdelige vraag",
         org_id="42",
         sub_queries=sub_queries,
-        kb_narrow=True,
     )
 
 

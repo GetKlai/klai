@@ -418,7 +418,9 @@ async def test_episode_lookup_walks_the_whole_predecessor_chain():
     sql = conn.fetch.call_args[0][0]
     assert "RECURSIVE" in sql, "only the rows handed in are looked up -- older versions strand"
     assert "superseded_by" in sql
-    assert "depth < 100" in sql, "an unbounded walk hangs the ingest request on a cycle"
+    # The walk is unbounded but cycle-safe; the real-PostgreSQL proof is
+    # tests/integration/test_document_purge_postgres.py::test_history_walk_ends_on_a_cycle.
+    assert "UNION ALL" not in sql, "a walk that keeps visited rows hangs on a cycle"
     assert "'no-chunks'" in sql, "the skip sentinel is not an episode uuid"
 
 

@@ -83,6 +83,7 @@ UMAMI_MAJOR="${OLD_COMPOSE//postgres:18.6-alpine
   umami:/postgres:19.1-alpine
   umami:}"
 PG_MAIN_MAJOR="${OLD_COMPOSE//pgvector:0.8.7-pg18/pgvector:0.8.7-pg19}"
+PG_MAIN_MINOR="${OLD_COMPOSE//pgvector:0.8.7-pg18/pgvector:0.8.8-pg18}"
 
 new_case() {
   case_dir="$work/$1"
@@ -474,7 +475,7 @@ check "epoch written once, after the dump" "epoch line count: 1 last: epoch" "$(
 pgdir() { [[ -d "$case_dir/fake/pgdir/$1" ]] && echo yes || echo no; }
 
 # A minor reads its major from the images and stays on the plain path.
-check "  18.6 -> 18.7 is no major: no cutover, no roles dumped" "0 no" "$(grep -c pg_dumpall "$work/green_store/fake/calls" || true) $(grep -q '^new_pgdata=' "$(find "$work/green_store/backups" -maxdepth 1 -name 'pre-umami-postgres-*' | head -n1)/meta" && echo yes || echo no)"
+check "  18.6 -> 18.7 is no major: no major cutover, the roles dumped with each dump" "2 no" "$(grep -c pg_dumpall "$work/green_store/fake/calls" || true) $(grep -q '^new_pgdata=' "$(find "$work/green_store/backups" -maxdepth 1 -name 'pre-umami-postgres-*' | head -n1)/meta" && echo yes || echo no)"
 
 new_case major_green
 : > "$case_dir/fake/new_writes"
@@ -539,6 +540,47 @@ check "  checked in the shadow, before any restore anywhere" "1 0" "$(calls "exe
 check "  live untouched: no consumer stopped, no directory moved, no sweep" "0 no no 0" "$(calls 'compose .* stop ') $(pgdir postgres/19_docker) $(pgdir postgres/18_docker.aside) $(calls '^sweep')"
 check "  previous image, counts as before, compose file as it was" "pgvector/pgvector:0.8.7-pg18 1 yes" "$(running postgres) $(count postgres/glitchtip/public.users_user) $(untouched)"
 check "  ledger: snapshot, shadow_failed" "postgres snapshot,postgres shadow_failed" "$(data_ledger)"
+
+# --- roles in a throwaway -----------------------------------------------------
+# The main Postgres: databases whose policies and owners name roles other than
+# the superuser (CREATE POLICY ... TO portal_api failed the rehearsal of
+# 2026-11-01). A throwaway starts with the superuser only.
+roles_case() {
+  new_case "$1"
+  printf 'klai\nglitchtip\n' > "$case_dir/fake/roles_postgres"
+  echo glitchtip > "$case_dir/fake/db/postgres/glitchtip/.roles"
+}
+# restore_into <dir>: ds_restore_into as the rehearsal calls it.
+restore_into() {
+  set +e
+  PATH="$bin:$PATH" FAKE="$case_dir/fake" KLAI_COMPOSE_DIR="$case_dir" bash -c 'source "$1"; ds_restore_into "$2" klai-datastore-rehearsal-postgres' _ "$helper" "$1" > "$case_dir/out" 2>&1
+  rc=$?
+  set -e
+}
+
+roles_case roles_shadow
+run_driver "$PG_MAIN_MINOR"
+snap="$(snapdir postgres)"
+check "postgres minor, a database owned by a role other than the superuser -> shadow green, exit 0" 0 "$rc"
+check "  globals.sql in the snapshot, beside the dumps" yes "$(grep -qx 'CREATE ROLE glitchtip;' "$snap/globals.sql" && echo yes || echo no)"
+check "  shadow: roles replayed before the restore, which keeps owners and grants" yes "$( (( $(order_of 'exec -i klai-datastore-shadow-postgres psql -U klai -d postgres -v ON_ERROR_STOP=1 -q') < $(order_of 'exec -i klai-datastore-shadow-postgres pg_restore -U klai --create --exit-on-error -d postgres$') )) && echo yes || echo no)"
+check "  the bootstrap superuser tolerated, the role created" "klai grafana_reader glitchtip" "$(paste -sd' ' "$case_dir/fake/roles_klai-datastore-shadow-postgres")"
+
+# Snapshots taken before globals.sql existed. Live, the roles exist.
+roles_case roles_old_live
+run_driver "$PG_MAIN_MINOR" "" 'rm "${DS_SNAPSHOTS[0]}/globals.sql"' 'rb_gate postgres forced red'
+check "snapshot without globals.sql, red gate -> restored live, where the roles exist" "3 restored" "$rc $(data_ledger | awk -F, '{ print $NF }' | cut -d' ' -f2)"
+# In a throwaway: as before, without owners and grants, when the dumps name no other role.
+new_case roles_old_plain
+run_driver "$PG_MAIN_MINOR"
+rm "$(snapdir postgres)/globals.sql"
+restore_into "$(snapdir postgres)"
+check "snapshot without globals.sql, no other role named -> restores into a throwaway" "0 1" "$rc $(calls 'exec -i klai-datastore-rehearsal-postgres pg_restore -U klai --create --exit-on-error -d postgres --no-owner --no-acl')"
+roles_case roles_old_missing
+run_driver "$PG_MAIN_MINOR"
+rm "$(snapdir postgres)/globals.sql"
+restore_into "$(snapdir postgres)"
+check "snapshot without globals.sql naming another role -> fails, says why" "1 1" "$rc $(grep -c 'has no globals.sql' "$case_dir/out")"
 
 # --- S8b: the other engines --------------------------------------------------
 eng() { sed -n "s/^$2=//p" "$case_dir/fake/eng/$1"; }

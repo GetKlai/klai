@@ -150,3 +150,18 @@ async def test_retrieve_timeout_returns_failure() -> None:
 
     assert isinstance(result, RetrievalFailure)
     assert "timeout" in result.reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_retrieval_is_a_background_call_not_a_tenant_question() -> None:
+    """The nightly evaluation replays questions; retrieval-api counts only
+    purpose "chat" as a question of the tenant."""
+    transport = _MockTransport(status_code=200, json_body={"chunks": []})
+
+    from knowledge_ingest.eval.retrieval_client import retrieve_chunks
+
+    with patch("knowledge_ingest.eval.retrieval_client.settings", _make_settings()):
+        await retrieve_chunks("q", "org-1", None, _transport=transport)
+
+    assert transport.last_request is not None
+    assert json.loads(transport.last_request.content)["purpose"] == "background"

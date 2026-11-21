@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.enums import SyncStatus
+
 COMPLETED_REMOTE_CRAWL_STATUS = "completed"
 FAILED_REMOTE_CRAWL_STATUSES = frozenset({"failed", "failed_partial"})
 TERMINAL_REMOTE_CRAWL_STATUSES = FAILED_REMOTE_CRAWL_STATUSES | {COMPLETED_REMOTE_CRAWL_STATUS}
@@ -21,6 +23,12 @@ def is_failed_remote_crawl_status(status: str) -> bool:
     return status in FAILED_REMOTE_CRAWL_STATUSES
 
 
+def remote_crawl_coverage(live: dict[str, Any]) -> dict[str, Any] | None:
+    """The coverage object of a finished crawl, None for jobs from before it existed."""
+    coverage = live.get("coverage")
+    return coverage if isinstance(coverage, dict) else None
+
+
 def remote_crawl_documents_changed(live: dict[str, Any]) -> int | None:
     """Pages whose knowledge changed during the crawl, from the status payload.
 
@@ -29,6 +37,17 @@ def remote_crawl_documents_changed(live: dict[str, Any]) -> int | None:
     which the portal treats as "spend nothing on support reanalysis".
     """
     return live.get("pages_changed")
+
+
+def remote_crawl_failure_status(error: str) -> SyncStatus:
+    """The run status for a failed remote crawl.
+
+    ``login_required:`` means knowledge-ingest found the site's saved
+    session gone before the crawl. Only the owner can fix that by logging in again,
+    which is what AUTH_ERROR tells the portal. Both the resolver and the
+    reaper finalise runs, and a nightly run is usually finalised by the reaper.
+    """
+    return SyncStatus.AUTH_ERROR if error.startswith("login_required:") else SyncStatus.FAILED
 
 
 def remote_crawl_failure_error(live: dict[str, Any]) -> str:

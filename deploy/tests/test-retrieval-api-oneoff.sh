@@ -113,7 +113,7 @@ check "the second network is attached before start" \
 check "an override replaces the live value and the Sentry DSN is dropped" \
     bash -c 'grep -q "^RERANKER_CANDIDATES=60$" "$0" && ! grep -q "^RERANKER_CANDIDATES=20$" "$0" && ! grep -q "^SENTRY_DSN=" "$0" && grep -q "^FOO=bar$" "$0"' "$LAST_ENV_FILE"
 check "every model of the one-off's own LLM calls is the Vibe alias, whatever the live value" \
-    bash -c 'for k in COREFERENCE_MODEL GRAPHITI_LLM_MODEL SYNTHESIS_MODEL; do [ "$(grep -c "^$k=" "$0")" = 1 ] && grep -q "^$k=klai-ingest$" "$0" || exit 1; done' "$LAST_ENV_FILE"
+    bash -c 'for k in COREFERENCE_MODEL GRAPHITI_LLM_MODEL; do [ "$(grep -c "^$k=" "$0")" = 1 ] && grep -q "^$k=klai-ingest$" "$0" || exit 1; done' "$LAST_ENV_FILE"
 check "a caller cannot put a pinned model back on a shared key" \
     bash -c 'bash "$0" --name x --code /nonexistent --env COREFERENCE_MODEL=klai-fast 2>&1 | grep -q "fixed to klai-ingest"' "$SCRIPT"
 check "a healthy one-off is not removed" calls_lack "rm -f"

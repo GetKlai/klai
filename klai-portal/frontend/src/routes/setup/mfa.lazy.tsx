@@ -11,7 +11,7 @@ import { EmailOTPSetup } from './_components/-EmailOTPSetup'
 import { MfaMethodCard } from './_components/-MfaMethodCard'
 import { PasskeySetup } from './_components/-PasskeySetup'
 import { TOTPSetup } from './_components/-TOTPSetup'
-import { initialMfaPageState, mfaPageReducer } from './_components/-mfa-state'
+import { availableMfaMethods, initialMfaPageState, mfaPageReducer } from './_components/-mfa-state'
 
 export const Route = createLazyFileRoute('/setup/mfa')({
   component: SetupMFAPage,
@@ -25,6 +25,7 @@ function SetupMFAPage() {
 
   const mfaPolicy = currentUser?.mfa_policy ?? 'optional'
   const isRequired = mfaPolicy === 'required'
+  const methods = availableMfaMethods(mfaPolicy)
   const email = auth.user?.profile?.email as string ?? ''
 
   function redirectAfterSetup() {
@@ -89,14 +90,16 @@ function SetupMFAPage() {
           </div>
 
           <div className="space-y-3">
-            <MfaMethodCard
-              icon={<Fingerprint size={20} />}
-              title={m.setup_mfa_passkey_title()}
-              description={m.setup_mfa_passkey_description()}
-              recommended
-              selected={state.selectedMethod === 'passkey'}
-              onClick={() => dispatch({ type: 'selectMethod', method: 'passkey' })}
-            />
+            {methods.includes('passkey') && (
+              <MfaMethodCard
+                icon={<Fingerprint size={20} />}
+                title={m.setup_mfa_passkey_title()}
+                description={m.setup_mfa_passkey_description()}
+                recommended
+                selected={state.selectedMethod === 'passkey'}
+                onClick={() => dispatch({ type: 'selectMethod', method: 'passkey' })}
+              />
+            )}
             <MfaMethodCard
               icon={<Mail size={20} />}
               title={m.setup_mfa_email_title()}

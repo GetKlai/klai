@@ -14,10 +14,10 @@ from klai_kb_slugs import personal_kb_slug
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _load_org_or_500, require_product
+from app.api.dependencies import _load_org_or_500
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.permissions import UserPermissions, get_caller
+from app.core.permissions import UserPermissions, get_caller, require_product
 from app.services.access import get_accessible_kb_slugs
 
 logger = structlog.get_logger()
@@ -158,7 +158,8 @@ async def delete_personal_item(
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.delete(
             f"{settings.knowledge_ingest_url}/knowledge/v1/personal/items/{artifact_id}",
-            headers={"x-internal-secret": settings.knowledge_ingest_secret},
+            # knowledge-ingest asserts that user_id belongs to org_id before deleting.
+            headers={"x-internal-secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api"},
             params={
                 "org_id": org.zitadel_org_id,
                 "user_id": perms.user_id,

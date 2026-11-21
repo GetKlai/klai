@@ -16,7 +16,6 @@ from app.core.profiles import (
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.services.access import is_personal_kb
-from app.services.entitlements import get_effective_products
 
 
 async def get_kb_with_access(
@@ -75,30 +74,6 @@ async def get_kb_with_access(
     if is_personal_kb(kb) and kb.owner_user_id != perms.user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge base not found")
     return kb
-
-
-def require_product(product: str):
-    """Return a FastAPI dependency callable that raises 403 if user lacks the product.
-
-    SPEC-PORTAL-RBAC-001 v0.2.0: single-layer profile-driven check. The product
-    is granted iff (a) it is in the workspace features (plan + enabled add-ons)
-    AND (b) the user's profile rank meets FEATURE_MIN_PROFILE for that feature.
-    Both conditions are folded into get_effective_products. No admin bypass --
-    admin sits at the top of the rank ladder and passes any FEATURE_MIN_PROFILE
-    structurally.
-    """
-
-    async def dependency(
-        user_id: str = Depends(get_current_user_id),
-        db: AsyncSession = Depends(get_db),
-    ) -> None:
-        if product not in await get_effective_products(user_id, db):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Product not available: {product}",
-            )
-
-    return dependency
 
 
 async def _load_org_or_500(db: AsyncSession, org_id: int) -> PortalOrg:
@@ -177,6 +152,8 @@ async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]
         return set()
 
     user, org = row
+    if user.status != "active":
+        return set()
 
     # @MX:NOTE -- Admin-bypass: an admin role on any plan tier (including "chat")
     # receives the full "knowledge"-tier capability set. This is INTENTIONAL per

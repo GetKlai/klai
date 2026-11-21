@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuthOrService, checkKBAccess } from "@/lib/auth";
+import { callerMayAccessOrg, requireAuthOrService, checkKBAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { buildNavTree } from "@/lib/gitea";
 
@@ -22,7 +22,7 @@ export async function GET(
   if (kb.kb_type === "personal" || kb.visibility === "private") {
     const payload = await requireAuthOrService(request);
     if (!payload) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    if (payload.org_id && payload.org_id !== org.zitadel_org_id) {
+    if (!callerMayAccessOrg(payload, org)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const denied = checkKBAccess(kb, payload.sub);

@@ -10,17 +10,18 @@ Klai Docs consists of two layers:
 | **Backend + reader** | `klai-docs` | Render public KB pages + REST API for the editor |
 
 ```
-Browser (logged in to portal)
-    │  Zitadel Bearer token (via react-oidc-context)
+Browser (logged in to the portal, session cookie)
+    │  /api/docs/...  ← editor calls from the portal SPA
     ▼
-getklai.getklai.com/docs/api/...   ← API calls from portal SPA
-    │  Caddy → docs-app:3010
+portal-api BFF proxy  (klai-portal/backend/app/api/proxy.py)
+    │  X-Internal-Secret: <docs secret>
+    │  X-Klai-Verified-User-Id / Org-Id / Org-Slug
     ▼
-docs-app  (Next.js, basePath: /docs)
-    │  validateBearer() → Zitadel JWKS
+docs-app  (Next.js, port 3010, basePath: /docs)
+    │  requireOrgAccess() → docs secret + verified identity
     │  Gitea API for content CRUD
     ▼
-getklai.getklai.com/docs/{kb}/...  ← Public reader (SSR, no auth)
+acme.example.com/docs/{kb}/...  ← Public reader (SSR, no login)
 ```
 
 ---
@@ -29,35 +30,17 @@ getklai.getklai.com/docs/{kb}/...  ← Public reader (SSR, no auth)
 
 ### Editor (authenticated)
 
-The editor lives in the portal SPA (`klai-portal`). The portal already has a Zitadel OIDC session via `react-oidc-context`. When the editor makes an API call to docs-app:
+The editor lives in the portal SPA (`klai-portal`). The portal is a backend-for-frontend: the browser holds a session cookie, and portal-api keeps the Zitadel tokens server-side (`klai-portal/docs/auth-flows.md`). The editor calls docs-app through portal-api's proxy at `/api/docs/*` (`DOCS_BASE` in `klai-portal/frontend/src/lib/kb-editor/tree-utils.ts:5`). The proxy checks the session and the caller's membership, then forwards the request to `http://docs-app:3010/docs` with the docs secret and the portal-verified identity headers (`klai-portal/backend/app/api/proxy.py:148-197`). The reverse proxy answers 404 for docs-app's own `/docs/api/*` path, so the API is reached only through portal-api (`deploy/caddy/Caddyfile:504-510`).
 
-```typescript
-// In the portal SPA
-const token = auth.user?.access_token   // Zitadel Bearer token
+docs-app identifies a caller only with `X-Internal-Secret` equal to `DOCS_INTERNAL_SECRET`, compared in constant time (`klai-docs/lib/auth.ts:31-62`). With the secret, the `X-Klai-Verified-*` headers name the user and the one organisation the portal verified their membership of; a session token is not read, and a request without the secret identifies nobody.
 
-fetch('/docs/api/orgs/getklai/kbs', {
-  headers: { Authorization: `Bearer ${token}` }
-})
-```
+Service callers send the same secret with an `X-User-ID`, which `requireAuthOrService` accepts as the acting user (`klai-docs/lib/auth.ts:43-62`); portal-api's provisioning client uses this to create a tenant's repository. Org-scoped routes call `requireOrgAccess`, which identifies the caller and resolves the organisation from the slug in the path (`klai-docs/lib/auth.ts:101-120`), and personal KBs are limited to their creator by `checkKBAccess` (`klai-docs/lib/auth.ts:82-90`).
 
-docs-app validates this token directly against Zitadel's JWKS endpoint:
-
-```typescript
-// lib/auth.ts in docs-app
-const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/oauth/v2/keys`))
-
-const { payload } = await jwtVerify(token, JWKS, { issuer: ISSUER })
-// payload.sub = Zitadel user ID
-// payload["urn:zitadel:iam:user:resourceowner:id"] = Zitadel org ID
-```
-
-**Advantage:** no double login. The same session used by Chat, Scribe, and Focus works for Docs as well.
+**Advantage:** no double login. The portal session used for Chat and Scribe works for Docs as well.
 
 ### Public reader
 
-The reader (`getklai.getklai.com/docs/{kb}/...`) is a Next.js SSR page. There is currently no auth for private KBs in the reader — all KBs are accessible to anyone with the URL.
-
-**TODO:** for private KBs, the reader needs to validate the Zitadel session cookie. Approach: Zitadel sets a session cookie on `.getklai.com` after login. The reader reads this cookie and validates it via the Zitadel userinfo endpoint (`/oidc/v1/userinfo`).
+The reader (`acme.example.com/docs/{kb}/...`) is a Next.js SSR page without login. It serves only public KBs: a personal KB or a KB with `visibility = private` returns 404 (`klai-docs/app/(reader)/[...path]/page.tsx:116`).
 
 ---
 
@@ -120,7 +103,7 @@ klai-docs/
     (reader)/           ← Public KB reader (SSR, no auth)
       [...path]/
         page.tsx
-    api/                ← REST API (requires Bearer token)
+    api/                ← REST API (requires the docs secret)
       orgs/[org]/kbs/
         route.ts                      ← GET list KBs, POST create KB
         [kb]/
@@ -132,7 +115,7 @@ klai-docs/
           upload/route.ts             ← Upload .md file
           tree/route.ts               ← Nav tree (builds from _sidebar.yaml)
   lib/
-    auth.ts             ← Zitadel Bearer token validation (jose JWKS)
+    auth.ts             ← caller identity: docs secret with the portal's verified identity or a service user
     db.ts               ← PostgreSQL client (docs schema)
     gitea.ts            ← Gitea REST API client + nav tree builder
     markdown.ts         ← Frontmatter parse/serialize, _sidebar.yaml helpers, slugify

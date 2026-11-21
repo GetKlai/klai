@@ -34,7 +34,7 @@ from klai_chat_prompts.kb_modes import (
 )
 from klai_citations import normalise_source_url, render_evidence_context
 
-from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE
+from app.services.pasted_correspondence import MATERIAL_BRIEF, PASTED_CORRESPONDENCE_SCOPE
 
 _QUESTION_ECHO_MAX_CHARS = 150
 # A pasted FAQ list with dozens of unchecked questions would otherwise render
@@ -232,6 +232,7 @@ def internal_system_prompt(
     context_block: str = "",
     retrieval_failure: str = "",
     web_search_available: bool = False,
+    material: bool = False,
 ) -> str:
     """The internal chat's system message, composed the way the hook composed it.
 
@@ -241,6 +242,14 @@ def internal_system_prompt(
     one-line date after it. The pasted-correspondence contract sits between the two, where
     the hook's first prepend left it; a meta question never gets it, because
     the hook answered those before that prepend.
+
+    A ``material`` turn (pasted_correspondence.material_rules) gets the
+    material brief instead of that contract, never both: the four fixed
+    sections contradict the brief's "no fixed analysis format". On a turn that
+    searched (``chunks``, ``zero_chunks``) the caller closes the prompt with
+    the brief after the passage brief; here it takes the contract's place.
+    The zero-results notice is left out, because in Strict it tells the
+    writer to refuse the task the brief asks for.
     """
     if state == "meta":
         prefix_blocks = [META_CHAT_SYSTEM_PROMPT, templates_block]
@@ -256,13 +265,16 @@ def internal_system_prompt(
         tail = {
             "no_retrieval": [templates_block],
             "retrieval_failure": [templates_block, kb_retrieval_failure_notice(retrieval_failure)],
-            "zero_chunks": [templates_block, kb_zero_chunks_notice(kb_narrow)],
+            "zero_chunks": [templates_block, "" if material else kb_zero_chunks_notice(kb_narrow)],
             # The context block already carries the templates.
             "chunks": [context_block],
         }[state]
         prefix_blocks = [foundation, USER_PROVIDED_CONTENT_SCOPE, *tail]
     parts = ["\n\n".join(block for block in prefix_blocks if block)]
-    if pasted_correspondence and state != "meta":
+    if material:
+        if state not in ("meta", "chunks", "zero_chunks"):
+            parts.append(MATERIAL_BRIEF)
+    elif pasted_correspondence and state != "meta":
         parts.append(PASTED_CORRESPONDENCE_SCOPE)
     if original_system:
         parts.append(original_system)

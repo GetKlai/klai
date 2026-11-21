@@ -811,6 +811,15 @@
     // has a ceiling above is refused, because a second allowedVersions rule
     // replaces the first instead of adding to it.
     // ---------------------------------------------------------------------
+    {
+      description:
+        'Rolled back on core-01: Renovate must not propose these exact versions of glitchtip/glitchtip \
+        again; later releases still flow. Renovate never proposes a downgrade, so \
+        this entry can go once deploy/docker-compose.yml runs a newer version.',
+      matchDepNames: ['glitchtip/glitchtip'],
+      // 7.0.0: failed gate compose-up-verification on compose, run https://github.com/GetKlai/klai/actions/runs/43294644746, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
+      allowedVersions: '!/^v?(7\\.0\\.0)$/',
+    },
     // End of the rolled-back versions: scripts/renovate-revert-after-rollback.py inserts above this line.
   ],
 }

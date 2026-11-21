@@ -1,5 +1,7 @@
 # LiteLLM Provider Auth Failed
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 Alerts: `litellm_provider_auth_failed`, `mistral_workspace_unavailable`,
 `mistral_no_usable_key`, `mistral_api_probe_missing`
 
@@ -62,19 +64,19 @@ It logs one line per key per run (every 2 minutes) with `key_env`,
 latest probe runs see a key `full` or `error`. `mistral_no_usable_key`
 (critical) fires when no `MISTRAL_API_KEY*` key was `ok` in one run (any mix
 of `full` and `error` counts, as does `error=env_file_unreadable`, where the
-probe could not read `/opt/klai/.env`), so the chat aliases have no working
+probe could not read `.env` in the deploy directory), so the chat aliases have no working
 workspace left. Both route to
 `klai-ops-alerts-email` and repeat every hour until resolved.
 
 The probe also writes the per-key state to
-`/opt/klai/state/litellm/mistral-keys.json`, mounted read-only into the
+`state/litellm/mistral-keys.json` in the deploy directory, mounted read-only into the
 `litellm` container as `/app/state/mistral-keys.json`. The
 `klai_mistral_pool` hook never offers a key that file calls `full`, so while
 one workspace is full no user request has to fail on it first. A 402 on a real
 request benches the key at once as well, until a later probe run says `ok`.
 
 ```bash
-cat /opt/klai/state/litellm/mistral-keys.json
+cat state/litellm/mistral-keys.json
 # {"generated_at": "...", "keys": {"<fingerprint>": {"state": "full", "since": "...", "http_status": 402}, ...}}
 ```
 
@@ -96,18 +98,17 @@ LiteLLM keeps the last verdict in the state file however old it gets, so a
 key the file calls full stays off until the probe runs again; a 402 on a
 real request still benches a key for 5 minutes. Check
 `systemctl status mistral-api-probe.timer mistral-api-probe.service`,
-`/opt/klai/logs/mistral-api-probe.log`, Alloy and VictoriaLogs.
+`logs/mistral-api-probe.log` in the deploy directory, Alloy and VictoriaLogs.
 
 ## Probe unit
 
-`deploy-compose.yml` syncs the script to `/opt/klai/scripts/` and stages the
-unit and timer in `/opt/klai/systemd/`, but it runs no `systemctl` (no sudo).
+`deploy-compose.yml` syncs the script to `scripts/` and stages the
+unit and timer in `systemd/` (both in the deploy directory), but it runs no `systemctl` (no sudo).
 Activating them, or picking up a changed unit file, is manual:
 
 ```bash
-ssh core-01
-sudo ln -sf /opt/klai/systemd/mistral-api-probe.service /etc/systemd/system/mistral-api-probe.service
-sudo ln -sf /opt/klai/systemd/mistral-api-probe.timer   /etc/systemd/system/mistral-api-probe.timer
+sudo ln -sf "$PWD/systemd/mistral-api-probe.service" /etc/systemd/system/mistral-api-probe.service
+sudo ln -sf "$PWD/systemd/mistral-api-probe.timer"   /etc/systemd/system/mistral-api-probe.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now mistral-api-probe.timer
 systemctl show mistral-api-probe.service -p TimeoutStartUSec   # expect 1min
@@ -129,7 +130,7 @@ old 30 s timeout until then.
 3. Recreate LiteLLM so the corrected environment is loaded:
 
    ```bash
-   /opt/klai/scripts/compose-up.sh --force-recreate litellm
+   scripts/compose-up.sh --force-recreate litellm
    ```
 
 4. Confirm the error stopped:

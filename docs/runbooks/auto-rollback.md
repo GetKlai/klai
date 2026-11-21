@@ -1,5 +1,7 @@
 # Automatic rollback
 
+> Server paths are relative to the deploy directory of the host named in the step (core-01 or public-01). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 Alerts: `auto_rollback_event`, `rollback_rehearsal_missing`,
 `datastore_restore_rehearsal_missing`, `public01_infra_deploy_rollback`,
 `public01_infra_deploy_silent` (all `severity=critical`). Spec:
@@ -7,9 +9,9 @@ SPEC-INFRA-AUTO-ROLLBACK-001.
 
 `deploy-with-rollback.sh` (one service image) and `compose-rollback.sh` (the
 compose and config sync) put the previous state back when a deploy gate goes
-red. Each writes a report to `/opt/klai/deploy-reports/<service>.json`
+red. Each writes a report to `deploy-reports/<service>.json`
 (`compose.json` for the sync), the container log next to it as `.log`, a line
-in the ledger `/opt/klai/deploy-ledger.log`, and, for a rollback, an
+in the ledger `deploy-ledger.log` (both in the core-01 deploy directory), and, for a rollback, an
 `auto_rollback` event line that Alloy ships to VictoriaLogs.
 
 ## A deploy was rolled back
@@ -24,7 +26,7 @@ The mail names the service, the failed gate and the outcome.
 - `rollback_failed`: the previous version did not hold either, or there was no
   previous image. Production may be broken. The issue is labelled
   `rollback-failed`. On core-01 read `<service>.json` and `<service>.log` in
-  `/opt/klai/deploy-reports/`, then `docker compose ps <service>` and decide:
+  `deploy-reports/` of the deploy directory, then `docker compose ps <service>` and decide:
   restore by hand (`docker tag klai/<service>:previous <compose tag>`, then
   `compose-up.sh --no-pull --force-recreate <service>`) or fix and redeploy.
   Images that migrate their own database (Twenty, LiteLLM, GlitchTip, Zitadel)
@@ -50,7 +52,7 @@ rollback.
 ## A data store rollback failed
 
 An image change of a data store (Postgres, Qdrant, Meilisearch, Mongo, Redis,
-FalkorDB, Garage, RabbitMQ) is snapshotted into `/opt/klai/backups/pre-<store>-<time>/`
+FalkorDB, Garage, RabbitMQ) is snapshotted into `backups/pre-<store>-<time>/` in the deploy directory
 before the compose sync replaces any file (`datastore-rollback.sh`), and the
 new image of a store is proven on a copy first (the shadow, above). Then the
 gate `datastore-cutover`, right after the compose file is replaced, takes a
@@ -113,7 +115,7 @@ before it changes anything, with the server's answer in the log.
 
 ## Proving the shadow on production (dry flag)
 
-`echo <store> > /opt/klai/.datastore-dry` on core-01, then merge any patch
+`echo <store> > .datastore-dry` in the deploy directory on core-01, then merge any patch
 bump of that store. The sync takes the real snapshot, runs the real shadow
 and then forces it red: the run ends `shadow_failed` with gate
 `datastore-shadow-dry`, the live store, its consumers and the files stay as
@@ -146,18 +148,18 @@ every 10 minutes, script in the private klai-infra repo) applies klai-infra
 `public-01/` from main. Before installing it copies every file to `<file>.prev`;
 when the post-apply checks fail (Kuma healthy, Alloy running, getklai.com and
 status.getklai.com answering) it puts them back, brings the stack up, checks
-again and writes the revision to `/opt/klai/.infra-bad-rev`. No later run
+again and writes the revision to `.infra-bad-rev` in the public-01 deploy directory. No later run
 reapplies that revision; a newer one on main is tried normally. The mail names
 the revision, the failed gate and the outcome. The line is
-`public01_infra_deploy_rollback`, from `/opt/klai/logs/infra-deploy.log` via
+`public01_infra_deploy_rollback`, from `logs/infra-deploy.log` in the public-01 deploy directory via
 public-01's Alloy (`service:infra-deploy`).
 
 - `rolled_back`: the previous files serve again. Nothing is broken now. Fix the
   revision forward in klai-infra; the next revision deploys by itself.
 - `rollback_failed`: the previous files failed the checks too. Treat the site,
-  status page and Uptime Kuma as possibly down: `ssh` to public-01,
-  `docker compose ps` in `/opt/klai/public` and `/opt/klai/alloy`, read
-  `tail -n 20 /opt/klai/logs/infra-deploy.log` and `journalctl -t infra-deploy`.
+  status page and Uptime Kuma as possibly down: on public-01,
+  `docker compose ps` in `public/` and `alloy/` of the deploy directory, read
+  `tail -n 20 logs/infra-deploy.log` and `journalctl -t infra-deploy`.
   The `.prev` files sit next to the installed ones.
 - Not rolled back: Uptime Kuma's own database after a Kuma image migration. The
   nightly backup (`docs/runbooks/uptime-kuma.md#backup-and-restore` in
@@ -173,7 +175,7 @@ or `skipped_bad_rev`) reached VictoriaLogs for 2 hours
 (`public01_infra_deploy_silent`); lines with outcome `failed` or
 `validation_failed` are not counted. `deploy-infra.sh`
 writes one every run, so silence is one of three things: the cron stopped, Alloy
-stopped shipping `/opt/klai/logs/infra-deploy.log` (the Alloy container must
-mount `/opt/klai/logs`), or every run fails before it finishes, which logs
+stopped shipping `logs/infra-deploy.log` (the Alloy container must
+mount the `logs/` directory of the deploy directory), or every run fails before it finishes, which logs
 `failed` or `validation_failed` with the failing `gate`. The three checks, in
 order, are in the alert description.

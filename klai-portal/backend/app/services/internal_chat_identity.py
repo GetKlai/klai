@@ -5,7 +5,8 @@ claim made by the org's own LibreChat server, so it is only ever looked up
 inside that org: the tenant is set before the first ``portal_users`` select,
 both selects also filter on ``org_id`` (``portal_users`` RLS is permissive
 when no tenant is set), and the Mongo lookup reads the org's own LibreChat
-database. Every failure raises; there is no anonymous fallback.
+database. Only an active member resolves. Every failure raises; there is no
+anonymous fallback.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ async def resolve_librechat_user(
     )
     user = result.scalar_one_or_none()
     if user is not None:
-        return user
+        return _active(user)
 
     if not settings.librechat_mongo_root_uri:
         logger.warning("KB authz: LIBRECHAT_MONGO_ROOT_URI not set — fail-closed for user %s", librechat_user_id)
@@ -89,9 +90,17 @@ async def resolve_librechat_user(
         logger.warning("KB authz: no portal user for zitadel_user_id %s — fail-closed", zitadel_user_id)
         raise LibreChatIdentityError
 
+    _active(user)
     if remember:
         user.librechat_user_id = librechat_user_id
         await db.commit()
+    return user
+
+
+def _active(user: PortalUser) -> PortalUser:
+    if user.status != "active":
+        logger.warning("KB authz: portal user %s is %s in this org — fail-closed", user.zitadel_user_id, user.status)
+        raise LibreChatIdentityError
     return user
 
 

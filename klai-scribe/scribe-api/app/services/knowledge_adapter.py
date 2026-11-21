@@ -35,7 +35,7 @@ async def ingest_scribe_transcript(
     payload = {
         "org_id": org_id,
         "kb_slug": kb_slug,
-        "path": f"scribe/{transcription.id}",
+        "path": _artifact_path(transcription.id),
         "content": full_text,
         "title": transcription.name or "Untitled recording",
         "source_type": "connector",
@@ -66,6 +66,29 @@ async def ingest_scribe_transcript(
         resp.raise_for_status()
         data = resp.json()
         return data.get("artifact_id", "")
+
+
+async def delete_scribe_transcript(org_id: str, transcription_id: str) -> None:
+    """Delete the transcript from every knowledge base it was added to.
+
+    Scribe does not record which knowledge bases a transcript went into, so
+    knowledge-ingest deletes it by path across the whole organisation.
+    Raises on any failure so the caller keeps its own record and can retry.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.delete(
+            f"{settings.knowledge_ingest_url}/ingest/v1/document",
+            params={"org_id": org_id, "path": _artifact_path(transcription_id)},
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                "X-Caller-Service": "scribe",
+            },
+        )
+        resp.raise_for_status()
+
+
+def _artifact_path(transcription_id: str) -> str:
+    return f"scribe/{transcription_id}"
 
 
 def _detect_content_type(transcription) -> str:

@@ -65,6 +65,7 @@ def _make_db_with_user(plan: str, role: str = "personal") -> AsyncMock:
     mock_user = MagicMock()
     mock_user.role = role
     mock_user.org_id = 1
+    mock_user.status = "active"
     mock_result = MagicMock()
     mock_result.one_or_none.return_value = (mock_user, mock_org)
     mock_db.execute.return_value = mock_result

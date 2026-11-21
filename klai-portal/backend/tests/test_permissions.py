@@ -81,6 +81,7 @@ def _row(
     user.zitadel_user_id = "uid-test"
     user.org_id = org_id
     user.id = 42
+    user.status = "active"
     user.seat_type = seat_type if seat_type is not None else str(suggest_seat(role))
     return user_pair(org, user)
 

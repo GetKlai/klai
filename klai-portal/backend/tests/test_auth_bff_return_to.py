@@ -33,6 +33,26 @@ from app.api.auth_bff import _client_ip, _safe_return_to
         ("https://evil.example.net", "/app"),
         ("javascript:alert(1)", "/app"),  # no leading /
         ("", "/app"),
+        ("/app?next=https://evil.example.net", "/app"),
+        ("/oauth/authorize-other?next=https%3A%2F%2Fevil.example.net", "/app"),
+        # The MCP consent request may carry the client's redirect_uri in its query.
+        (
+            "/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A54321%2Fcallback",
+            "/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A54321%2Fcallback",
+        ),
+        # A return target with control characters, a trailing space or a backslash in its path is refused.
+        ("/\t/evil.example.net", "/app"),
+        ("/app\n", "/app"),
+        ("/app%0d", "/app"),
+        ("/oauth/authorize?state=a\rb", "/app"),
+        ("/app\x00", "/app"),
+        ("/app\x7f", "/app"),
+        ("/app ", "/app"),
+        ("/app\\settings", "/app"),
+        ("/oauth/authorize\\x?state=a", "/app"),
+        ("/app?q=a\\\\b", "/app"),
+        # The consent request's query may carry backslashes; only its path is checked for them.
+        ("/oauth/authorize?state=a\\\\b", "/oauth/authorize?state=a\\\\b"),
         # Legitimate paths → unchanged ORIGINAL value (REQ-21.3)
         ("/app/dashboard", "/app/dashboard"),
         ("/app/dashboard?foo=bar%20baz", "/app/dashboard?foo=bar%20baz"),

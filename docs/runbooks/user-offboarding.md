@@ -1,7 +1,9 @@
 # User Offboarding — Admin Workflow
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > Covers: SPEC-PORTAL-KB-OWNERSHIP-001 — admin disposition wizard for KB-owning
-> users, auto-revoke of API keys + MCP tokens, irreversible by design.
+> users, hand-over of API keys, auto-revoke of MCP tokens, irreversible by design.
 > Related runbook: `tenant-delete.md` (workspace-level delete, separate flow).
 
 ## When to use which lifecycle action
@@ -9,7 +11,7 @@
 | Action | Effect | When to use |
 |---|---|---|
 | **Suspend** | Account locked, all data + memberships preserved. Reversible via Reactivate. | Temporary leave, password reset, suspected compromise pending investigation. |
-| **Offboard** | Permanent. KBs transferred or purged per admin choice; API keys + MCP tokens revoked; Zitadel deactivated; GitHub org-membership removed. **Personal KBs are deleted immediately and cannot be restored.** | Permanent departure from the workspace. |
+| **Offboard** | Permanent. KBs transferred or purged per admin choice; API keys handed to an admin of your choice and keep working; MCP tokens revoked; Zitadel deactivated; GitHub org-membership removed. **Personal KBs are deleted immediately and cannot be restored.** | Permanent departure from the workspace. |
 | **Reactivate** | Flips suspended → active. | Bring a previously-suspended user back. |
 
 > **If you are not 100% sure the user is leaving permanently, suspend instead of
@@ -27,9 +29,13 @@ to the lifecycle section → click **Offboard**.
 The offboard wizard fetches `GET /api/admin/users/{id}/offboard-preview` and
 renders three sections:
 
-- **Toegangstokens worden automatisch ingetrokken** (info banner) — number of
-  partner API keys + active MCP tokens that will be revoked. Always
-  auto-handled, no admin choice needed.
+- **Nieuwe eigenaar van de API-keys** (only when the user created partner API
+  keys) — the keys keep working and move to the admin picked here; the
+  default is the offboarding admin, and only active admins are offered,
+  because only admins can manage API keys. The person leaving may still know
+  the keys, so replace a key when that matters.
+- **MCP-tokens worden automatisch ingetrokken** (info banner) — number of
+  active MCP tokens that will be revoked. No admin choice needed.
 - **Team-kennisbanken (N)** — every org-owned KB the user is the SOLE owner of
   (creator + no other explicit owner-role grant). Each KB has a per-row
   disposition picker.
@@ -54,17 +60,21 @@ Click **Offboard**. The backend:
 1. Validates that EVERY KB in the preview has a matching disposition. Missing
    slugs return 400 with `error_code: missing_kb_dispositions` and the explicit
    list — the wizard surfaces these inline.
-2. Applies the dispositions inside the offboard DB transaction.
-3. Auto-revokes API keys (DELETE FROM `partner_api_keys` WHERE created_by =
-   target) and soft-revokes MCP tokens (UPDATE `portal_mcp_tokens` SET
+2. Checks the new owner of the API keys (`api_keys_transfer_to`, default the
+   acting admin): an active admin of this organisation who is not the person
+   leaving, otherwise 400 with an `error_code` and nothing changes.
+3. Applies the dispositions inside the offboard DB transaction.
+4. Hands the API keys over (UPDATE `partner_api_keys` SET created_by =
+   recipient WHERE created_by = target, after dropping their access rows on
+   personal KBs) and soft-revokes MCP tokens (UPDATE `portal_mcp_tokens` SET
    revoked_at = NOW() WHERE user_id = target's portal_users.id AND revoked_at
    IS NULL).
-4. Deletes group memberships (org-scoped, SEC-TENANT-001 invariant) and the
+5. Deletes group memberships (org-scoped, SEC-TENANT-001 invariant) and the
    cases the internal chat kept for the user's conversations
    (`internal_chat_cases`, also on a hard user delete).
-5. Flips `portal_users.status = 'offboarded'`, emits `user.offboarded` audit.
-6. Commits the transaction.
-7. Post-commit: deactivates the user in Zitadel, removes them from the GitHub
+6. Flips `portal_users.status = 'offboarded'`, emits `user.offboarded` audit.
+7. Commits the transaction.
+8. Post-commit: deactivates the user in Zitadel, removes them from the GitHub
    org if linked.
 
 A successful offboard returns 200 with `{message: "User <id> offboarded."}` and
@@ -80,7 +90,7 @@ Audit-log entries to look for in the portal_audit_log (or VictoriaLogs
 | `kb.transferred` | Per org-KB transfer disposition. Details include `from_user`, `to_user`, `kb_slug`, `reason='offboarding'`. |
 | `kb.admin_deleted` | Per org-KB delete disposition during offboarding. Details include `previous_owner`, `kb_slug`, `reason='offboarding'`. |
 | `kb.personal_purged_on_offboard` | Per personal-KB purge. Details include `previous_owner`, `kb_slug`, `target_user_id`. |
-| `user.offboarded` | One per offboard. Details include `kb_dispositions_count`, `api_keys_deleted`, `mcp_tokens_revoked`. |
+| `user.offboarded` | One per offboard. Details include `kb_dispositions_count`, `api_keys_transferred`, `api_keys_transferred_to`, `mcp_tokens_revoked`. |
 
 VictoriaLogs structlog mirrors carry the same field set under the same event
 names (e.g. `event:kb_transferred`, `event:user_offboarded`).
@@ -100,10 +110,15 @@ transfer a personal KB anyway (manual API call, browser devtools), the
 backend refuses with 400 / REQ-2.4. Personal data stays personal — no
 admin-pad to share a colleague's private KB.
 
-### "transfer_to user <id> is not a member of this org"
+### `transfer_recipient_not_member` / `transfer_recipient_not_active`
 The receiving user is either not in your tenant, has been deleted, or has
 status != active. Pick a different receiver from the dropdown — only
-active+invite-accepted org-members appear as options.
+active+invite-accepted org-members appear as options. The same codes apply to
+the new owner of the API keys.
+
+### `api_keys_recipient_not_admin` / `api_keys_recipient_is_leaving_user`
+The new owner of the API keys must be an admin, because only admins can
+manage API keys, and cannot be the person who is leaving.
 
 ### Disposition transaction rolls back mid-offboard
 Any failure inside `apply_dispositions` (docs-app down, knowledge-ingest
@@ -118,8 +133,7 @@ can still log in until manually deactivated. This is the documented "DB-side
 offboarded, IdP-side still active" state. Manual fix:
 
 ```bash
-# As ops on core-01
-ssh core-01
+# As ops, on core-01
 # Verify the gap:
 docker exec klai-core-postgres-1 psql -U $POSTGRES_USER -d $POSTGRES_DB \
   -c "SELECT zitadel_user_id, status FROM portal_users WHERE zitadel_user_id = '<id>';"

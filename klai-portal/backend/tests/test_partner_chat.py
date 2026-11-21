@@ -85,6 +85,7 @@ def test_llm_request_body_carries_the_feature_tag():
         tools=None,
         tool_choice=None,
         delegated_org_id=None,
+        max_tokens=2000,
     )
 
     assert body["metadata"]["tags"] == ["portal:partner-chat-answer"]
@@ -953,6 +954,7 @@ async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
+    settings.chat_writer_max_tokens = 2000
 
     body = await held_reply_body(
         profile=ChatProfile(surface="internal", kb_mode="open"),
@@ -1012,6 +1014,7 @@ async def test_streaming_refusal_language_follows_visitor_not_rewritten_query(mo
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
+    settings.chat_writer_max_tokens = 2000
 
     chunks = await streamed_reply_frames(
         profile=ChatProfile(surface="internal", kb_mode="open"),
@@ -1055,14 +1058,23 @@ def test_chunk_source_url_reads_nested_chunk_source_urls():
     assert _chunk_source_url(chunks[1]) == "https://getklai.com/dpa"
 
 
+def test_a_chunk_with_an_unparseable_address_has_no_source_url():
+    """A stored address with an unclosed bracket must not fail the turn: the chunk simply has no usable source URL."""
+    from app.services.chat_sources import _chunk_source_url
+
+    chunk = {"source_url": "http://[IP-adres", "metadata": {"url": "https://help.example.com/menu"}}
+
+    assert _chunk_source_url(chunk) == "https://help.example.com/menu"
+
+
 def test_placeholder_source_paths_are_not_valid_urls():
     """Source guards must reject browser-resolved placeholder paths like /undefined."""
-    from app.services.chat_sources import _normalise_guard_url
+    from app.services.chat_sources import normalise_source_url
 
-    assert _normalise_guard_url("undefined") == ""
-    assert _normalise_guard_url("https://getklai.com/undefined") == ""
-    assert _normalise_guard_url("https://getklai.com/null") == ""
-    assert _normalise_guard_url("https://getklai.com/none?x=1") == ""
+    assert normalise_source_url("undefined") == ""
+    assert normalise_source_url("https://getklai.com/undefined") == ""
+    assert normalise_source_url("https://getklai.com/null") == ""
+    assert normalise_source_url("https://getklai.com/none?x=1") == ""
 
 
 def test_build_system_prompt_includes_widget_system_prompt():

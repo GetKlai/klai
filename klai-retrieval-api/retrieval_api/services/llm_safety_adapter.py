@@ -52,14 +52,3 @@ def check_coreference_output(text: str, *, query: str) -> SafetyDecision:
             locale_hint=identify_text_language(query),
         )
     )
-
-
-def check_synthesis_context(text: str, *, query: str) -> SafetyDecision:
-    return check_text(
-        SafetyRequest(
-            text=text,
-            phase=SafetyPhase.CONTEXT,
-            surface=SafetySurface.RETRIEVAL_SYNTHESIS,
-            locale_hint=identify_text_language(query),
-        )
-    )

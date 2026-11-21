@@ -16,12 +16,14 @@ job pass by skipping everything.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
+import asyncpg
 import pytest
 import pytest_asyncio
 import redis
@@ -257,3 +259,110 @@ async def contract(request: pytest.FixtureRequest) -> AsyncIterator[Contract]:
         await graphiti.close()
         await probe.aclose()
         monkeypatch.undo()
+
+
+@pytest.fixture
+def graph_helpers(contract: Contract, monkeypatch: pytest.MonkeyPatch) -> Contract:
+    """``contract``, with knowledge_ingest.graph's helpers pointed at its tenant graph."""
+    from knowledge_ingest import graph as graph_module
+
+    monkeypatch.setattr(settings, "graphiti_enabled", True)
+    monkeypatch.setattr(graph_module, "_get_graphiti", lambda: contract.graphiti)
+    return contract
+
+
+async def seed_graph(contract: Contract, episodes: list[str], edges: dict[str, list[str]]) -> None:
+    """Store episodes, and per ``edges`` key one fact edge citing the listed episodes.
+
+    Every edge gets its own two entities, each mentioned by every existing
+    episode the edge cites: graphiti's shape, where an extracted fact's
+    endpoints are mentioned by the episode it came from. A cited uuid without
+    an Episodic node is how an edge outlives its episode.
+    """
+    driver = contract.graphiti.driver.clone(database=contract.group_id)
+    await driver.execute_query(
+        "UNWIND $uuids AS u CREATE (:Episodic {uuid: u, group_id: $g})",
+        uuids=episodes,
+        g=contract.group_id,
+    )
+    for edge, cited in edges.items():
+        await driver.execute_query(
+            "CREATE (a:Entity {uuid: $a, group_id: $g, name: $a})"
+            "-[:RELATES_TO {uuid: $edge, group_id: $g, episodes: $cited, fact: $edge}]->"
+            "(b:Entity {uuid: $b, group_id: $g, name: $b}) "
+            "WITH a, b UNWIND $cited AS c MATCH (e:Episodic {uuid: c}) "
+            "CREATE (e)-[:MENTIONS]->(a), (e)-[:MENTIONS]->(b)",
+            a=f"{edge}-source",
+            b=f"{edge}-target",
+            edge=edge,
+            cited=cited,
+            g=contract.group_id,
+        )
+
+
+async def stored_graph(contract: Contract) -> tuple[set[str], dict[str, list[str]], set[str]]:
+    """(episode uuids, edge uuid -> cited episodes, entity uuids) as stored."""
+    driver = contract.graphiti.driver.clone(database=contract.group_id)
+    records, _, _ = await driver.execute_query("MATCH (e:Episodic) RETURN collect(e.uuid) AS uuids")
+    episodes = set(records[0]["uuids"])
+    records, _, _ = await driver.execute_query(
+        "MATCH ()-[r:RELATES_TO]->() RETURN r.uuid AS uuid, r.episodes AS episodes"
+    )
+    edges = {row["uuid"]: sorted(row["episodes"] or []) for row in records}
+    records, _, _ = await driver.execute_query("MATCH (n:Entity) RETURN collect(n.uuid) AS uuids")
+    return episodes, edges, set(records[0]["uuids"])
+
+
+_PG_DSN = os.environ.get("GRAPH_REFRESH_BUDGET_TEST_DSN")
+
+
+@pytest_asyncio.fixture
+async def tenant_rows(graph_helpers: Contract):
+    """A real Postgres connection scoped to the contract's org, plus a row inserter.
+
+    Tests that combine the graph with the artifact rows need both stores; the
+    graph-contract CI job provides Postgres through ``GRAPH_REFRESH_BUDGET_TEST_DSN``.
+    """
+    if not _PG_DSN:
+        if _REQUIRED:
+            pytest.fail("GRAPH_REFRESH_BUDGET_TEST_DSN is required with GRAPH_CONTRACT_REQUIRED=1")
+        pytest.skip("GRAPH_REFRESH_BUDGET_TEST_DSN is not configured")
+    org_id = graph_helpers.group_id
+    conn = await asyncpg.connect(_PG_DSN)
+    await conn.execute("SELECT set_config('app.current_org_id', $1, false)", org_id)
+
+    async def insert(
+        extra: dict,
+        *,
+        active: bool,
+        superseded_by: str | None = None,
+        path: str = "page",
+        source_ref: str | None = None,
+    ) -> str:
+        artifact_id = str(uuid.uuid4())
+        if source_ref:
+            extra = {**extra, "source_connector_id": "connector-1", "source_ref": source_ref}
+        await conn.execute(
+            """
+            INSERT INTO knowledge.artifacts (
+                id, org_id, provenance_type, assertion_mode, belief_time_start,
+                belief_time_end, superseded_by, created_at, kb_slug, path, extra
+            ) VALUES ($1, $2, 'observed', 'factual', 1, $3, $4, 1, 'docs', $5, $6::jsonb)
+            """,
+            artifact_id,
+            org_id,
+            253402300800 if active else 2,
+            superseded_by,
+            path,
+            json.dumps(extra),
+        )
+        return artifact_id
+
+    try:
+        yield conn, insert
+    finally:
+        await conn.execute(
+            "UPDATE knowledge.artifacts SET superseded_by = NULL WHERE org_id = $1", org_id
+        )
+        await conn.execute("DELETE FROM knowledge.artifacts WHERE org_id = $1", org_id)
+        await conn.close()

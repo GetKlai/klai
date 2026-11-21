@@ -1,12 +1,12 @@
 """Platform-admin endpoint for per-org widget_messages retention overrides.
 
 SPEC-CHAT-QUALITY-LOOP-001 open item #2: the global default
-(``settings.widget_messages_retention_days``, 7 days) applies to every
-tenant unless Klai staff set a longer per-org window — e.g. Voys keeps
-conversations 90 days so customers can be contacted. Purge behaviour at the
-end of the term is unchanged (app/services/widget_messages_retention.py):
-messages deleted and contact details cleared; the conversation row itself is kept, judge reasoning nulled, reviews keep
-their snapshots.
+(``settings.widget_messages_retention_days``, 90 days) applies to every
+tenant unless Klai staff set another per-org window (1 to 365 days). At the
+end of the term (app/services/widget_messages_retention.py) messages are
+deleted, the visitor's contact details, first question and hashes are cleared
+and judge reasoning is nulled; the conversation row itself is kept and reviews
+keep their snapshots.
 
 Endpoints:
     GET   /api/admin/orgs/{slug}/widget-retention — read the current override

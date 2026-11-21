@@ -3,8 +3,8 @@
 // Per the "File organization for shared types and helpers" rule
 // (.claude/rules/klai/projects/portal-frontend.md).
 //
-// These two components are pure functions of their props (no internal
-// state, no side effects). They render the structured feedback for the
+// These two components are pure functions of their props (AuthProbeFeedback
+// only writes the raw probe output to the debug log). They render the structured feedback for the
 // wizard's two probe outcomes:
 //   - AuthProbeFeedback: REQ-2 - auth-probe classification + reasons.
 //   - PreviewClassificationFeedback: REQ-3 - preview-pipeline judgement.
@@ -12,7 +12,9 @@
 // Both are tested directly via __tests__/wizard-feedback.test.tsx (no
 // router/query-client setup required).
 
+import { useEffect } from 'react'
 import { Alert } from '@/components/ui/alert'
+import { adminLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 import type { AuthProbeResult, PreviewClassification } from './-connector-types'
 
@@ -21,6 +23,18 @@ import type { AuthProbeResult, PreviewClassification } from './-connector-types'
  * Shared by add-connector and edit-connector flows.
  */
 export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
+  // Raw detector output means nothing to a user; it stays in the debug log.
+  useEffect(() => {
+    adminLogger.debug('auth probe', {
+      classification: result.classification,
+      match_reasons: result.match_reasons,
+    })
+  }, [result])
+
+  return <AuthProbeVerdict result={result} />
+}
+
+function AuthProbeVerdict({ result }: { result: AuthProbeResult }) {
   if (result.classification === 'auth_ok') {
     return (
       <Alert variant="success" size="sm">
@@ -28,16 +42,13 @@ export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
       </Alert>
     )
   }
-  const reasons = result.match_reasons.length > 0
-    ? ` ${m.admin_connectors_webcrawler_auth_probe_detected({ reasons: result.match_reasons.join(', ') })}`
-    : ''
   let message: string
   switch (result.classification) {
     case 'auth_failed_no_cookies':
       message = m.admin_connectors_webcrawler_auth_probe_no_cookies()
       break
     case 'auth_failed_still_walled':
-      message = `${m.admin_connectors_webcrawler_auth_probe_still_walled()}${reasons}`
+      message = m.admin_connectors_webcrawler_auth_probe_still_walled()
       break
     case 'auth_failed_credentials_invalid':
       message = m.admin_connectors_webcrawler_auth_probe_credentials_invalid()
@@ -46,7 +57,7 @@ export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
       message = m.admin_connectors_webcrawler_auth_probe_unreachable()
       break
     default:
-      message = `${m.admin_connectors_webcrawler_auth_probe_failed()}${reasons}`
+      message = m.admin_connectors_webcrawler_auth_probe_failed()
   }
   return (
     <Alert variant="warning" size="sm">

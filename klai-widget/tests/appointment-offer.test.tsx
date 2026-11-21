@@ -14,7 +14,7 @@ import { render, fireEvent, cleanup } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MessageList } from "../src/components/MessageList";
-import { normalizeEscalation } from "../src/api/chat-stream";
+import { normalizeEscalation, resolveBookingUrl } from "../src/api/chat-stream";
 import type { Message } from "../src/api/chat-stream";
 import { t } from "../src/i18n/labels";
 
@@ -31,13 +31,16 @@ const PLAIN: Message = {
   content: "Je reset het wachtwoord via Instellingen > Beveiliging.",
 };
 
-function renderList(messages: Message[], onAppointment?: () => void) {
+const CONFIG_URL = "https://booking.example.com/default";
+
+function renderList(messages: Message[], onAppointment?: (url: string) => void, bookingUrl = CONFIG_URL) {
   return render(() => (
     <MessageList
       messages={messages}
       isStreaming={false}
       error={null}
       onAppointment={onAppointment}
+      bookingUrl={bookingUrl}
     />
   ));
 }
@@ -51,7 +54,23 @@ describe("appointment offer button", () => {
     expect(button.tagName).toBe("BUTTON");
 
     fireEvent.click(button);
-    expect(onAppointment).toHaveBeenCalledTimes(1);
+    expect(onAppointment).toHaveBeenCalledWith(CONFIG_URL);
+  });
+
+  it("opens the link of the route the reply is about, not the config's", () => {
+    const onAppointment = vi.fn();
+    const message: Message = {
+      ...OFFER,
+      escalation: { appointment: true, booking_url: "https://booking.example.com/sales" },
+    };
+    const { getByText } = renderList([message], onAppointment);
+    fireEvent.click(getByText(t().bookingButton));
+    expect(onAppointment).toHaveBeenCalledWith("https://booking.example.com/sales");
+  });
+
+  it("renders nothing when neither the reply nor the config has a link", () => {
+    const { queryByText } = renderList([OFFER], vi.fn(), "");
+    expect(queryByText(t().bookingButton)).toBeNull();
   });
 
   it("renders nothing when the answer carries no signal", () => {
@@ -81,9 +100,23 @@ describe("appointment offer button", () => {
   });
 });
 
+describe("resolveBookingUrl", () => {
+  it("prefers the reply, falls back to the config, drops anything not absolute http(s)", () => {
+    const reply = { appointment: true, booking_url: "https://booking.example.com/a" };
+    expect(resolveBookingUrl(reply, CONFIG_URL)).toBe("https://booking.example.com/a");
+    expect(resolveBookingUrl({ appointment: true }, CONFIG_URL)).toBe(CONFIG_URL);
+    expect(resolveBookingUrl({ appointment: true, booking_url: "javascript:alert(1)" }, CONFIG_URL)).toBe(CONFIG_URL);
+    expect(resolveBookingUrl({ appointment: true }, undefined)).toBeUndefined();
+  });
+});
+
 describe("normalizeEscalation", () => {
   it("accepts only a literal appointment: true", () => {
     expect(normalizeEscalation({ appointment: true })).toEqual({ appointment: true });
+    expect(normalizeEscalation({ appointment: true, booking_url: "https://booking.example.com/a" })).toEqual({
+      appointment: true,
+      booking_url: "https://booking.example.com/a",
+    });
   });
 
   it("rejects everything else", () => {

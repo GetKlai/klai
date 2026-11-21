@@ -1,0 +1,52 @@
+name: Backup restore rehearsal
+
+# The nightly backup set (deploy/scripts/backup.sh) is only worth what restores
+# from it. This restores the newest complete day-set from the local staging
+# area into throwaway containers and volumes on core-01 (no network, never a
+# live volume or database) and requires each artifact to reproduce a fact the
+# backup recorded or the dump itself states. The whole sequence lives in
+# deploy/scripts/backup-restore-rehearsal.sh (installed to /opt/klai/scripts
+# by deploy-compose.yml, tested in deploy-scripts-tests.yml); this workflow
+# only starts it. It proves the dumps restore; that the off-site .age copies
+# decrypt is not covered by this run, because the identity is not on this host
+# (docs/runbooks/backup-restore.md).
+#
+# Twice a month, as datastore-restore-rehearsal.yml: VictoriaLogs keeps 30
+# days, so a monthly run would leave the dead-man's-switch rule
+# (backup_restore_rehearsal_missing, no ok event for 30 days) without a line on
+# the 31st of every long month. A failed artifact ends the run red after the
+# others ran, and ci-failure-notice.yml opens its issue.
+
+on:
+  schedule:
+    # 1st and 15th, 05:17 UTC: after the nightly backup (02:00) and the
+    # datastore rehearsal (02:17), after the 04:00 E2E run.
+    - cron: '17 5 1,15 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-restore-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    # Scheduled runs belong to main anyway; this keeps a workflow_dispatch from
+    # another branch off the production host.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Restore the newest complete backup set into throwaways on core-01
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          command_timeout: 140m
+          script: |
+            set -e
+            test -x /opt/klai/scripts/backup-restore-rehearsal.sh
+            /opt/klai/scripts/backup-restore-rehearsal.sh

@@ -30,8 +30,9 @@ from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.connector_state import mark_connector_resource_deleting
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
-from knowledge_ingest.queues import CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK
+from knowledge_ingest.queues import ENRICH_BULK, ENRICH_INTERACTIVE, GRAPHITI_BULK
 from knowledge_ingest.resource_jobs import (
+    cancel_jobs_by_artifact_ids,
     cancel_jobs_by_resource_key,
     connector_resource_key,
 )
@@ -100,20 +101,7 @@ async def _list_artifact_ids(
 async def _list_resource_keys(
     conn: asyncpg.Connection, org_id: str, kb_slug: str, connector_id: str
 ) -> list[str]:
-    """Snapshot connector generations represented by artifacts or crawl runs."""
-    artifact_rows = await conn.fetch(
-        """
-        SELECT DISTINCT extra::jsonb->>'resource_key' AS resource_key
-          FROM knowledge.artifacts
-         WHERE org_id = $1
-           AND kb_slug = $2
-           AND extra::jsonb->>'source_connector_id' = $3
-           AND extra::jsonb->>'resource_key' IS NOT NULL
-        """,
-        org_id,
-        kb_slug,
-        connector_id,
-    )
+    """Snapshot the crawl runs (generations) of this connector."""
     crawl_rows = await conn.fetch(
         """
         SELECT DISTINCT config::jsonb->>'generation' AS generation
@@ -137,11 +125,10 @@ async def _list_resource_keys(
         kb_slug,
         connector_id,
     )
-    keys = {str(row["resource_key"]) for row in artifact_rows}
-    keys.update(
+    keys = {
         connector_resource_key(org_id, kb_slug, connector_id, row["generation"])
         for row in crawl_rows
-    )
+    }
     if current_generation is not None:
         keys.add(connector_resource_key(org_id, kb_slug, connector_id, current_generation))
     return sorted(keys)
@@ -191,27 +178,26 @@ async def purge_connector(
         resource_keys = await _list_resource_keys(conn, org_id, kb_slug, connector_id)
         log.info("connector_purge_step_artifacts_listed", count=len(artifact_ids))
 
-        # Resource keys are the ownership index for all connector writer jobs.
+        # Crawl runs are found by their resource key; the enrichment and graph
+        # jobs belong to the document versions about to be deleted, so they
+        # are found by artifact id (jobs queued before 2026-11 carry it too).
+        # A job that slips past this still stops on its own: its artifact is
+        # gone and its connector is no longer active.
         for resource_key in resource_keys:
             await mark_connector_resource_deleting(conn, resource_key)
         pool = await get_pool()
         enrichment_cancelled = 0
-        graphiti_cancelled = 0
         for resource_key in resource_keys:
-            enrichment_cancellation = await cancel_jobs_by_resource_key(
-                proc_app,
-                pool,
-                resource_key,
-                queues=(CRAWL_JOBS, ENRICH_BULK),
+            crawl_cancellation = await cancel_jobs_by_resource_key(proc_app, pool, resource_key)
+            enrichment_cancelled += crawl_cancellation.jobs_cancelled
+        enrichment_cancelled += (
+            await cancel_jobs_by_artifact_ids(
+                proc_app, pool, artifact_ids, queues=(ENRICH_INTERACTIVE, ENRICH_BULK)
             )
-            enrichment_cancelled += enrichment_cancellation.jobs_cancelled
-            graphiti_cancellation = await cancel_jobs_by_resource_key(
-                proc_app,
-                pool,
-                resource_key,
-                queues=(GRAPHITI_BULK,),
-            )
-            graphiti_cancelled += graphiti_cancellation.jobs_cancelled
+        ).jobs_cancelled
+        graphiti_cancelled = (
+            await cancel_jobs_by_artifact_ids(proc_app, pool, artifact_ids, queues=(GRAPHITI_BULK,))
+        ).jobs_cancelled
 
         log.info(
             "connector_purge_step_enrichment_jobs_cancelled",

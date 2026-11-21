@@ -37,7 +37,7 @@ The endpoint transitions the org to `deprovisioning`, invalidates the slug cache
 
 ## Live Step Order
 
-Current orchestrator: **21 steps**.
+Current orchestrator: **22 steps**.
 
 | # | Step | Resource |
 |---|---|---|
@@ -52,22 +52,23 @@ Current orchestrator: **21 steps**.
 | 8 | `_delete_qdrant_points` | `klai_knowledge` points by Zitadel org id |
 | 9 | `_delete_falkordb_graph` | Knowledge-ingest graph wipe |
 | 10 | `_wipe_knowledge_postgres` | `knowledge.*` Postgres rows |
-| 11 | `_wipe_klai_connector_state` | `connector.sync_runs` + `connector.connectors` (incl. encrypted creds) |
-| 12 | `_wipe_scribe_state` | Scribe DB rows + retained local audio |
-| 13 | `_delete_scribe_artifacts` | Scribe Garage/S3 prefix |
-| 14 | `_delete_litellm_team` | LiteLLM team |
-| 15 | `_archive_moneybird_subscription` | Moneybird subscription/contact |
-| 16 | `_delete_personal_kb` | Docs personal KB |
-| 17 | `_delete_zitadel_oidc_app` | Zitadel OIDC app |
-| 18 | `_delete_zitadel_users` | Single-tenant Zitadel users |
-| 19 | `_delete_zitadel_org` | Zitadel tenant org |
-| 20 | `_finalize_postgres_delete` | Portal audit event + portal hard delete |
+| 11 | `_delete_kb_images` | Knowledge-base images under `{zitadel_org_id}/images/` in the image bucket |
+| 12 | `_wipe_klai_connector_state` | `connector.sync_runs` + `connector.connectors` (incl. encrypted creds) |
+| 13 | `_wipe_scribe_state` | Scribe DB rows + retained local audio |
+| 14 | `_delete_scribe_artifacts` | Scribe Garage/S3 prefix |
+| 15 | `_delete_litellm_team` | LiteLLM team |
+| 16 | `_archive_moneybird_subscription` | Moneybird subscription/contact |
+| 17 | `_delete_personal_kb` | Docs personal KB |
+| 18 | `_delete_zitadel_oidc_app` | Zitadel OIDC app |
+| 19 | `_delete_zitadel_users` | Single-tenant Zitadel users |
+| 20 | `_delete_zitadel_org` | Zitadel tenant org |
+| 21 | `_finalize_postgres_delete` | Portal audit event + portal hard delete |
 
 Important identifier rule:
 
 - `portal_orgs.id` is the portal integer org id.
 - `portal_orgs.zitadel_org_id` is the external tenant id.
-- Qdrant, FalkorDB, knowledge-ingest, connector, and Scribe wipes use the **Zitadel org id**, not the portal integer id.
+- Qdrant, FalkorDB, knowledge-ingest, knowledge-base image, connector, and Scribe wipes use the **Zitadel org id**, not the portal integer id.
 
 ## Monitoring
 

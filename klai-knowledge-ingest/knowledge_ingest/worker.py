@@ -76,10 +76,11 @@ class WorkerLifecycle:
 
     # SPEC-WORKER-LANES-001 — concurrency tuning per lane.
     # I/O lane: HTTP-bound, can fan out parallel without rate concerns.
-    # LLM lane: bounded by Mistral upstream + token-bucket in graph.py
-    # (1 req/s for graphiti). 4 in-flight LLM jobs is the empirically
-    # validated upper bound that keeps the rate limiter happy without
-    # leaving slots idle.
+    # LLM lane: paced by the shared limiter (litellm_klai_fast_rps, 2 rps).
+    # It only has to keep the limiter fed: 2 rps at the 2.41 s 95th
+    # percentile call time is ~5 calls in flight, and 4 enrichment jobs of
+    # enrichment_max_concurrent (2) chunk calls each offer 8.
+    # Graph lane: settings.graphiti_max_concurrent slots (see config.py).
     IO_CONCURRENCY: int = 8
     LLM_CONCURRENCY: int = 4
     # Interactive lane: user-triggered re-syncs are rare (single documents,
@@ -97,11 +98,12 @@ class WorkerLifecycle:
     # lanes shared 4 connections, and a 30 s PoolTimeout in a side task made
     # Procrastinate stop the lane (22, 23, 25 Sep 2026). Every query borrows a
     # connection only for its own duration; the LISTEN connections are
-    # standalone, outside the pool. The peak is 15 job slots (8 + 2 + 4 + 1)
+    # standalone, outside the pool. The peak is 16 job slots (8 + 2 + 4 + 1 + 1)
     # finishing or deferring at the same moment, plus deferrals from the web
     # routes, plus the per-lane fetch loop and the three side tasks
     # (heartbeat, deferrer, abort poll) whose queries can coincide with it;
-    # 20 covers the job slots with room for those. core-01 Postgres on
+    # 20 covers the job slots with room for those (one graph slot, so a
+    # higher graphiti_max_concurrent must revisit this). core-01 Postgres on
     # 28 Sep 2026: max_connections 100 (3 superuser-reserved), 61 in use,
     # so growing this pool by 16 leaves 20 free.
     POOL_MIN_SIZE: int = 4
@@ -192,7 +194,9 @@ class WorkerLifecycle:
         # design) would still let a backlog of LLM jobs starve I/O work
         # because procrastinate fetches the oldest todo across the worker's
         # queue set, regardless of queue identity.
+        from knowledge_ingest.config import settings
         from knowledge_ingest.queues import (
+            GRAPH_QUEUES,
             INTERACTIVE_QUEUES,
             IO_QUEUES,
             LLM_QUEUES,
@@ -208,6 +212,7 @@ class WorkerLifecycle:
             "io": (IO_QUEUES, self.IO_CONCURRENCY),
             "interactive": (INTERACTIVE_QUEUES, self.INTERACTIVE_CONCURRENCY),
             "llm": (LLM_QUEUES, self.LLM_CONCURRENCY),
+            "graph": (GRAPH_QUEUES, settings.graphiti_max_concurrent),
             "maintenance": (MAINTENANCE_QUEUES, self.MAINTENANCE_CONCURRENCY),
         }
         for lane, (queues, concurrency) in lanes.items():
@@ -225,6 +230,8 @@ class WorkerLifecycle:
             interactive_concurrency=self.INTERACTIVE_CONCURRENCY,
             llm_queues=LLM_QUEUES,
             llm_concurrency=self.LLM_CONCURRENCY,
+            graph_queues=GRAPH_QUEUES,
+            graph_concurrency=settings.graphiti_max_concurrent,
             maintenance_queues=MAINTENANCE_QUEUES,
             maintenance_concurrency=self.MAINTENANCE_CONCURRENCY,
         )

@@ -38,11 +38,11 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$name" && -n "$code" ]] || usage
 
-# The calls the one-off makes itself (coreference rewrite, graph search, synthesis) run on the Vibe allowance
+# The calls the one-off makes itself (coreference rewrite, graph search) run on the Vibe allowance
 # (klai-ingest), never on the keys live chat shares: a measurement round on klai-fast helped spend the Mistral
 # workspaces' monthly limit on 23 Oct 2026 and took chat down for every tenant. Not overridable, in any case of the
 # name: the settings read coreference_model=... as COREFERENCE_MODEL.
-for key in COREFERENCE_MODEL GRAPHITI_LLM_MODEL SYNTHESIS_MODEL; do
+for key in COREFERENCE_MODEL GRAPHITI_LLM_MODEL; do
     for given in "${overrides[@]:-}"; do
         [[ "$(tr '[:lower:]' '[:upper:]' <<< "${given%%=*}")" != "$key" ]] || { echo "ERROR: $key is fixed to klai-ingest for a one-off; drop --env $given." >&2; exit 1; }
     done

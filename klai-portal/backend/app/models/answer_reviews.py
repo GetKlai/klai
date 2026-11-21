@@ -3,7 +3,7 @@
 One row per assistant answer a Klai colleague judged: whether it was correct,
 why not when it was not, and a free-text note. Unlike the nightly LLM judge in
 ``app/models/conversation_quality.py`` this is the human verdict, and it is
-written to outlive the 7-day ``widget_messages_retention_days`` purge — which
+written to outlive the 90-day ``widget_messages_retention_days`` purge — which
 is why the conversation/message foreign keys are nullable with ``SET NULL``
 and why ``band_at_review`` / ``judge_outcome_at_review`` /
 ``judge_failure_category_at_review`` snapshot the retrieval state instead of

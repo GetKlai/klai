@@ -74,21 +74,25 @@ async def test_crawl_counts_ingested_pages_and_retired_stale_pages_but_not_uncha
 
     pg = MagicMock()
     pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
+    pg.get_active_document_texts = AsyncMock(return_value={})
     pg.get_crawled_page_stored = AsyncMock(return_value=None)
     pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     pg.upsert_crawled_page = AsyncMock()
     pg.update_crawled_page_simhash = AsyncMock()
     pg.upsert_page_links = AsyncMock()
     pg.list_stale_connector_artifact_paths = AsyncMock(return_value=["https://example.com/old"])
-    pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=1)
+    pg.list_document_heads = AsyncMock(return_value=["artifact-old"])
+    pg.list_connector_paths_pending_purge = AsyncMock(return_value=[])
 
     with (
         patch("knowledge_ingest.adapters.crawler._update_job", new_callable=AsyncMock),
         patch("knowledge_ingest.adapters.crawler.pg_store", pg),
         patch(
-            "knowledge_ingest.adapters.crawler.qdrant_store.delete_document",
+            "knowledge_ingest.adapters.crawler.document_purge.purge_documents",
             new_callable=AsyncMock,
-        ),
+            return_value=(2, 1),
+        ) as purge,
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
@@ -116,5 +120,5 @@ async def test_crawl_counts_ingested_pages_and_retired_stale_pages_but_not_uncha
             connector_id="conn-1",
         )
 
-    pg.soft_delete_stale_connector_artifacts.assert_awaited_once()
+    purge.assert_awaited_once()
     assert _changed_increments(conn) == 3

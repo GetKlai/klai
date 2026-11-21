@@ -3,9 +3,18 @@
 Since 2026-09-27 the background work (enrichment, Graphiti, taxonomy,
 labelling, RAG eval) runs on the ``klai-ingest`` alias, which has its own key
 and a 900 rpm / 450k tpm budget; only the few calls a user waits on stay on
-``klai-fast`` (``settings.interactive_llm_model``). The limiter's name, its
-``LITELLM_KLAI_FAST_*`` settings and the 0.6 rps default date from the 45 rpm
-``klai-fast`` budget described below and still pace all of these calls.
+``klai-fast`` (``settings.interactive_llm_model``). The limiter's name and its
+``LITELLM_KLAI_FAST_*`` settings date from the 45 rpm ``klai-fast`` budget
+described below; the rate itself (2 rps) is derived from the klai-ingest
+limits next to ``litellm_klai_fast_rps`` in config.py.
+
+It counts requests, not tokens. At the measured call size (1,651 tokens on
+average, 2,095 in the busiest minute of a week) a minute that starts with a
+full burst stays at 74% of the tpm limit. A minute would need calls of 2,812
+tokens on average to reach it: the chunk prompts carry a two-line summary,
+the summary prompt at most ~2,000 document tokens, and the only larger
+calls, graph extraction over an episode of up to 30,000 characters, come
+from one episode at a time. A token-aware limiter would add nothing yet.
 
 Why this exists
 ---------------
@@ -26,10 +35,10 @@ process-wide token bucket that every ``klai-fast`` chat call acquires from,
 tuned under the alias budget so sustained bulk work simply runs slower
 instead of erroring.
 
-Burst capacity keeps interactive work snappy: an idle bucket lets the first
-``litellm_klai_fast_burst`` calls through immediately (a single-document
-re-sync mostly fits in the burst), and only sustained load degrades to the
-refill rate.
+The burst lets one document's fan-out through at once: an idle bucket passes
+the first ``litellm_klai_fast_burst`` calls immediately (sized in config.py on
+the calls graph extraction sends concurrently for one document), and only
+sustained load degrades to the refill rate.
 
 Usage::
 
@@ -74,8 +83,8 @@ def shared_klai_fast_limiter() -> TokenBucketLimiter:
     """Process-wide limiter for ALL LiteLLM chat calls from this service (lazy singleton).
 
     Shared across enrichment, Graphiti, taxonomy, selector-AI, labelers and
-    the RAGAS judge so their combined rate stays paced. Default 0.6 rps =
-    36 rpm, sized for the former 45 rpm klai-fast budget (see module docstring).
+    the RAGAS judge so their combined rate stays paced (rate and burst from
+    settings, sized in config.py).
     """
     global _shared_limiter
     if _shared_limiter is None:

@@ -245,14 +245,13 @@ class TestGraphResultLabelling:
         assert len(pack.items) == 2
 
     @pytest.mark.asyncio
-    async def test_unresolved_artifact_keeps_previous_behaviour(self):
+    async def test_a_fact_whose_artifact_does_not_resolve_is_not_served(self):
         chunks = [_graph_chunk("artifact-abc")]
         with patch.object(
             search, "fetch_artifact_display_metadata", new=AsyncMock(return_value={})
         ):
             req = RetrieveRequest(query="q", org_id="org-1", scope="org")
-            await _label_graph_results(chunks, req)
-        assert "title" not in chunks[0]
+            assert await _label_graph_results(chunks, req) == []
 
 
 class TestStableDocumentResolution:

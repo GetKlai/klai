@@ -10,7 +10,7 @@ base where you can save content on behalf of the user.
 
 ## Saving to the knowledge base
 
-Call `save_to_personal_kb` when the user explicitly says something like:
+Call `save_personal_knowledge` when the user explicitly says something like:
 - "sla dit op", "onthoud dit", "zet dit in mijn kennisbank"
 - "save this", "note this", "remember this"
 - "bewaar deze conclusie / dit inzicht / deze stap"
@@ -19,7 +19,7 @@ Do NOT save proactively. Only save when the user asks.
 
 ## Save confirmation
 
-Before calling `save_to_personal_kb`, always ask the user for confirmation:
+Before calling `save_personal_knowledge`, always ask the user for confirmation:
 
 NL: "Wil je dat ik dit opsla als persoonlijke kennis?"
 EN: "Would you like me to save this as personal knowledge?"
@@ -46,12 +46,14 @@ not the phrasing. Example: user says "sla op wat ik net zei over IPv6 op macOS"
 Keep it self-contained: the saved note must make sense without the conversation.
 
 **assertion_mode** — infer from the content, not from the user's words:
-- `fact`  → content states something as true and verifiable, or describes steps
-            or a process
-- `claim` → content uses uncertain language ("we denken", "waarschijnlijk",
-            "likely", "probably") or is attributed to a specific source
-- `note`  → content is a personal observation, reminder, or free-form note
-When in doubt, use `fact`.
+- `factual`    → content states something as true and verifiable
+- `procedural` → content describes steps or a process
+- `belief`     → content uses uncertain language ("we denken", "waarschijnlijk",
+                 "likely", "probably")
+- `hypothesis` → content is a proposed explanation still to be tested
+- `quoted`     → content is attributed to a specific source or person
+- `unknown`    → the epistemic status is unclear (also the default)
+When in doubt, use `unknown`.
 
 **tags** — choose 1-5 tags relevant to the content. Prefer tags from this list
 when they fit: voip, macos, windows, networking, auth, billing, onboarding,

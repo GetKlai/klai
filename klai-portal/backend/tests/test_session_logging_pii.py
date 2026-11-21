@@ -90,7 +90,7 @@ async def test_no_pii_in_totp_lockout_logs(fake_redis: Any, monkeypatch: pytest.
         ip_subnet="0.0.0.0",  # noqa: S104 — placeholder, not a network bind
     )
     monkeypatch.setattr(
-        "app.api.auth.zitadel.update_session_with_totp",
+        "app.api.auth.zitadel.update_session_with_otp",
         AsyncMock(side_effect=_zitadel_400_error()),
     )
     monkeypatch.setattr("app.api.auth.audit.log_event", AsyncMock())

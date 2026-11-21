@@ -56,11 +56,15 @@ _DRIVE_START_PAGE_TOKEN_URL = "https://www.googleapis.com/drive/v3/changes/start
 # Fields requested for files.list / changes.list. Kept minimal — we only need
 # what the DocumentRef contract requires.
 # owners and permissions are added for SPEC-KB-CONNECTORS-001 R5.5 (identifier capture).
+# trashed is read because files.get returns a trashed file like any other; only
+# files.list can exclude it with its q= filter.
 _FILE_FIELDS = (
-    "id, name, mimeType, modifiedTime, webViewLink, size, "
+    "id, name, mimeType, modifiedTime, webViewLink, size, trashed, "
     "owners(emailAddress, displayName), permissions(role, emailAddress)"
 )
-_LIST_FIELDS = f"nextPageToken, files({_FILE_FIELDS})"
+# incompleteSearch is true when Drive could not search every corpus (shared
+# drives); such a page is not proof that a missing file is gone.
+_LIST_FIELDS = f"nextPageToken, incompleteSearch, files({_FILE_FIELDS})"
 _CHANGES_FIELDS = f"newStartPageToken, nextPageToken, changes(fileId, removed, file({_FILE_FIELDS}))"
 
 # Mime-type → export mime mapping for Google-native file types. We prefer
@@ -342,9 +346,19 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             # Applying the filter here keeps list_documents correct regardless.
             raw_files = [f for f in raw_files if f and f.get("mimeType") in allowed_mimes]
 
+        # Only a scoped selection is listed in full every run; the unscoped mode
+        # reads the change feed after its first run. max_files cuts a listing
+        # short, and every file past the cut would otherwise look deleted.
+        if not scoped_selection:
+            self._record_listing(connector, complete=False, reason="change_feed")
+        elif response.get("incompleteSearch"):
+            self._record_listing(connector, complete=False, reason="incomplete_search")
+        else:
+            self._record_listing(connector, complete=len(raw_files) <= max_files, reason="max_files_reached")
+
         refs: list[DocumentRef] = []
         for file in raw_files[:max_files]:
-            if not file:
+            if not file or file.get("trashed"):
                 continue
             mime = file.get("mimeType", "")
             if mime == _GOOGLE_FOLDER_MIME:
@@ -492,6 +506,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
         token = await self.ensure_token(connector)
         all_files: list[dict[str, Any]] = []
         folder_queue: list[str | None] = [folder_id]
+        incomplete_search = False
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             while folder_queue:
@@ -537,6 +552,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
                     response.raise_for_status()
                     data = response.json()
 
+                    incomplete_search = incomplete_search or bool(data.get("incompleteSearch"))
                     for file in data.get("files", []):
                         if not file:
                             continue
@@ -553,7 +569,7 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
 
                 if not recursive:
                     break
-        return {"files": all_files}
+        return {"files": all_files, "incompleteSearch": incomplete_search}
 
     async def _list_changes(
         self, connector: Any, page_token: str,
@@ -652,6 +668,12 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
                     headers={"Authorization": f"Bearer {token}"},
                     params={"fields": _FILE_FIELDS, "supportsAllDrives": "true"},
                 )
+                # Drive answers 404 for a deleted file and for one the user can
+                # no longer see; both are gone for this connector. Any other
+                # error still fails the listing.
+                if response.status_code == 404:
+                    logger.info("Selected Drive file %s is gone or no longer shared", file_id)
+                    continue
                 response.raise_for_status()
                 file = response.json()
                 if allowed_mimes is not None and file.get("mimeType") not in allowed_mimes:

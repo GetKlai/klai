@@ -266,6 +266,46 @@ class TestCrawlSyncEndpoint:
         assert kwargs["org_id"] == "42"
         assert kwargs["kb_slug"] == "support"
 
+    def test_a_new_run_stops_only_the_older_runs_crawl_job(self, payload_with_cookies) -> None:
+        """The older run's enrichment and graph jobs belong to current documents."""
+        encrypted, dek_enc, _ = payload_with_cookies
+        pool = _make_pool(
+            connector_row={
+                "id": uuid.UUID(int=1),
+                "org_id": 7,
+                "zitadel_org_id": "42",
+                "encrypted_credentials": encrypted,
+                "connector_dek_enc": dek_enc,
+            },
+        )
+        connector_id = str(uuid.uuid4())
+        old_run = f"connector:42:support:{connector_id}:run-a"
+        cancel = AsyncMock()
+        with (
+            patch(
+                "knowledge_ingest.routes.crawl_sync.get_current_connector_resource_key",
+                AsyncMock(return_value=old_run),
+            ),
+            patch("knowledge_ingest.routes.crawl_sync.activate_connector_resource", AsyncMock()),
+            patch("knowledge_ingest.routes.crawl_sync.cancel_jobs_by_resource_key", cancel),
+            _client_with_patches(pool) as (client, _defer),
+        ):
+            resp = client.post(
+                "/ingest/v1/crawl/sync",
+                json={
+                    "connector_id": connector_id,
+                    "generation": "run-b",
+                    "org_id": "42",
+                    "kb_slug": "support",
+                    "base_url": "https://help.example.com",
+                },
+            )
+
+        assert resp.status_code == 202, resp.text
+        cancel.assert_awaited_once()
+        assert cancel.await_args.args[2] == old_run
+        assert cancel.await_args.kwargs["queues"] == ("crawl-jobs",)
+
     def test_path_prefix_is_prepended_to_start_url(self) -> None:
         """BFS must enter the allowed subtree; start_url = base_url + path_prefix.
 

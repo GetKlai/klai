@@ -7,8 +7,10 @@ of truth; klai-connector's APScheduler reads
 schedule added, changed, disabled or removed in the portal takes effect
 within 5 minutes without a restart. Only connectors of org-scoped KBs are
 scheduled; personal KBs carry an item quota that a scheduled sync cannot
-check, so they stay manual. Cron times are **UTC** (container has no TZ):
-`0 2 * * *` fires at 04:00 CEST / 03:00 CET. For weekly schedules use named
+check, so they stay manual. The scheduler is created without a timezone
+(`klai-connector/app/services/scheduler.py:42`) and the compose service sets
+no `TZ`, so cron times follow the local zone of the running container; check
+that zone before converting a time. For weekly schedules use named
 weekdays (`0 2 * * sun`): APScheduler 3.x counts numeric `0` as Monday, not
 Sunday as in POSIX cron.
 
@@ -51,6 +53,11 @@ they do not all hit crawl4ai at the same second.
 
 - Web crawls skip pages whose raw HTML and extracted text are unchanged
   (dual hash), so a nightly run costs only new or changed pages.
-- Pages that disappeared from the site are not removed by a re-crawl.
+- Pages that disappeared from the site are removed after a crawl that
+  completed and fetched everything it should. A crawl that saw 404 or 410
+  pages and would retire more than 20% of the stored pages (at least 5) skips
+  the cleanup and logs it; the next clean crawl retires what is really gone
+  (`klai-knowledge-ingest/knowledge_ingest/adapters/crawler.py:126-139`,
+  [knowledge-ingest-flow.md](../architecture/knowledge-ingest-flow.md), 4.2).
 - A failing connector (e.g. expired cookies) fails every night; the status
   is visible in the portal connector list.
