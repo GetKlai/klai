@@ -1,4 +1,4 @@
-"""Lane supervision against the real procrastinate Worker (verified on 3.10.0).
+"""Lane supervision against the real procrastinate Worker (verified on 3.12.0).
 
 WorkerLifecycle reads ``Worker.worker_id`` and ``Worker._stop_event`` and
 builds the worker through ``App._worker``, none of which is public API. This
@@ -59,7 +59,7 @@ async def test_lane_stopped_by_failing_side_task_is_dead_then_restarted_and_runs
 
     from knowledge_ingest.worker import WorkerLifecycle
 
-    assert importlib.metadata.version("procrastinate") == "3.10.0"
+    assert importlib.metadata.version("procrastinate") == "3.12.0"
 
     connector = InMemoryConnector()
     app = procrastinate.App(

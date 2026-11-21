@@ -106,7 +106,7 @@ issues locally.
 
 | Package | Service | Constraint | Why |
 |---|---|---|---|
-| `procrastinate>=3.0,<4` | knowledge-ingest | `<4` | Major version bump would require DB schema migration. API unchanged between 2.x and 3.x (PsycopgConnector, open_async(), run_worker_async()). |
+| `procrastinate>=3.12,<3.13` | knowledge-ingest | `<3.13` | A minor can ship SQL migrations its own code needs before the first defer (3.12 code fails every defer on a 3.10 schema). Each minor gets an alembic revision that applies its pre-deploy migrations from the installed package (0017 for 3.11 and 3.12); lift the ceiling together with that revision. |
 | `graphiti-core>=0.28,<0.30` | retrieval-api | `<0.30` | 0.30.x is pre-release with breaking API changes. When 0.30.x stabilises on PyPI, test retrieval-api against it and remove the upper bound. |
 | `icalendar>=6.1,<8.0` | portal-api | `<8.0` | Defensive — calendar parsing is brittle. Upper bound prevents surprise 8.0 breakage until we can validate. |
 | `prometheus-client>=0.21,<1.0` | portal-api | `<1.0` | 1.0 release expected to change metric registry semantics. |
