@@ -53,6 +53,9 @@ COPY klai-mailer/app/ ./app/
 COPY klai-mailer/theme/ ./theme/
 
 RUN useradd --system --no-create-home mailer
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER mailer
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

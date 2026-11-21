@@ -70,6 +70,9 @@ RUN adduser --disabled-password --gecos "" klai
 
 EXPOSE 8200
 
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER klai
 
 ENTRYPOINT ["/repo/klai-connector/entrypoint.sh"]

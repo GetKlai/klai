@@ -40,6 +40,9 @@ COPY klai-slack/alembic/ ./alembic/
 COPY klai-slack/alembic.ini klai-slack/entrypoint.sh ./
 
 RUN useradd --system --no-create-home slack
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER slack
 
 EXPOSE 8000

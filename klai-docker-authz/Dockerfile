@@ -30,6 +30,9 @@ ENV PATH="/repo/klai-docker-authz/.venv/bin:$PATH" \
 # Non-root: this process sits in front of the Docker API, so it is the last
 # container that should be easy to pivot from.
 RUN useradd --system --uid 10001 authz
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER authz
 
 EXPOSE 2375 2376
