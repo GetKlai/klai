@@ -105,6 +105,81 @@ done
 echo
 PAT=$(cat "$PATDIR/pat.txt")
 
+# The instance gets production's login policy before the first login call. The
+# portal logs in through the Session API, and since v4.20.3 Zitadel enforces
+# this policy on Session API password checks. A harness on Zitadel's defaults
+# (password, external IdP and registration all allowed) stayed green on the
+# v4.20.5 bump while production, with allowUsernamePassword false, refused
+# every password login. Values as read from production's admin API on
+# 2026-11-22; keep them in step with production, never loosen them to pass.
+ZITADEL_URL="http://localhost:${PORT}" PAT="$PAT" python3 - <<'PY'
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+POLICY = {
+    "allowUsernamePassword": True,
+    "allowRegister": False,
+    "allowExternalIdp": False,
+    "forceMfa": False,
+    "forceMfaLocalOnly": False,
+    "passwordlessType": "PASSWORDLESS_TYPE_NOT_ALLOWED",
+    "hidePasswordReset": False,
+    "ignoreUnknownUsernames": False,
+    "allowDomainDiscovery": False,
+    "disableLoginWithEmail": False,
+    "disableLoginWithPhone": False,
+    "passwordCheckLifetime": "7776000s",
+    "externalLoginCheckLifetime": "7776000s",
+    "mfaInitSkipLifetime": "7776000s",
+    "secondFactorCheckLifetime": "7776000s",
+    "multiFactorCheckLifetime": "7776000s",
+}
+SECOND_FACTORS = {"SECOND_FACTOR_TYPE_OTP", "SECOND_FACTOR_TYPE_U2F"}
+MULTI_FACTORS = {"MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION"}
+
+
+def call(method, path, body=None):
+    req = urllib.request.Request(
+        os.environ["ZITADEL_URL"] + path,
+        method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + os.environ["PAT"], "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        sys.exit(f"login policy: {method} {path} -> {e.code} {e.read().decode()}")
+
+
+def sync(path, kind, wanted):
+    have = set(call("POST", f"/admin/v1/policies/login/{path}/_search", {}).get("result", []))
+    for t in wanted - have:
+        call("POST", f"/admin/v1/policies/login/{path}", {"type": t})
+    for t in have - wanted:
+        call("DELETE", f"/admin/v1/policies/login/{path}/{t}")
+    got = set(call("POST", f"/admin/v1/policies/login/{path}/_search", {}).get("result", []))
+    if got != wanted:
+        sys.exit(f"login policy: {kind} are {sorted(got)}, expected {sorted(wanted)}")
+
+
+call("PUT", "/admin/v1/policies/login", POLICY)
+sync("second_factors", "second factors", SECOND_FACTORS)
+sync("multi_factors", "multi factors", MULTI_FACTORS)
+policy = call("GET", "/admin/v1/policies/login")["policy"]
+# The JSON gateway omits zero values: false, and the first enum value.
+zero = {"passwordlessType": "PASSWORDLESS_TYPE_NOT_ALLOWED"}
+wrong = {k: policy.get(k) for k, v in POLICY.items() if policy.get(k, zero.get(k, False)) != v}
+if wrong:
+    sys.exit(f"login policy not applied: {wrong}")
+if not call("GET", "/v2/features/instance").get("loginV2", {}).get("required"):
+    sys.exit("login policy: Login V2 is not required on the instance, unlike production")
+print("instance login policy set to production's values")
+PY
+
 # Zitadel generates the signing secret when the HTTP provider is created, so
 # the mailer starts after it, with that secret as WEBHOOK_SECRET.
 PROVIDER=$(curl -sf -X POST "http://localhost:${PORT}/admin/v1/email/http" \
