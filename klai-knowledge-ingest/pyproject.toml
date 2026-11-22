@@ -15,11 +15,10 @@ dependencies = [
     "qdrant-client>=1.12,<2.0",
     "pyyaml>=6.0",
     "cachetools>=5.5",
-    # procrastinate 3.x: PsycopgConnector, open_async(), run_worker_async() all unchanged.
-    # DB schema was already 3.x-compatible (queueing_lock + full status enum added in 2.15).
-    # Bound to the 3.10 line: 3.11 and 3.12 add queue-table migrations this repo does not apply,
-    # and 3.12 cannot defer against the 3.10 schema. Lift the bound together with the migration.
-    "procrastinate>=3.10.0,<3.11",
+    # Ceiling per minor: a procrastinate minor can ship SQL migrations that its own code
+    # needs before the first defer (3.12 code fails every defer on a 3.10 schema), and
+    # alembic revision 0017 applies exactly the 3.11 and 3.12 pre-deploy ones.
+    "procrastinate>=3.12,<3.13",
     "structlog>=25.0",
     "scikit-learn>=1.3.0",
     "umap-learn>=0.5.6",

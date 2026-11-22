@@ -359,13 +359,20 @@ async def test_a_replaced_version_never_records_a_failure(jobs) -> None:
     assert not [e for e in logs if e["event"] == "derived_product_failed"]
 
 
-# --- a cancelled job is retried, whatever its attempt count ------------------
+# --- a job cancelled by a shutdown is retried, whatever its attempt count -----
 
 
-@pytest.mark.parametrize("how", ["worker_shutdown", "user_abort"])
-async def test_a_job_cancelled_on_its_last_attempt_runs_again(jobs, monkeypatch, how) -> None:
-    """A cancellation is not a failure: on the last attempt it would otherwise
-    end the job aborted with no retry left and the document pending for ever."""
+@pytest.mark.parametrize(
+    ("how", "job_status"), [("worker_shutdown", "todo"), ("user_abort", "failed")]
+)
+async def test_a_job_cancelled_on_its_last_attempt_runs_again_unless_a_user_aborted_it(
+    jobs, monkeypatch, how, job_status
+) -> None:
+    """A shutdown is not a failure: on the last attempt it would otherwise end
+    the job aborted with no retry left and the document pending for ever. A
+    user abort asks procrastinate to retry as well, but its retry closes a job
+    whose abort was requested as failed; Postgres has done so since 3.10, the
+    in-memory connector since 3.12."""
     import asyncio
 
     from procrastinate.testing import InMemoryConnector
@@ -403,7 +410,7 @@ async def test_a_job_cancelled_on_its_last_attempt_runs_again(jobs, monkeypatch,
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
 
-    assert connector.jobs[job_id]["status"] == "todo"
+    assert connector.jobs[job_id]["status"] == job_status
     assert await _state(jobs.conn, artifact, "enrichment") == ProductState("pending")
 
 

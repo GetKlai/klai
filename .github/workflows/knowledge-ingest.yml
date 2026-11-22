@@ -133,6 +133,7 @@ jobs:
           tests/integration/test_alive_episodes_postgres.py
           tests/integration/test_document_purge_postgres.py
           tests/integration/test_document_jobs_in_queue_postgres.py
+          tests/integration/test_procrastinate_migration_postgres.py
           tests/integration/test_document_summary_postgres.py
           tests/integration/test_crawl_memory_postgres.py
           -q --tb=short

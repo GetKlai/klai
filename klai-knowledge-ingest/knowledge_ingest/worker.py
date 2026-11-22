@@ -138,7 +138,7 @@ class WorkerLifecycle:
         as dead from the moment procrastinate calls ``stop()``, not after its
         shutdown has drained the running jobs. ``_stop_event`` is private;
         tests/test_worker_lane_supervision_contract.py pins it to
-        procrastinate 3.10.
+        procrastinate 3.12.
         """
         return {
             lane
@@ -255,7 +255,7 @@ class WorkerLifecycle:
         while True:
             started = loop.time()
             error: Exception | None = None
-            # Same two calls as App.run_worker_async (procrastinate 3.10), but
+            # Same two calls as App.run_worker_async (procrastinate 3.12), but
             # keeping the Worker so dead_lanes can read its state.
             self.proc_app.perform_import_paths()
             worker = self.proc_app._worker(**worker_options)
