@@ -274,24 +274,17 @@ def test_behavior_runs_against_runtime_pinned_litellm_version(real_litellm) -> N
     assert version("litellm") == image_match.group("version")
 
 
-def test_top_level_prompt_cache_key_is_silently_dropped_for_mistral_under_drop_params(
+def test_top_level_prompt_cache_key_is_forwarded_for_mistral_provider(
     real_litellm,
 ) -> None:
-    """Pins the exact drop_params.yaml-config behavior this module works around.
+    """Pins litellm 1.109's Mistral behavior: a top-level key is forwarded.
 
-    config.yaml sets `litellm_settings.drop_params: true`, so a bare
-    top-level `prompt_cache_key` is silently absent from optional_params
-    rather than raising -- no error, no log line, the parameter just never
-    reaches Mistral. (Without drop_params, get_optional_params raises
-    UnsupportedParamsError instead of dropping silently; production runs
-    with drop_params true, so silent loss is the relevant failure mode.)
-    MistralConfig().get_supported_openai_params() does not list
-    `prompt_cache_key`, and completion()'s optional_param_args never
-    forwards it to get_optional_params for ANY provider (it is excluded
-    from get_non_default_completion_params' catch-all precisely because it
-    is a recognized OPENAI_CHAT_COMPLETION_PARAMS name). If a future
-    litellm version wires it in, this goes red and klai_prompt_cache.py's
-    extra_body workaround can be retired.
+    Since BerriAI/litellm#47432, MistralConfig lists `prompt_cache_key` in
+    get_supported_openai_params() and forwards an ASCII string value for the
+    `mistral` provider (the key is withheld later, in transform_request, for
+    non-*.mistral.ai hosts or non-ASCII values). Before 1.109 it was dropped
+    under drop_params. klai_prompt_cache.py still uses extra_body, whose path
+    is unchanged and covered by the test below.
     """
     optional_params = real_litellm.get_optional_params(
         model="mistral-small-2603",
@@ -301,7 +294,7 @@ def test_top_level_prompt_cache_key_is_silently_dropped_for_mistral_under_drop_p
         drop_params=True,
     )
 
-    assert "prompt_cache_key" not in optional_params
+    assert optional_params["prompt_cache_key"] == "unit-test-key"
 
 
 def test_extra_body_prompt_cache_key_reaches_the_outbound_mistral_request_body(
