@@ -19,27 +19,17 @@ via portal-api/LibreChat, Graphiti extraction in klai-knowledge-ingest,
 portal-api judge/grounding/paraphrase calls) already goes through this one
 proxy, so adding the key here once covers all of them.
 
-Why the key MUST go through `data["extra_body"]`, not `data["prompt_cache_key"]`:
-verified against the installed litellm==1.96.2 source and against a mocked
-outbound HTTP capture (both `litellm.acompletion` directly and
-`litellm.Router.acompletion`, the call the proxy itself makes) --
+Why the key goes through `data["extra_body"]`, not `data["prompt_cache_key"]`:
+verified against litellm==1.96.2 (mocked outbound HTTP capture, both
+`litellm.acompletion` and `litellm.Router.acompletion`, the call the proxy
+itself makes) -- a bare top-level `prompt_cache_key` kwarg never reached
+Mistral there: `completion()` did not forward it to `get_optional_params`
+and MistralConfig did not list it in `get_supported_openai_params()`. Since
+litellm 1.109 (BerriAI/litellm#47432) MistralConfig lists it and forwards it
+to `*.mistral.ai` hosts when the value is an ASCII string, so a top-level key
+would now work too; `extra_body` is kept because its path is unchanged:
 
-  - A bare top-level `prompt_cache_key` kwarg is dropped before it even
-    reaches Mistral-specific code, regardless of `drop_params` or
-    `allowed_openai_params`. `litellm.main.completion()`'s own
-    `optional_param_args` dict (the hard-coded set of kwargs it forwards to
-    `get_optional_params`) has no entry for `prompt_cache_key`, and
-    `get_non_default_completion_params()` excludes it from the catch-all
-    `non_default_params` precisely BECAUSE it is a recognized
-    `OPENAI_CHAT_COMPLETION_PARAMS` name -- so it never reaches
-    `get_optional_params` at all, and MistralConfig (which also does not
-    list `prompt_cache_key` in `get_supported_openai_params()`) never gets
-    a chance to drop or keep it. This is an upstream gap: the param is
-    schema-recognized but not yet wired into `completion()`'s forwarding
-    list, and it applies identically via `litellm.completion()`,
-    `litellm.acompletion()`, and `litellm.Router.acompletion()` (verified
-    for all three).
-  - `extra_body`, by contrast, is not a recognized OpenAI param name, so it
+  - `extra_body` is not a recognized OpenAI param name, so it
     survives `get_non_default_completion_params()` intact, and
     `add_provider_specific_params_to_optional_params()`'s catch-all (taken
     for "mistral", which is not in `litellm.constants.
@@ -51,9 +41,8 @@ outbound HTTP capture (both `litellm.acompletion` directly and
     `prompt_cache_key` lands at the top level of the JSON actually sent to
     Mistral -- exactly the shape Mistral's API expects.
 
-Guarded by tests/test_klai_prompt_cache.py so a litellm bump that finally
-wires `prompt_cache_key` into `completion()`, or that closes the `extra_body`
-passthrough, goes red instead of silently breaking caching again.
+Guarded by tests/test_klai_prompt_cache.py so a litellm bump that closes the
+`extra_body` passthrough goes red instead of silently breaking caching again.
 
 Cache key derivation: sha256 of (org id from the key metadata, final routed
 model, concatenated system-role message content). A key the caller already
