@@ -39,7 +39,7 @@ describe("widget shell", () => {
     container.classList.add("klai-inline-root");
     container.style.setProperty("--klai-primary-color", "#270697");
     expect(getComputedStyle(container).getPropertyValue("--klai-header-background").trim()).toBe(
-      "var(--klai-primary-color)",
+      "#270697",
     );
 
     container.style.setProperty("--klai-header-background", "#ffffff");
