@@ -6,7 +6,7 @@
 # lookup that fails (uv-pip-install-skips-uv-sources pitfall — same trap
 # that bit klai-connector pre-fix).
 
-FROM python:3.12-slim AS deps
+FROM python:3.13-slim AS deps
 
 # uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
@@ -30,7 +30,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 
 # Stage 2: Application
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 WORKDIR /repo/klai-mailer
 
@@ -53,6 +53,9 @@ COPY klai-mailer/app/ ./app/
 COPY klai-mailer/theme/ ./theme/
 
 RUN useradd --system --no-create-home mailer
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER mailer
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

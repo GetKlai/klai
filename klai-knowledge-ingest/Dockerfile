@@ -2,7 +2,7 @@
 # mirrors the repo layout under /repo so the path dep
 # `../klai-libs/connector-credentials` resolves WITHIN the workspace.
 
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
@@ -69,6 +69,9 @@ ENV PATH="/repo/klai-knowledge-ingest/.venv/bin:${PATH}" \
     VIRTUAL_ENV="/repo/klai-knowledge-ingest/.venv"
 
 # SEC-018: drop root for runtime (application writes nothing inside /repo at runtime).
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER app
 
 EXPOSE 8000
