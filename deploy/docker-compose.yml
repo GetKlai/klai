@@ -1321,7 +1321,7 @@ services:
 
   victoriametrics:
     logging: *log-rotation
-    image: victoriametrics/victoria-metrics:v1.156.0
+    image: victoriametrics/victoria-metrics:v1.157.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -1574,7 +1574,7 @@ services:
 
   docling-serve:
     logging: *log-rotation
-    image: ghcr.io/docling-project/docling-serve:v1.38.2
+    image: ghcr.io/docling-project/docling-serve:v1.39.0
     restart: unless-stopped
     environment:
       # Portal-api may need to retry /v1/result after a transient
@@ -2455,7 +2455,7 @@ services:
 
   firecrawl-api:
     logging: *log-rotation
-    image: ghcr.io/firecrawl/firecrawl:2.11.804
+    image: ghcr.io/firecrawl/firecrawl:2.11.827
     restart: unless-stopped
     environment:
       PORT: "3002"
