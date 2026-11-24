@@ -142,40 +142,6 @@
         }
       ],
       "expires": "2027-05-24"
-    },
-    {
-      "id": "vaultwarden-db-clients",
-      "services": [
-        "deploy/vaultwarden"
-      ],
-      "component": {
-        "purl": [
-          "pkg:deb/debian/libpq5",
-          "pkg:deb/debian/libmariadb3",
-          "pkg:deb/debian/mariadb-common"
-        ]
-      },
-      "justification": "vulnerable_code_not_in_execute_path",
-      "reason": "Vaultwarden runs on its built-in SQLite database here: compose sets no DATABASE_URL and does not attach the service to the postgres network, so the PostgreSQL and MariaDB client libraries are linked but never open a connection.",
-      "evidence": [
-        "Vaultwarden .env.template: DATABASE_URL defaults to sqlite://data/db.sqlite3; PostgreSQL or MySQL is used only when DATABASE_URL names it.",
-        "deploy/docker-compose.yml vaultwarden: no DATABASE_URL, no env_file, networks klai-net only (checked by the condition below)."
-      ],
-      "conditions": [
-        {
-          "service": "deploy/vaultwarden",
-          "env_unset": [
-            "DATABASE_URL"
-          ],
-          "networks_exclude": [
-            "net-postgres"
-          ]
-        }
-      ],
-      "verified_against": [
-        "vaultwarden/server:1.37.5"
-      ],
-      "expires": "2027-05-24"
     }
   ]
 }
