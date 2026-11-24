@@ -20,6 +20,11 @@ on:
       - 'deploy/scripts/lib/librechat-*.mjs'
       - 'deploy/scripts/*-librechat-*.mjs'
       - '.github/workflows/librechat-image-build.yml'
+      # The screen check below and the selectors it shares with the journeys.
+      - 'deploy/tests/chat-config-boot.sh'
+      - 'deploy/tests/chat-model-stub.js'
+      - 'klai-portal/frontend/e2e/chat-image/**'
+      - 'klai-portal/frontend/e2e/prod-tenant/_lib/chat-selectors.ts'
   pull_request:
     paths:
       - 'deploy/librechat/patches-source/**'
@@ -27,6 +32,11 @@ on:
       - 'deploy/scripts/lib/librechat-*.mjs'
       - 'deploy/scripts/*-librechat-*.mjs'
       - '.github/workflows/librechat-image-build.yml'
+      # The screen check below and the selectors it shares with the journeys.
+      - 'deploy/tests/chat-config-boot.sh'
+      - 'deploy/tests/chat-model-stub.js'
+      - 'klai-portal/frontend/e2e/chat-image/**'
+      - 'klai-portal/frontend/e2e/prod-tenant/_lib/chat-selectors.ts'
   workflow_dispatch:
     inputs:
       librechat_tag:
@@ -185,6 +195,45 @@ jobs:
           KLAI_BUILT_ARTIFACTS_DIR=/tmp/built-patches \
             node --test deploy/librechat/tests/built_artifacts.test.cjs
           git checkout -- deploy/librechat/patches/
+
+      # The screen the production journeys click through, on the image this
+      # pull request built, before any tenant runs it. On 2026-11-24 upstream
+      # v0.8.9 dropped the send button's element id; the journeys noticed only
+      # after all 45 tenants had moved. The check imports the journeys' own
+      # selectors (e2e/prod-tenant/_lib/chat-selectors.ts) and runs on the
+      # boot check's startup with local login and a stand-in model, so it can
+      # send a message and rate the answer; see e2e/chat-image/screen.check.ts
+      # for what it cannot see. About a minute on top of the build.
+      - name: Set up Node.js for the screen check
+        if: github.event_name == 'pull_request'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '26'
+          cache: 'npm'
+          cache-dependency-path: klai-portal/frontend/package-lock.json
+
+      - name: Screen check of the built image
+        if: github.event_name == 'pull_request'
+        env:
+          PLAYWRIGHT_BROWSER_CHANNEL: chrome
+          IMAGE: ${{ steps.params.outputs.image }}
+        run: |
+          set -euo pipefail
+          npm ci --prefix klai-portal/frontend --no-audit --no-fund
+          sh deploy/tests/chat-config-boot.sh "$IMAGE" deploy/librechat/librechat.yaml \
+            npm --prefix klai-portal/frontend exec -- \
+            playwright test -c klai-portal/frontend/e2e/chat-image/playwright.config.ts
+
+      - name: Upload the screen check report
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: chat-screen-check-report
+          path: |
+            klai-portal/frontend/e2e/chat-image/playwright-report/
+            klai-portal/frontend/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
 
       # A tag that can be overwritten cannot be rolled back to. Refuse to
       # replace an existing tag with different content rather than silently

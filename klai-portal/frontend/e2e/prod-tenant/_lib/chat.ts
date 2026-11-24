@@ -10,6 +10,7 @@
  * docs/testing/test-suite-plan.md §6 (J02, J04).
  */
 import type { Frame, Page } from '@playwright/test'
+import { CHAT } from './chat-selectors'
 
 /**
  * Navigate to /app/chat and return the live LibreChat conversation frame.
@@ -29,7 +30,7 @@ export async function getChatFrame(page: Page): Promise<Frame> {
     const frame = page
       .frames()
       .find((candidate) => candidate.url().includes('chat-') && candidate.url().includes('/c/'))
-    if (frame && (await frame.locator('#prompt-textarea').count())) {
+    if (frame && (await frame.locator(CHAT.promptTextarea).count())) {
       return frame
     }
     await page.waitForTimeout(500)
@@ -61,8 +62,8 @@ export function hasTcpExplanation(text: string): boolean {
  * invisible to J02 from 2026-10-23 13:51 UTC (run 39964644408 onwards).
  */
 export function latestReplyText(frame: Frame): Promise<string> {
-  return frame.evaluate(() => {
-    const replies = document.querySelectorAll<HTMLElement>('.agent-turn')
+  return frame.evaluate((selector) => {
+    const replies = document.querySelectorAll<HTMLElement>(selector)
     return replies.length ? (replies[replies.length - 1].textContent ?? '') : ''
-  })
+  }, CHAT.assistantTurn)
 }

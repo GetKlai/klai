@@ -41,6 +41,7 @@
  */
 import { test, expect } from '@playwright/test'
 import { getChatFrame } from './_lib/chat'
+import { CHAT } from './_lib/chat-selectors'
 
 test('J04 - chat feedback click reaches LibreChat feedback route and marks active', async ({ page }) => {
   test.setTimeout(120_000)
@@ -48,20 +49,20 @@ test('J04 - chat feedback click reaches LibreChat feedback route and marks activ
   const frame = await getChatFrame(page)
   const prompt = `Zeg alleen "hallo" en niets anders. Prod smoke ${Date.now()}`
 
-  await frame.locator('#prompt-textarea').fill(prompt)
-  await frame.locator('[data-testid="send-button"]').click()
+  await frame.locator(CHAT.promptTextarea).fill(prompt)
+  await frame.locator(CHAT.sendButton).click()
 
   // Mode-agnostic completion signal: the regenerate control is only
   // rendered for a finished assistant turn (it cannot regenerate a
   // response that hasn't finished streaming yet).
   await frame
-    .locator('[data-testid="regenerate-generation-button"]')
+    .locator(CHAT.regenerateButton)
     .waitFor({ state: 'visible', timeout: 90_000 })
 
   // By accessible name, not by title: from LibreChat v0.8.8 the active-state
   // button that replaces it after a rating carries aria-label="Love this" and
   // no title, so a title selector loses the button exactly when it is pressed.
-  const loveButton = frame.getByRole('button', { name: 'Love this', exact: true }).last()
+  const loveButton = frame.getByRole('button', { name: CHAT.loveButtonName, exact: true }).last()
   await expect(loveButton, '"Love this" feedback control should render on the completed message').toBeVisible()
   await expect(loveButton, 'feedback should start unset').toHaveAttribute('aria-pressed', 'false')
 
@@ -69,14 +70,14 @@ test('J04 - chat feedback click reaches LibreChat feedback route and marks activ
 
   // Selecting "Love this" opens a reason-tag popover; the PUT to
   // LibreChat's own feedback route only fires once a tag is picked.
-  const tagButton = frame.locator('[role="dialog"] button[aria-label]').first()
+  const tagButton = frame.locator(CHAT.feedbackTagButton).first()
   await expect(tagButton, 'reason-tag popover should open after clicking "Love this"').toBeVisible({
     timeout: 10_000,
   })
 
   const feedbackResponse = frame.page().waitForResponse(
     (response) =>
-      /\/api\/messages\/[^/]+\/[^/]+\/feedback$/.test(new URL(response.url()).pathname) &&
+      CHAT.feedbackRoute.test(new URL(response.url()).pathname) &&
       response.request().method() === 'PUT',
     { timeout: 15_000 },
   )
