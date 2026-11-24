@@ -12,7 +12,7 @@
 | Where do exemptions live? | `<service>/.trivyignore.yaml` (e.g. `klai-portal/backend/.trivyignore.yaml`) |
 | Who blocks me at commit time? | `.githooks/pre-commit` (after `git config core.hooksPath .githooks`) |
 | Who blocks me at PR time? | `.github/workflows/validate-trivyignore.yml` |
-| Who blocks me at scan time? | `<service>.yml` workflow's `scan` job (STRICT-tier, exit-code 1). It runs on the pull request too: `quality.yml` fails a pull request that changes a Dockerfile unless that image's scan ran to success (`scripts/require-image-scans.py`). A new Dockerfile has to be added to the map in that script. |
+| Who blocks me at scan time? | `<service>.yml` workflow's `scan` job (STRICT-tier, exit-code 1). It runs on the pull request too: `quality.yml` fails a pull request that changes a Dockerfile unless that image's scan ran to success (`scripts/require-image-scans.py`). A new Dockerfile has to be added to the map in that script. Pull requests from forks cannot push the `:<sha>` image and therefore fail the build for services that scan a pushed image, as was already the case for connector, mailer and slack. |
 
 ---
 

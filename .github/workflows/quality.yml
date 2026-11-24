@@ -34,6 +34,7 @@ jobs:
       connector: ${{ steps.filter.outputs.connector }}
       trivyignore: ${{ steps.filter.outputs.trivyignore }}
       graph_contract: ${{ steps.filter.outputs.graph_contract }}
+      crawl4ai_contract: ${{ steps.filter.outputs.crawl4ai_contract }}
       caddy: ${{ steps.filter.outputs.caddy }}
       whisper_server: ${{ steps.filter.outputs.whisper_server }}
       bge_m3_sparse: ${{ steps.filter.outputs.bge_m3_sparse }}
@@ -128,6 +129,16 @@ jobs:
             # Image workflows that used to run on main only. Unlike the filters
             # above they do not include quality.yml: each is a 5-15 minute image
             # build that an edit to this file should not start.
+            crawl4ai_contract:
+              - 'deploy/crawl4ai/**'
+              - 'deploy/docker-compose.yml'
+              - 'deploy/tests/crawl4ai-config-contract.sh'
+              - 'deploy/tests/crawl4ai-cookie-contract.sh'
+              - 'deploy/tests/crawl4ai-contract-step.sh'
+              - 'deploy/tests/test-crawl4ai-contract-step.sh'
+              - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py'
+              - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.py'
+              - '.github/workflows/crawl4ai-contract.yml'
             caddy:
               - 'deploy/caddy/Dockerfile'
               - 'deploy/caddy/build.sh'
@@ -230,6 +241,12 @@ jobs:
     uses: ./.github/workflows/graph-contract.yml
     secrets: inherit
 
+  crawl4ai-contract:
+    needs: changes
+    if: needs.changes.outputs.crawl4ai_contract == 'true'
+    uses: ./.github/workflows/crawl4ai-contract.yml
+    secrets: inherit
+
   caddy:
     needs: changes
     if: needs.changes.outputs.caddy == 'true'
@@ -266,6 +283,7 @@ jobs:
       - connector
       - trivyignore
       - graph-contract
+      - crawl4ai-contract
       - caddy
       - whisper-server
       - bge-m3-sparse
