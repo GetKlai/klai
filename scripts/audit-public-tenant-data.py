@@ -18,7 +18,16 @@ What it looks for:
    ordinary cells and carry step numbers and ports, and were reported row by
    row until 2026-11-12.
 2. A LibreChat database name (``librechat-<slug>``) that does not already appear
-   on the default branch. Those names are per-customer by construction.
+   on the default branch. Those names are per-customer by construction: the
+   portal derives them from the organisation slug alone
+   (``provisioning_names.py``), so nothing in the shape tells a tenant from a
+   code name. The one thing that does is the repository itself: a token that
+   ends a file or directory name tracked in this checkout or added by the diff
+   (``deploy/scripts/librechat-foo-bar.sh``, ``librechat-foo-bar.test.sh``, a
+   workflow, a test file) names that file, and a commit message or pull-request
+   text citing it is not naming a customer. Ceiling: a new tenant whose slug
+   equals the tail of an existing file name passes this rule; rule 4 still
+   catches it whenever the name list is available.
 3. A customer name and a count in the same sentence. Folded into rule 4 on
    2026-10-29: a name with a count is a finding, and so is a name without one.
 4. A customer name in ANY added line (prose, comment, code, fixture, commit
@@ -83,6 +92,7 @@ _TENANT_WORD = re.compile(
 _TABLE_LINE = re.compile(r"^\s*\|?[^|]*\|.*$")
 _SEPARATOR_CELL = re.compile(r"^:?-{2,}:?$")
 _LIBRECHAT_DB = re.compile(r"\blibrechat-([a-z0-9][a-z0-9-]{2,})\b")
+_LIBRECHAT_PREFIX = re.compile(r"librechat-")
 _DIGIT = re.compile(r"\d")
 _NAMES_FILE = Path.home() / ".config" / "klai" / "tenant-names.txt"
 # The list is regenerated nightly on core-01 and fetched at session start, so a
@@ -223,6 +233,7 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
     """Findings as "<file>:<line>: <kind>". Never includes the matched text."""
     problems: list[str] = []
     known = _known_librechat_names()
+    in_paths = _path_names(_tracked_paths() + re.findall(r"^\+\+\+ b/(.+)$", diff, re.MULTILINE))
     customer = _names_pattern(names or [])
     allowed = _allowed_domains()
     path = ""
@@ -264,7 +275,7 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
 
         problems.extend(_line_findings(path, line_no, body, customer, allowed))
         for match in _LIBRECHAT_DB.finditer(body):
-            if match.group(1) not in known:
+            if match.group(1) not in known and match.group(1) not in in_paths:
                 problems.append(f"{path}:{line_no}: a customer database name that is new here")
 
         if not _TABLE_LINE.match(body) or _is_separator(body) or not _DIGIT.search(body):
@@ -346,6 +357,27 @@ def _known_librechat_names() -> set[str]:
         if result.returncode == 0:
             return {m.group(1) for m in _LIBRECHAT_DB.finditer(result.stdout)}
     return set()
+
+
+def _path_names(paths: list[str]) -> set[str]:
+    """Every ``<slug>`` such that ``librechat-<slug>`` ends a path segment's stem.
+
+    The stem is the segment up to its first dot, so ``a/deploy-librechat-x.test.sh``
+    yields ``x``. The match must start the stem or follow a ``-`` or ``_``.
+    """
+    names: set[str] = set()
+    for path in paths:
+        for segment in path.split("/"):
+            stem = segment.split(".", 1)[0]
+            for start in _LIBRECHAT_PREFIX.finditer(stem):
+                if start.start() == 0 or stem[start.start() - 1] in "-_":
+                    names.add(stem[start.end() :])
+    return names
+
+
+def _tracked_paths() -> list[str]:
+    result = subprocess.run(["git", "ls-files", "-z", "--full-name", "--", ":/"], capture_output=True, check=False)
+    return list(filter(None, result.stdout.decode("utf-8", "replace").split("\0"))) if result.returncode == 0 else []
 
 
 def _print_tree(problems: list[str]) -> None:
