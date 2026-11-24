@@ -24,6 +24,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    SparseVector,
     SparseVectorParams,
     VectorParams,
 )
@@ -80,7 +81,15 @@ async def store(graph_helpers: Contract, tenant_rows, monkeypatch, real_procrast
         artifact = await insert({"document_text": _TEXT}, active=True)
         for product in ("enrichment", "graph"):
             await set_product_state(conn, artifact, product, "pending")
-        await qdrant_store.upsert_chunks(org_id, "docs", "page", [_TEXT], [[0.1, 0.2]], artifact)
+        await qdrant_store.upsert_chunks(
+            org_id,
+            "docs",
+            "page",
+            [_TEXT],
+            [[0.1, 0.2]],
+            [SparseVector(indices=[1], values=[1.0])],
+            artifact,
+        )
         return artifact
 
     async def graph(artifact: str) -> None:
