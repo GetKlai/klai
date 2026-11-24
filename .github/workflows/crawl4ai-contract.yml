@@ -1,30 +1,42 @@
 name: crawl4ai contract
 
-# Runs the crawl config knowledge-ingest sends against the crawl4ai image we
-# deploy. Bumping the crawl4ai pin or editing the config is the only way the two
-# drift apart, and on 2026-10-23 a bump to 0.9.5 made crawl4ai refuse our
-# JavaScript wait_for with HTTP 400: six nights of 0-page crawls behind a green
-# CI. The image is built from deploy/crawl4ai because the deployed tag is built
-# on core-01 and never pushed to a registry.
+# Runs the contracts between knowledge-ingest and the crawl4ai image we deploy.
+# Bumping the crawl4ai pin or editing the client is the only way the two drift
+# apart, and on 2026-10-23 a bump to 0.9.5 made crawl4ai refuse our JavaScript
+# wait_for with HTTP 400: six nights of 0-page crawls behind a green CI. The
+# image is built from deploy/crawl4ai because the deployed tag is built on
+# core-01 and never pushed to a registry.
 #
-# crawl4ai-config-contract.sh fails against 0.9.5 until the config is fixed;
-# that is the bug it was written for.
+# quality.yml calls this workflow for pull requests (selected by path), so a
+# failing contract turns the required `quality` check red.
+#
+# Two scripts run against that one image:
+#   - crawl4ai-config-contract.sh: the production crawl config is accepted.
+#     It fails against 0.9.5 until the config is fixed; that is the bug it was
+#     written for.
+#   - crawl4ai-cookie-contract.sh: the version pin (VERIFIED=), the
+#     body-visibility field, the user agent against the image's Chromium major,
+#     and cookie delivery and isolation. It was run by hand until the 0.9.6
+#     bump, when the manual run found knowledge-ingest announcing Chrome/156
+#     on an image that ships Chromium 159. It reads the echo service
+#     httpbin.org for the cookie checks; when that is unreachable the script
+#     exits 3 (SKIPPED, only after a direct request to it from the runner also
+#     fails), which this workflow reports in the job summary without
+#     failing the pull request.
 
 on:
-  pull_request:
-    paths:
-      - 'deploy/crawl4ai/**'
-      - 'deploy/docker-compose.yml'
-      - 'deploy/tests/crawl4ai-config-contract.sh'
-      - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py'
-      - '.github/workflows/crawl4ai-contract.yml'
+  workflow_call:
   push:
     branches: [main]
     paths:
       - 'deploy/crawl4ai/**'
       - 'deploy/docker-compose.yml'
       - 'deploy/tests/crawl4ai-config-contract.sh'
+      - 'deploy/tests/crawl4ai-cookie-contract.sh'
+      - 'deploy/tests/crawl4ai-contract-step.sh'
+      - 'deploy/tests/test-crawl4ai-contract-step.sh'
       - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py'
+      - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.py'
       - '.github/workflows/crawl4ai-contract.yml'
   workflow_dispatch:
 
@@ -47,8 +59,18 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
+      - name: Step verdict handling (only SKIPPED stays green)
+        run: sh deploy/tests/test-crawl4ai-contract-step.sh
+
       - name: Build the crawl4ai image from deploy/crawl4ai
         run: docker build -t crawl4ai-contract:ci deploy/crawl4ai
 
       - name: The production crawl config is accepted by crawl4ai
         run: sh deploy/tests/crawl4ai-config-contract.sh crawl4ai-contract:ci
+
+      # The step script decides what the exit code means: only the cookie
+      # script's own SKIPPED (3, after it proved httpbin.org unreachable from
+      # this host) stays green, with a warning and a job-summary note. Any other
+      # non-zero exit is a real break and fails the job.
+      - name: Cookie, isolation, body-visibility and user-agent contracts
+        run: sh deploy/tests/crawl4ai-contract-step.sh sh deploy/tests/crawl4ai-cookie-contract.sh crawl4ai-contract:ci

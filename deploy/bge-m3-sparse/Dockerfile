@@ -31,6 +31,9 @@ ENV WHISPER_DOWNLOAD_ROOT=/models
 ENV MODEL_NAME=BAAI/bge-m3
 ENV HF_HOME=/models
 
+# The base image's pip vendors libraries with open HIGH advisories (msgpack, urllib3, setuptools) and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 # SEC-018: drop root for runtime — BGE-M3 writes model weights into /models
 # which is owned by the `app` user at build time.
 USER app

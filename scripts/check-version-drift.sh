@@ -20,6 +20,7 @@
 # Env: GH_TOKEN with read access to REPOS; MAX_PR_AGE_DAYS (default 14);
 # AUTOMERGE_MAX_AGE_DAYS (default 3) and AUTOMERGE_WAIT_MAX_DAYS (default 10,
 # for a PR that is only pending); RENOVATE_MAX_RUN_AGE_HOURS (default 6);
+# E2E_ISSUE_MAX_AGE_HOURS (default 24) for the open E2E prod-tenant issue;
 # ACTIONS_TOKEN (optional) for reading workflow runs, which the Renovate app
 # token cannot do (the app has no actions permission); defaults to GH_TOKEN.
 set -uo pipefail
@@ -28,6 +29,7 @@ MAX_PR_AGE_DAYS="${MAX_PR_AGE_DAYS:-14}"
 AUTOMERGE_MAX_AGE_DAYS="${AUTOMERGE_MAX_AGE_DAYS:-3}"
 AUTOMERGE_WAIT_MAX_DAYS="${AUTOMERGE_WAIT_MAX_DAYS:-10}"
 RENOVATE_MAX_RUN_AGE_HOURS="${RENOVATE_MAX_RUN_AGE_HOURS:-6}"
+E2E_ISSUE_MAX_AGE_HOURS="${E2E_ISSUE_MAX_AGE_HOURS:-24}"
 RENOVATE_REPO=GetKlai/klai
 FAIL=0
 fail() { printf 'FAIL: %s\n' "$*"; FAIL=1; }
@@ -117,6 +119,32 @@ run_age=$(GH_TOKEN="${ACTIONS_TOKEN:-${GH_TOKEN:-}}" gh run list -R "$RENOVATE_R
 if [ -z "$run_age" ]; then fail "$RENOVATE_REPO: no successful renovate.yml run found"
 elif [ "$run_age" -ge "$RENOVATE_MAX_RUN_AGE_HOURS" ]; then fail "$RENOVATE_REPO: last successful renovate.yml run was ${run_age}h ago (limit ${RENOVATE_MAX_RUN_AGE_HOURS}h)"
 else ok "$RENOVATE_REPO: last successful renovate.yml run ${run_age}h ago"; fi
+
+# A red main nobody acts on. E2E prod-tenant failed on main from 2026-11-19 to
+# 2026-11-22 while its ci-failure issue sat open for three days, and
+# Auto-rollback undid every deploy in between. Its issue opens on the first
+# red run and closes on the next green one (ci-failure-notice.yml), so its age
+# is how long main has been red; a reopened issue counts from its reopening.
+if ! e2e=$(gh issue list -R "$RENOVATE_REPO" --state open --label ci-failure --limit 1000 --json number,title,createdAt \
+  --jq '.[] | select(.title == "CI failure: E2E prod-tenant") | "\(.number) \(.createdAt)"'); then
+  fail "$RENOVATE_REPO: could not list the ci-failure issues"
+elif [ -z "$e2e" ]; then
+  ok "$RENOVATE_REPO: no open ci-failure issue for E2E prod-tenant"
+else
+  read -r num opened <<<"$e2e"
+  if ! reopened=$(gh api --paginate "repos/$RENOVATE_REPO/issues/$num/events" --jq '.[] | select(.event == "reopened") | .created_at'); then
+    fail "$RENOVATE_REPO: could not read the events of #$num"
+  else
+    reopened=$(printf '%s\n' "$reopened" | tail -n1)
+    opened=${reopened:-$opened}
+    age=$(jq -rn --arg t "$opened" '(now - ($t | fromdateiso8601)) / 3600 | floor')
+    if [ "$age" -ge "$E2E_ISSUE_MAX_AGE_HOURS" ]; then
+      fail "$RENOVATE_REPO: #$num CI failure: E2E prod-tenant has been open ${age}h (limit ${E2E_ISSUE_MAX_AGE_HOURS}h): E2E is red on main since $opened"
+    else
+      ok "$RENOVATE_REPO: #$num CI failure: E2E prod-tenant open ${age}h, under ${E2E_ISSUE_MAX_AGE_HOURS}h"
+    fi
+  fi
+fi
 
 compose=deploy/docker-compose.yml
 upstream_latest() { gh api "repos/$1/releases/latest" --jq .tag_name 2>/dev/null | sed 's/^v//'; }

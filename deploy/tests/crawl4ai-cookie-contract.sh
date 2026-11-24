@@ -2,10 +2,14 @@
 # Do the cookies we send to crawl4ai reach the site -- and only that site's
 # own request?
 #
-# Run this before changing the crawl4ai pin, the cookie payload, or
-# CRAWL4AI_HOOKS_ENABLED. It is the executable form of the check that was
-# missing: the previous test asserted the SHAPE of the dict we build, which
-# stayed green for four weeks while crawl4ai silently dropped it.
+# CI runs this on every pull request and main change that touches the crawl4ai
+# image, the compose pin, crawl4ai_client.py or this file
+# (.github/workflows/crawl4ai-contract.yml, against the image it builds from
+# deploy/crawl4ai). You can also run it by hand before changing the crawl4ai
+# pin, the cookie payload, or CRAWL4AI_HOOKS_ENABLED. It is the executable form
+# of the check that was missing: the previous test asserted the SHAPE of the
+# dict we build, which stayed green for four weeks while crawl4ai silently
+# dropped it.
 #
 # Four contracts, because fixing the first exposed the others:
 #
@@ -41,6 +45,16 @@
 # removed on exit. Uses httpbin.org, which echoes back the cookies it
 # received; a failure there is reported as SKIPPED, separately from a real
 # contract break.
+#
+# Usage: crawl4ai-cookie-contract.sh [IMAGE]
+#   IMAGE defaults to the pin in deploy/docker-compose.yml; CI passes the image
+#   it just built.
+# Exit codes: 0 every contract holds; 1 a contract is broken (or the version
+#   pin is stale, or crawl4ai itself answered wrongly); 3 SKIPPED, and only when
+#   a direct request to httpbin.org from this host also fails, which leaves
+#   DELIVERY and ISOLATION unchecked while VERSION, BODY-VISIBILITY and
+#   USER-AGENT (which run first and need no network) have passed. A crawl that
+#   fails while httpbin.org answers the direct request is a failure (exit 1).
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -152,7 +166,12 @@ print(f"OK: we claim Chrome/{claimed}, the image runs Chromium {engine}, "
       "and user_agent and enable_stealth are read.")
 PY
 
-docker exec -i -e TOKEN="$TOKEN" ${P}-srv python - <<'PY'
+# The Python below exits 2 when the echo service may be at fault (crawl4ai
+# answered non-200, or the echo page did not load). That is only a suspicion:
+# crawl4ai can fail by itself, so it is checked against the echo service
+# directly before anything is called a skip.
+rc=0
+docker exec -i -e TOKEN="$TOKEN" ${P}-srv python - <<'PY' || rc=$?
 import json, os, sys
 import httpx
 
@@ -243,3 +262,12 @@ if MARKER not in fetch(True, "with cookies, again"):
 
 print("OK: the cookie arrived at the site, and only on the requests that sent it.")
 PY
+if [ "$rc" -eq 2 ]; then
+    if curl -fsS --max-time 20 -o /dev/null https://httpbin.org/cookies; then
+        echo "CONTRACT BROKEN - the crawl failed although httpbin.org answers a direct request from this host, so the echo service is not the cause." >&2
+        exit 1
+    fi
+    echo "SKIPPED - httpbin.org does not answer a direct request from this host either." >&2
+    exit 3
+fi
+exit "$rc"
