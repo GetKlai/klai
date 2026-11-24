@@ -93,6 +93,12 @@ jobs:
       - name: Test (pytest)
         run: uv run --frozen --extra dev pytest -q --tb=short -n auto
 
+      # Time budgets run alone, after the -n auto workers have finished: a budget
+      # measured beside them missed by 5 s on a run that changed nothing it
+      # measures (2026-11-24).
+      - name: Test time budgets (serial)
+        run: uv run --frozen --extra dev pytest -q --tb=short -n 0 -m perf
+
   durability-postgres:
     runs-on: ubuntu-latest
     defaults:

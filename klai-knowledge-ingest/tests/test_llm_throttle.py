@@ -23,6 +23,7 @@ from knowledge_ingest.llm_throttle import (
 )
 
 
+@pytest.mark.perf
 class TestTokenBucketLimiterBurst:
     @pytest.mark.asyncio
     async def test_burst_capacity_returns_near_instantly(self):
@@ -37,6 +38,7 @@ class TestTokenBucketLimiterBurst:
         assert elapsed < 0.1
 
 
+@pytest.mark.perf
 class TestTokenBucketLimiterPacing:
     @pytest.mark.asyncio
     async def test_exhausted_burst_paces_to_rate(self):
