@@ -3,7 +3,8 @@
 # with a failed check or pending past any release age, and name it, while a PR
 # that is only waiting out its release age is noted, not failed. gh and curl are stubbed on
 # PATH; the stub applies the script's own --jq filter to canned JSON, so the
-# real age and author filters run.
+# real age and author filters run. Holds come from a list of their own, never the
+# repository's, so a real hold expiring cannot turn this test red.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -43,6 +44,8 @@ echo '[]' > "$tmp/issue-events.json"
 jq -n '[{title: "Dependency Dashboard", author: {login: "app/klai-renovate"}, body: "## Repository Problems\n\nRenovate tried to run on this repository, but found these problems.\n\n - WARN: Some release(s) did not have a releaseTimestamp, but as we are running with minimumReleaseAgeBehaviour=timestamp-optional, proceeding.\n"}]' > "$tmp/issue-list.json"
 jq -n '[{createdAt: (now - 3600 | todate)}]' > "$tmp/run-list.json"
 
+: > "$tmp/holds.txt"
+export HOLDS_FILE="$tmp/holds.txt"
 run_script() {
   (cd "$root" && STUB_DIR="$tmp" PATH="$tmp/bin:$PATH" REPOS=GetKlai/klai bash scripts/check-version-drift.sh 2>/dev/null) || true
 }
@@ -95,5 +98,27 @@ e2e_issue 120
 jq -n '[{event: "closed", created_at: (now - 50 * 3600 | todate)}, {event: "reopened", created_at: (now - 2 * 3600 | todate)}]' > "$tmp/issue-events.json"
 out=$(run_script)
 grep -q 'OK:   GetKlai/klai: #2001 CI failure: E2E prod-tenant open 2h' <<<"$out" || fail "a reopened issue was aged from its creation"
+
+# Holds: the 11-day pending PR #101 is stuck until a hold names it.
+day() { date -u -d "$1 days" +%F 2>/dev/null || date -u -v"$1"d +%F; }
+hold() { printf 'pr-101|%s|PR 101|%s|upstream releases a fix|waiting on upstream\n' "$1" "$2" > "$tmp/holds.txt"; }
+out=$(run_script)
+grep -q 'FAIL: GetKlai/klai: automerge PR #101' <<<"$out" || fail "an unheld stuck PR must fail"
+hold GetKlai/klai "$(day +10)"
+out=$(run_script)
+grep -q 'FAIL: GetKlai/klai: automerge PR #101' <<<"$out" && fail "a PR inside its hold was reported as stuck"
+grep -q "NOTE: GetKlai/klai: #101 open 11d is held by 'pr-101'" <<<"$out" || fail "held PR not noted"
+grep -q 'NOTE: hold pr-101 (GetKlai/klai) until' <<<"$out" || fail "hold not listed"
+grep -qE 'FAIL: (hold|GetKlai)' <<<"$out" && fail "a hold inside its date left a FAIL for the hold or the repository"
+hold GetKlai/klai "$(day -1)"
+out=$(run_script)
+grep -q 'FAIL: hold pr-101 (GetKlai/klai) expired on' <<<"$out" || fail "an expired hold must fail"
+grep -q 'FAIL: GetKlai/klai: automerge PR #101' <<<"$out" || fail "a PR past its hold must be stuck again"
+hold GetKlai/klai-website "$(day +10)"
+out=$(run_script)
+grep -q 'FAIL: GetKlai/klai: automerge PR #101' <<<"$out" || fail "a hold for another repository must not hide the PR"
+printf 'pr-101|GetKlai/klai|PR 101|soon|x|y\n' > "$tmp/holds.txt"
+out=$(run_script)
+grep -q "FAIL: hold 'pr-101'" <<<"$out" || fail "a hold without a valid date must fail"
 
 echo "check-version-drift: PASS"
