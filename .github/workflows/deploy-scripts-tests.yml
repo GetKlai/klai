@@ -43,6 +43,8 @@ on:
       - 'scripts/tests/test_require_image_scans.py'
       - 'scripts/renovate-revert-after-rollback.py'
       - 'scripts/tests/test_renovate_revert_after_rollback.py'
+      - 'scripts/ship-verdict.sh'
+      - 'scripts/tests/ship-verdict.test.sh'
   push:
     branches: [main]
     paths:
@@ -72,6 +74,8 @@ on:
       - 'scripts/tests/test_require_image_scans.py'
       - 'scripts/renovate-revert-after-rollback.py'
       - 'scripts/tests/test_renovate_revert_after_rollback.py'
+      - 'scripts/ship-verdict.sh'
+      - 'scripts/tests/ship-verdict.test.sh'
 
 permissions:
   contents: read
@@ -120,6 +124,11 @@ jobs:
       # that stops matching would silence it without any run turning red.
       - name: Version drift alarm
         run: bash scripts/tests/check-version-drift.test.sh
+
+      # The verdict an operator acts on after a merge: a cancelled E2E run or a
+      # failed deploy step read as green would send a broken rollout on.
+      - name: ship-verdict suite
+        run: bash scripts/tests/ship-verdict.test.sh
 
       # Renovate automerges Twenty one minor per PR, but nothing orders the
       # merges. Only the next hop may go green; see check-twenty-hop.sh.
