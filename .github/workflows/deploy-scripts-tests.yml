@@ -185,6 +185,10 @@ jobs:
       - name: rollback-since replay suite
         run: bash deploy/scripts/tests/rollback-since.test.sh
 
+      # The staged chat image rollout: a red canary must leave the fleet alone.
+      - name: chat image rollout suite
+        run: bash deploy/scripts/tests/chat-image-rollout.test.sh
+
       # Which E2E run proves that E2E is red for a reason outside the deploys;
       # a wrong pick leaves a breaking deploy live.
       - name: e2e-rollback-evidence suite

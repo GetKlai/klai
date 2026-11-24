@@ -4,10 +4,15 @@
 # Regenerate per-tenant LibreChat configs from the updated base template.
 # portal-api exposes an internal endpoint that re-runs _generate_librechat_yaml
 # for each tenant, writes the result, flushes Redis, and restarts containers.
-# Push-triggered config/catalog/patch changes use restart-only. Full recreate is
-# reserved for explicit workflow_dispatch image rollouts.
+# Push-triggered config/catalog/patch changes use restart-only. Recreate is used
+# by chat-image-rollout.sh (one tenant, then all) and by an explicit
+# workflow_dispatch; either way the image each tenant gets is the one the
+# rollout state on the host names.
 #
-# Usage: RECREATE_CONTAINERS=true|false tenant-config-regenerate.sh
+# Usage: RECREATE_CONTAINERS=true|false [TENANT=<slug>] tenant-config-regenerate.sh
+#
+# TENANT narrows the run to one tenant (the endpoint's ?tenant=); the staged
+# chat image rollout (chat-image-rollout-host.sh) uses it for the canary.
 #
 # deploy-librechat-config.yml runs this from its own sparse checkout, so the
 # script and the base config it just synced always come from the same commit.
@@ -22,6 +27,7 @@ DOCKER="${KLAI_DOCKER_BIN:-docker}"
 AUTHZ_WAIT_ATTEMPTS="${KLAI_AUTHZ_WAIT_ATTEMPTS:-24}"
 AUTHZ_WAIT_INTERVAL="${KLAI_AUTHZ_WAIT_INTERVAL:-5}"
 RECREATE_CONTAINERS="${RECREATE_CONTAINERS:-false}"
+TENANT="${TENANT:-}"
 
 # docker compose calls getwd() and crashes if cwd no longer exists, which is
 # where a caller that just removed its checkout would leave us.
@@ -89,17 +95,23 @@ fi
 # script's exit (set -e), and every printed line, the errors list included,
 # is already in the output.
 echo "Triggering tenant config regeneration via portal-api..."
-portal_api_python -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" portal-api python -c '
+portal_api_python -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" -e TENANT="$TENANT" portal-api python -c '
 import json
 import os
 import sys
+import urllib.parse
 
 import httpx
 
 secret = os.environ["INTERNAL_SECRET"]
 url = "http://localhost:8010/internal/librechat/regenerate"
+params = {}
 if os.environ.get("RECREATE_CONTAINERS") == "true":
-    url += "?recreate_containers=true"
+    params["recreate_containers"] = "true"
+if os.environ.get("TENANT"):
+    params["tenant"] = os.environ["TENANT"]
+if params:
+    url += "?" + urllib.parse.urlencode(params)
 
 try:
     r = httpx.post(

@@ -47,6 +47,10 @@ name: Auto-rollback
 # start another round. A spec is also retried once inside every run
 # (playwright.prod.config.ts).
 #
+# A red run that overlaps a `rollout` job of chat-image-rollout.yml is left to
+# that workflow, which puts back the chat image it moved; see the step "Leave a
+# red run during a chat image rollout to that rollout".
+#
 # workflow_dispatch has no inputs and only rehearses: it replays the
 # rollback-canary service, so the whole chain (API lookup, ssh, replay, report,
 # issue label) can be proven on production without touching a real service. Run
@@ -117,9 +121,43 @@ jobs:
           echo "last green E2E run: $id, job started $since; window ends $until"
           printf 'since=%s\nuntil=%s\ncreated=%s\n' "$since" "$until" "$created" >> "$GITHUB_OUTPUT"
 
+      # Chat image rollout (chat-image-rollout.yml) moves the E2E tenant to a
+      # new chat image first and answers a red E2E run itself: it puts back what
+      # it moved. A red run that overlaps its `rollout` job is therefore that
+      # sequence's to handle, and undoing unrelated deploys for it would be
+      # wrong. Matched on the job's own timestamps from the API, not on a run
+      # name, and only the `rollout` job counts: the `plan` job moves nothing.
+      # Deferred, not dropped: the window still starts at the last green run,
+      # so the next red run still rolls back whatever else was deployed.
+      - name: Leave a red run during a chat image rollout to that rollout
+        id: chat-rollout
+        if: steps.green.outputs.since != '' && github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RED_CREATED: ${{ github.event.workflow_run.created_at }}
+          RED_UPDATED: ${{ github.event.workflow_run.updated_at }}
+        run: |
+          set -uo pipefail
+          # Fails open like the evidence lookup below: a failed lookup means
+          # this round goes ahead exactly as it did before the rollout existed.
+          ids="$(gh api "repos/$REPO/actions/workflows/chat-image-rollout.yml/runs?branch=main&per_page=30" \
+            --jq '.workflow_runs[] | select(.run_started_at <= "'"$RED_UPDATED"'" and .updated_at >= "'"$RED_CREATED"'") | .id')" \
+            || { echo "::warning::could not list Chat image rollout runs; treating the red run as Auto-rollback's"; exit 0; }
+          for id in $ids; do
+            overlap="$(gh api "repos/$REPO/actions/runs/$id/jobs" --jq '[.jobs[]
+              | select(.name == "rollout" and .started_at != null and .started_at <= "'"$RED_UPDATED"'"
+                       and (.completed_at == null or .completed_at >= "'"$RED_CREATED"'"))] | length')" || overlap=0
+            if [[ "$overlap" != 0 ]]; then
+              echo "::notice::the red E2E run overlaps Chat image rollout run $id, which handles its own red; nothing rolled back"
+              echo "owned=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
       - name: Confirm with a second E2E run
         id: confirm
-        if: steps.green.outputs.since != '' && github.event_name != 'workflow_dispatch'
+        if: steps.green.outputs.since != '' && github.event_name != 'workflow_dispatch' && steps.chat-rollout.outputs.owned != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

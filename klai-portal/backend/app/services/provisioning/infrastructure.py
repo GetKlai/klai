@@ -26,8 +26,9 @@ from pymongo.errors import OperationFailure
 
 from app.core.config import settings
 from app.core.librechat_images import (
+    IMAGE_ROLLOUT_STATE_FILE,
+    load_image_rollout_state,
     parse_librechat_image_overrides,
-    resolve_librechat_image,
 )
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.services.provisioning._slug_guard import _assert_safe_slug
@@ -76,14 +77,19 @@ def image_bakes_in_patches(image: str) -> bool:
 
 
 def _tenant_librechat_image(slug: str) -> str:
-    """Image for this tenant: its canary override, else the fleet default.
+    """Image for this tenant: its env override, else the rollout state, else the env default.
 
-    Parsed per call rather than cached: the override string comes from the
-    container environment, so a stale cache would mean a deploy that changed it
-    did not take -- the silent-no-op failure this SPEC exists to remove.
+    Both are read per call rather than cached. The rollout state file is
+    rewritten on the host between the canary and the fleet step without
+    restarting portal-api, so a cached copy would recreate tenants on the
+    wrong image -- the silent-no-op failure this SPEC exists to remove.
     """
     overrides = parse_librechat_image_overrides(settings.librechat_image_overrides)
-    image = resolve_librechat_image(slug, settings.librechat_image, overrides)
+    if slug in overrides:
+        image = overrides[slug]
+    else:
+        state = load_image_rollout_state(Path(settings.librechat_container_data_path) / IMAGE_ROLLOUT_STATE_FILE)
+        image = state.image_for(slug) if state else settings.librechat_image
     if image != settings.librechat_image:
         logger.info("librechat_image_override_applied", slug=slug, image=image)
     return image

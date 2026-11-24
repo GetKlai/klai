@@ -17,12 +17,10 @@ import pytest
 from app.core.librechat_images import (
     ImageOverrideError,
     parse_librechat_image_overrides,
-    resolve_librechat_image,
 )
 
 DIGEST = "sha256:" + "a" * 64
 KLAI_IMAGE = f"ghcr.io/getklai/librechat@{DIGEST}"
-DEFAULT = "ghcr.io/danny-avila/librechat:v0.8.7"
 
 
 class TestParsing:
@@ -57,14 +55,3 @@ class TestParsing:
         # silently taking the last one is how a canary lands on the wrong image.
         with pytest.raises(ImageOverrideError, match="duplicate"):
             parse_librechat_image_overrides(f"voys={KLAI_IMAGE},voys={KLAI_IMAGE}")
-
-
-class TestResolution:
-    def test_tenant_without_override_gets_the_fleet_default(self):
-        assert resolve_librechat_image("acme", DEFAULT, {"voys": KLAI_IMAGE}) == DEFAULT
-
-    def test_tenant_with_override_gets_it(self):
-        assert resolve_librechat_image("voys", DEFAULT, {"voys": KLAI_IMAGE}) == KLAI_IMAGE
-
-    def test_no_overrides_at_all(self):
-        assert resolve_librechat_image("voys", DEFAULT, {}) == DEFAULT
