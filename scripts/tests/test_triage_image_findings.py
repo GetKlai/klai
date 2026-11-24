@@ -11,6 +11,7 @@ Run: python3 -m unittest scripts/tests/test_triage_image_findings.py
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import importlib.util
 import io
@@ -165,7 +166,7 @@ class Exposure(unittest.TestCase):
         self.assertEqual(s["exposure"], "unknown")
         self.assertEqual(s["unknown_services"], ["deploy/newcomer"])
         self.assertEqual(s["kept"][0]["reasons"], ["critical-exposed"])
-        self.assertIn("Unclassified, treated as exposed: deploy/newcomer", T.summary_markdown([s]))
+        self.assertIn("Unclassified, treated as exposed: deploy/newcomer", T.summary_markdown([T.aggregate(s)]))
 
     def test_a_route_to_an_unknown_host_stops_the_run(self):
         with self.assertRaisesRegex(T.TriageError, "neither a compose service"):
@@ -277,21 +278,21 @@ class Feeds(unittest.TestCase):
 
         return urlopen, calls
 
-    def test_both_feeds_are_joined(self):
+    def test_kev_and_epss_are_read_from_their_feeds(self):
         urlopen, _ = self.opener(lambda u: self.KEV if u.startswith(T.KEV_URL) else self.EPSS)
-        feeds = T.fetch_feeds({"CVE-2099-0050", "CVE-2099-0051", "GHSA-xxxx"}, urlopen, lambda s: None)
-        self.assertEqual((feeds["kev"], feeds["epss"]), ({"CVE-2099-0050": "2099-01-01"}, {"CVE-2099-0051": 0.5}))
+        self.assertEqual(T.fetch_kev(urlopen, lambda s: None), {"CVE-2099-0050": "2099-01-01"})
+        self.assertEqual(T.fetch_epss({"CVE-2099-0051", "GHSA-xxxx"}, urlopen, lambda s: None), {"CVE-2099-0051": 0.5})
 
     def test_an_unreachable_feed_fails_after_retries_instead_of_reporting_nothing(self):
-        urlopen, calls = self.opener(lambda u: OSError("down") if u.startswith(T.EPSS_URL) else self.KEV)
+        urlopen, calls = self.opener(lambda u: OSError("down"))
         with self.assertRaisesRegex(T.TriageError, "unreachable after 3 attempts"):
-            T.fetch_feeds({"CVE-2099-0051"}, urlopen, lambda s: None)
-        self.assertEqual(sum(c.startswith(T.EPSS_URL) for c in calls), T.FEED_ATTEMPTS)
+            T.fetch_epss({"CVE-2099-0051"}, urlopen, lambda s: None)
+        self.assertEqual(len(calls), T.FEED_ATTEMPTS)
 
     def test_a_kev_answer_without_its_catalog_fails(self):
         urlopen, _ = self.opener(lambda u: {"count": 0, "vulnerabilities": []})
         with self.assertRaisesRegex(T.TriageError, "without its catalog"):
-            T.fetch_feeds(set(), urlopen, lambda s: None)
+            T.fetch_kev(urlopen, lambda s: None)
 
     def test_epss_batches_stay_within_the_api_limits(self):
         batches = list(T.epss_batches({f"CVE-2099-{i:06d}" for i in range(250)}))
@@ -330,18 +331,22 @@ class ReportAndGate(unittest.TestCase):
     def row(self, vid, reasons, pkg="libexample"):
         return {"id": vid, "package": pkg, "reasons": reasons}
 
-    def test_the_summary_has_one_row_per_image_and_a_total(self):
-        md = T.summary_markdown([self.summary("example/a:1", "exposed", [self.row("CVE-2099-0060", ["kev", "epss"])]),
-                                 self.summary("example/b:1", "internal", [])])
-        self.assertIn("| `example/a:1` | exposed | 10 | 1 | epss 1, kev 1 | 1 / 2 / 6 |", md)
-        self.assertIn("| **all 2 images** | | 20 | 1 | | |", md)
+    def test_the_summary_totals_counts_per_reason(self):
+        aggs = [T.aggregate(self.summary("example/a:1", "exposed", [self.row("CVE-2099-0060", ["kev", "epss"])])),
+                T.aggregate(self.summary("example/b:1", "internal", []))]
+        md = T.summary_markdown(aggs)
+        self.assertIn("Triaged 2 images: 20 findings, 1 kept", md)
+        self.assertIn("| kev | 1 |", md)
+        self.assertIn("Dropped: 2 from stale SBOMs, 4 by VEX statements, 13 below the rule.", md)
 
-    def test_kev_on_a_running_image_fails_the_weekly_summary(self):
+    def test_kev_on_a_running_image_fails_the_weekly_summary_generically(self):
         with tempfile.TemporaryDirectory() as d:
-            T.write(Path(d) / "a.summary.json", self.summary("example/a:1", "internal", [], kev_running=["CVE-2099-0061"]))
-            report_path = Path(d) / "report.json"
-            self.assertEqual(T.main(["summary", "--summaries", d, "--report", str(report_path), "--fail-on-kev"]), 1)
-            self.assertEqual(T.load(report_path), {"kev_running": [{"id": "CVE-2099-0061", "image": "example/a:1"}]})
+            T.write(Path(d) / "a.aggregate.json", T.aggregate(self.summary("example/a:1", "internal", [], kev_running=["CVE-2099-0061"])))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(T.main(["summary", "--aggregates", d, "--fail-on-kev"]), 1)
+            self.assertIn(T.NEEDS_ACTION, out.getvalue())
+            self.assertNotIn("CVE-2099-0061", out.getvalue())
 
     def test_the_gate_fails_only_on_a_kev_finding_the_change_adds_on_an_exposed_image(self):
         kev = self.row("CVE-2099-0070", ["kev"])
@@ -356,6 +361,96 @@ class ReportAndGate(unittest.TestCase):
         head = [target("deploy/web", image="example/web:2"), target("deploy/db", image="example/db:1")]
         out = T.changed_targets(base, head)
         self.assertEqual(([t["image"] for t in out["head"]], [t["image"] for t in out["base"]]), (["example/web:2"], ["example/web:1"]))
+
+
+class NothingPublicNamesAFinding(unittest.TestCase):
+    """Logs, step summaries and artifacts of this public repository carry counts only."""
+
+    VID, PKG, VERSION, IMAGE = "CVE-2099-0901", "libleakcheck", "7.7.7-leak", "example/leaky:9.9"
+
+    def summary(self):
+        v = vuln(self.VID, "CRITICAL", self.PKG)
+        v["InstalledVersion"] = self.VERSION
+        feeds = {"kev": {self.VID: "2099-05-01"}, "epss": {self.VID: 0.9}}
+        _, s, _ = run(report(v), target("deploy/leaky", image=self.IMAGE), classes(leaky="exposed"), feeds)
+        self.assertEqual(kept_ids(s), [self.VID])  # the fixture really has a kept KEV finding
+        return s
+
+    def assert_clean(self, text):
+        for secret in (self.VID, self.PKG, self.VERSION, self.IMAGE, "deploy_leaky", "deploy/leaky"):
+            self.assertNotIn(secret, text)
+
+    def test_the_summary_and_its_cli_output_name_no_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            T.write(Path(d) / "x.aggregate.json", T.aggregate(self.summary()))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = T.main(["summary", "--aggregates", d, "--markdown", f"{d}/s.md", "--fail-on-kev"])
+            self.assertEqual(code, 1)
+            self.assert_clean(out.getvalue() + Path(f"{d}/s.md").read_text())
+
+    def test_the_gate_output_names_no_finding(self):
+        with tempfile.TemporaryDirectory() as base, tempfile.TemporaryDirectory() as head:
+            T.write(Path(head) / "x.summary.json", self.summary())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(T.main(["gate", "--base", base, "--head", head]), 1)
+            self.assertIn(T.GATE_NEEDS_ACTION, out.getvalue())
+            self.assert_clean(out.getvalue())
+
+    def test_the_aggregate_holds_counts_and_no_finding(self):
+        agg = T.aggregate(self.summary())
+        self.assertEqual(set(agg), {"key", "total", "kept", "kept_by_reason", "dropped", "kev_running", "unknown_services", "vex_skipped"})
+        text = json.dumps(agg)
+        for secret in (self.VID, self.PKG, self.VERSION, self.IMAGE):
+            self.assertNotIn(secret, text)
+
+    def test_the_triage_cli_logs_nothing_about_the_findings(self):
+        with tempfile.TemporaryDirectory() as d:
+            deploy = {"services": {"leaky": {"image": self.IMAGE}}}
+            T.write(Path(d) / "deploy.json", deploy)
+            T.write(Path(d) / "dev.json", {"services": {}})
+            T.write(Path(d) / "targets.json", T.targets(deploy, {}, ""))
+            T.write(Path(d) / "kev.json", {self.VID: "2099-05-01"})
+            v = vuln(self.VID, "CRITICAL", self.PKG)
+            v["InstalledVersion"] = self.VERSION
+            T.write(Path(d) / "scan.json", report(v))
+            T.write(Path(d) / "exposure.json", {"route_sources": {}, "not_route_sources": {}, "runtime_upstreams": {},
+                                                "content_consumers": {}, "internal": {}})
+            saved, T.fetch_epss = T.fetch_epss, lambda ids: {}
+            saved_mentions, T.find_route_mentions = T.find_route_mentions, lambda repo: []
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    code = T.main(["triage", "--scan", f"{d}/scan.json", "--targets", f"{d}/targets.json", "--key", "deploy_leaky",
+                                   "--kev", f"{d}/kev.json", "--deploy", f"{d}/deploy.json", "--dev", f"{d}/dev.json",
+                                   "--out-dir", f"{d}/out", "--exposure", f"{d}/exposure.json", "--vex", f"{d}/none.json"])
+            finally:
+                T.fetch_epss, T.find_route_mentions = saved, saved_mentions
+            self.assertEqual(code, 0)
+            self.assertEqual(T.load(f"{d}/out/deploy_leaky.aggregate.json")["kev_running"], 1)
+            for secret in (self.VID, self.PKG, self.VERSION, self.IMAGE):
+                self.assertNotIn(secret, out.getvalue())
+
+    def test_the_weekly_workflow_uploads_only_inputs_the_kev_catalog_and_aggregates(self):
+        workflow = (ROOT / ".github/workflows/scan-pinned-images.yml").read_text()
+        blocks = workflow.split("actions/upload-artifact@")[1:]
+        paths = set()
+        for block in blocks:
+            body = block.split("\n      - ", 1)[0]
+            after = body.split("path:", 1)[1].split("retention-days:", 1)[0]
+            paths |= {p.strip() for p in after.replace("|", "").splitlines() if p.strip()}
+        self.assertEqual(paths, {"inputs/deploy.json", "inputs/dev.json", "inputs/targets.json", "inputs/stale.json",
+                                 "kev.json", "aggregate/"})
+        self.assertIn('cp "$RUNNER_TEMP/triage/${{ matrix.target.key }}.aggregate.json" aggregate/', workflow)
+
+    def test_the_validator_rejects_an_identifier_in_the_tracked_files(self):
+        doc = {"statements": [{"id": "x", "reason": "image has CVE-2099-0902 but it does not matter here"}]}
+        found = T.identifier_mentions(doc)
+        self.assertEqual(found, ["$.statements[0].reason names a vulnerability identifier; describe the component, not the finding"])
+        self.assertNotIn("CVE-2099-0902", found[0])
+        self.assertEqual(T.identifier_mentions(T.load(ROOT / ".vex/unused-components.json")), [])
+        self.assertEqual(T.identifier_mentions(T.load(ROOT / "deploy/image-exposure.json")), [])
 
 
 # Per image, the shape of the 2026-11-24 list: (exposure, findings, critical,
@@ -422,7 +517,7 @@ class Replay(unittest.TestCase):
         # hand on 2026-11-24 gave 19 rows. A rule change that lets it grow past
         # 40 is a regression, not a finding.
         self.assertGreaterEqual(kept, 10)
-        self.assertLessEqual(kept, 40, T.summary_markdown(summaries))
+        self.assertLessEqual(kept, 40, T.summary_markdown([T.aggregate(s) for s in summaries]))
 
 
 if __name__ == "__main__":

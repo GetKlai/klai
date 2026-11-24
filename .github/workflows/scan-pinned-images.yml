@@ -11,14 +11,19 @@ name: Scan pinned external images
 # uploaded: findings from a stale SBOM inside the image and components covered
 # by .vex/unused-components.json are dropped, and of the rest only what is in
 # the CISA KEV catalog, has EPSS >= 0.1, is critical on an exposed or
-# content-consuming image, or is an overdue fixable critical is uploaded. The
-# full Trivy result and the per-image triage stay as workflow artifacts, and
-# the run summary has one row per image (total, kept, why).
+# content-consuming image, or is an overdue fixable critical is uploaded.
 #
-# Not a pull-request gate: pushes are never blocked. The run ends red when a
-# KEV finding remains on an image that runs in production, which makes
-# ci-failure-notice.yml open (or update) one issue; image-pin-triage.yml is the
-# gate for pull requests that change a pin. Runbook: docs/runbooks/trivy-policy.md.
+# This repository is public, and so are its logs, step summaries and
+# artifacts. They carry counts only: no vulnerability id, package version, or
+# image a kept finding sits on. The detail exists only in the code-scanning
+# tab. Raw scan results, triage output and OpenVEX documents stay on the
+# runner; the only per-image artifact is a counts-only aggregate.
+#
+# Not a pull-request gate: pushes are never blocked. The run ends red with a
+# generic message when a KEV finding remains on an image that runs in
+# production, which ci-failure-notice.yml reports as its usual issue;
+# image-pin-triage.yml is the gate for pull requests that change a pin.
+# Runbook: docs/runbooks/trivy-policy.md.
 
 on:
   schedule:
@@ -81,11 +86,12 @@ jobs:
           # (a renamed key, a removed service). Their alerts never close on
           # their own; the scan job uploads an empty result for each, which is
           # GitHub's "re-run the out-of-date configuration" with nothing found.
+          # The alert list stays on this runner; only category names go on.
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&tool_name=Trivy&ref=refs/heads/main&per_page=100" \
-            > inputs/alerts.json
+            > "$RUNNER_TEMP/alerts.json"
           python3 scripts/triage-image-findings.py stale \
-            --alerts inputs/alerts.json --targets inputs/targets.json > inputs/stale.json
+            --alerts "$RUNNER_TEMP/alerts.json" --targets inputs/targets.json > inputs/stale.json
 
           echo "Found targets:"
           jq -r '.[] | "\(.key): \(.image)"' inputs/targets.json
@@ -94,6 +100,8 @@ jobs:
           echo "targets=$(jq -c 'map(. + {stale: false})' inputs/targets.json)" >> "$GITHUB_OUTPUT"
           echo "uploads=$(jq -c --slurpfile stale inputs/stale.json 'map(. + {stale: false}) + $stale[0]' inputs/targets.json)" >> "$GITHUB_OUTPUT"
 
+      # Compose (already public in the repository), the target list and the
+      # stale category names: architecture, no findings.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: triage-inputs
@@ -104,77 +112,40 @@ jobs:
             inputs/stale.json
           retention-days: 30
 
-  trivy:
-    name: Trivy ${{ matrix.target.key }}
-    needs: enumerate
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      matrix:
-        target: ${{ fromJSON(needs.enumerate.outputs.targets) }}
-      fail-fast: false  # One bad image shouldn't skip the rest
-      max-parallel: 6   # Avoid hammering Trivy DB + Docker Hub with 30+ pulls at once
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
-        with:
-          version: v0.76.2
-          cache: true
-
-      # WARN tier of SPEC-CI-TRIVY-POLICY-001: never fails on findings.
-      - name: Trivy scan
-        run: sh scripts/trivy-scan-image.sh '${{ matrix.target.image }}' 'trivy-${{ matrix.target.key }}.json'
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: trivy-${{ matrix.target.key }}
-          path: trivy-${{ matrix.target.key }}.json
-          retention-days: 30
-
-  feeds:
-    name: Fetch KEV and EPSS
-    needs: trivy
-    # Runs when some scans failed too: their images just get no upload, while
-    # every other image is still triaged.
-    if: always() && (needs.trivy.result == 'success' || needs.trivy.result == 'failure')
+  kev:
+    name: Fetch the KEV catalog
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
-        with:
-          pattern: trivy-*
-          path: scans
-          merge-multiple: true
-
-      # One download of the KEV feed and batched EPSS calls for every id of
-      # the run. Fails after three attempts per feed instead of reporting
+      # One download of the official feed per run, shared with every scan
+      # job. It is CISA's public catalog, so the artifact reveals nothing
+      # about our images. Fails after three attempts instead of reporting
       # "nothing exploited"; the red run then reaches the failure notice.
-      - name: Fetch feeds
-        run: python3 scripts/triage-image-findings.py feeds --scans scans --out feeds.json
+      - name: Fetch
+        run: python3 scripts/triage-image-findings.py kev --out kev.json
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: feeds
-          path: feeds.json
-          retention-days: 30
+          name: kev
+          path: kev.json
+          retention-days: 1
 
   # Keeps the job id `scan` and the matrix variable `target`: the upload's
   # analysis key is `<workflow>:<job id>`, and an alert belongs to one tool,
   # analysis key and category. A new id would orphan every open alert.
+  # Scan, triage and upload happen in one job so the detail never has to
+  # travel between jobs as an artifact.
   scan:
     name: Scan ${{ matrix.target.key }}
-    needs: [enumerate, trivy, feeds]
-    if: always() && needs.feeds.result == 'success'
+    needs: [enumerate, kev]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       matrix:
         target: ${{ fromJSON(needs.enumerate.outputs.uploads) }}
-      fail-fast: false
-      max-parallel: 10
+      fail-fast: false  # One bad image shouldn't skip the rest
+      max-parallel: 6   # Avoid hammering Trivy DB + Docker Hub with 30+ pulls at once
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -185,32 +156,8 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: feeds
+          name: kev
           path: inputs
-
-      # A target whose Trivy job failed has no artifact, so this step fails and
-      # nothing is uploaded: its alerts stay as they were instead of closing.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
-        if: ${{ !matrix.target.stale }}
-        with:
-          name: trivy-${{ matrix.target.key }}
-          path: scans
-
-      - name: Triage
-        if: ${{ !matrix.target.stale }}
-        run: |
-          python3 scripts/triage-image-findings.py triage \
-            --scan 'scans/trivy-${{ matrix.target.key }}.json' \
-            --targets inputs/targets.json --key '${{ matrix.target.key }}' \
-            --feeds inputs/feeds.json --deploy inputs/deploy.json --dev inputs/dev.json \
-            --out-dir triage
-          cp 'triage/${{ matrix.target.key }}.triaged.json' upload.json
-
-      - name: Empty result for a stale category
-        if: ${{ matrix.target.stale }}
-        run: |
-          printf '{"SchemaVersion": 2, "ArtifactName": "%s", "ArtifactType": "container_image", "Results": []}\n' \
-            '${{ matrix.target.category }}' > upload.json
 
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
@@ -218,20 +165,48 @@ jobs:
           version: v0.76.2
           cache: true
 
+      # WARN tier of SPEC-CI-TRIVY-POLICY-001: never fails on findings. A
+      # failed scan fails the job before any upload, so that image's alerts
+      # stay as they were instead of closing.
+      - name: Trivy scan
+        if: ${{ !matrix.target.stale }}
+        run: sh scripts/trivy-scan-image.sh '${{ matrix.target.image }}' "$RUNNER_TEMP/scan.json"
+
+      # Prints nothing about the findings; EPSS is fetched here in batches
+      # for this image's ids.
+      - name: Triage
+        if: ${{ !matrix.target.stale }}
+        run: |
+          python3 scripts/triage-image-findings.py triage \
+            --scan "$RUNNER_TEMP/scan.json" \
+            --targets inputs/targets.json --key '${{ matrix.target.key }}' \
+            --kev inputs/kev.json --deploy inputs/deploy.json --dev inputs/dev.json \
+            --out-dir "$RUNNER_TEMP/triage"
+          cp "$RUNNER_TEMP/triage/${{ matrix.target.key }}.triaged.json" "$RUNNER_TEMP/upload.json"
+          mkdir -p aggregate
+          cp "$RUNNER_TEMP/triage/${{ matrix.target.key }}.aggregate.json" aggregate/
+
+      - name: Empty result for a stale category
+        if: ${{ matrix.target.stale }}
+        run: |
+          printf '{"SchemaVersion": 2, "ArtifactName": "%s", "ArtifactType": "container_image", "Results": []}\n' \
+            '${{ matrix.target.category }}' > "$RUNNER_TEMP/upload.json"
+
       - name: Convert to SARIF
-        run: trivy convert --format sarif --output upload.sarif upload.json
+        run: trivy convert --format sarif --output "$RUNNER_TEMP/upload.sarif" "$RUNNER_TEMP/upload.json"
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
         with:
-          sarif_file: upload.sarif
+          sarif_file: ${{ runner.temp }}/upload.sarif
           category: ${{ matrix.target.category }}
 
+      # Counts only (total, kept, kept per reason, dropped per reason).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: ${{ !matrix.target.stale }}
         with:
-          name: triage-${{ matrix.target.key }}
-          path: triage/
+          name: aggregate-${{ matrix.target.key }}
+          path: aggregate/
           retention-days: 30
 
   report:
@@ -244,8 +219,9 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          pattern: triage-*
-          path: triage
+          pattern: aggregate-*
+          path: aggregate
+          merge-multiple: true
 
       - name: Summarise
         env:
@@ -255,25 +231,16 @@ jobs:
           {
             echo "## Scan summary"
             echo ""
-            echo "The [code-scanning tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning) holds only the kept findings. Full Trivy results: the \`trivy-*\` artifacts; per-image triage and OpenVEX: \`triage-*\`."
+            echo "Kept findings are on the [code-scanning tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning); nothing here names one."
+            echo ""
+            echo "Stale categories closed with an empty result: $(jq '[.[] | select(.stale)] | length' <<<"$UPLOADS")"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-          stale=$(jq -r '[.[] | select(.stale) | .category] | join(", ")' <<<"$UPLOADS")
-          [ -z "$stale" ] || echo "Stale categories closed with an empty result: $stale" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          # Fails the run (and so opens or updates the one failure-notice
-          # issue) when a KEV finding remains on an image that runs in
-          # production. The report artifact carries only ids and image names.
+          # Fails the run with a generic message when a KEV finding remains on
+          # an image that runs in production; ci-failure-notice.yml then opens
+          # or updates its usual issue for a failed workflow.
           status=0
-          python3 scripts/triage-image-findings.py summary --summaries triage \
-            --markdown summary.md --report findings-report.json --fail-on-kev || status=$?
+          python3 scripts/triage-image-findings.py summary --aggregates aggregate \
+            --markdown summary.md --fail-on-kev || status=$?
           cat summary.md >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        if: always()
-        with:
-          name: findings-report
-          path: findings-report.json
-          if-no-files-found: ignore
-          retention-days: 30

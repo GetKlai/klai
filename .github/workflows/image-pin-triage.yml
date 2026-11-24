@@ -14,6 +14,10 @@ name: Image pin triage
 # when the filter selected this workflow and it did not export it, so a
 # skipped job cannot pass for a checked one. A change that touches the
 # selected paths but no pin runs only the validator and the tests.
+#
+# This repository is public: the log and the failure message name no finding,
+# package or image. The detail is uploaded to code scanning for the pull
+# request's ref, which is not public.
 
 on:
   workflow_call:
@@ -24,6 +28,9 @@ on:
 
 permissions:
   contents: read
+  # Uploads the changed pins' triaged findings for the pull request's ref:
+  # the only place their detail appears (logs and check output stay generic).
+  security-events: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -81,29 +88,46 @@ jobs:
           version: v0.76.2
           cache: true
 
+      # Logs only that it ran and how long it took: the findings stay in files
+      # on this runner and reach the pull request's code-scanning view below.
       - name: Scan and triage the changed pins
         if: steps.plan.outputs.count != '0'
         run: |
           set -euo pipefail
           start=$(date +%s)
+          python3 scripts/triage-image-findings.py kev --out "$RUNNER_TEMP/kev.json"
           for side in head base; do
-            mkdir -p "scans/$side" "out-$side"
+            mkdir -p "$RUNNER_TEMP/scans/$side" "$RUNNER_TEMP/out-$side"
             for key in $(jq -r --arg s "$side" '.[$s][].key' changed.json); do
               image=$(jq -r --arg s "$side" --arg k "$key" '.[$s][] | select(.key == $k) | .image' changed.json)
-              sh scripts/trivy-scan-image.sh "$image" "scans/$side/$key.json"
+              sh scripts/trivy-scan-image.sh "$image" "$RUNNER_TEMP/scans/$side/$key.json"
+              python3 scripts/triage-image-findings.py triage --scan "$RUNNER_TEMP/scans/$side/$key.json" \
+                --targets "$side/targets.json" --key "$key" --kev "$RUNNER_TEMP/kev.json" \
+                --deploy "$side/deploy.json" --dev "$side/dev.json" --out-dir "$RUNNER_TEMP/out-$side"
             done
           done
-          python3 scripts/triage-image-findings.py feeds --scans scans --out feeds.json
-          for side in head base; do
-            for key in $(jq -r --arg s "$side" '.[$s][].key' changed.json); do
-              python3 scripts/triage-image-findings.py triage --scan "scans/$side/$key.json" \
-                --targets "$side/targets.json" --key "$key" --feeds feeds.json \
-                --deploy "$side/deploy.json" --dev "$side/dev.json" --out-dir "out-$side"
-            done
+          # One SARIF per changed head pin, each with its own category, so the
+          # detail is visible in code scanning for this pull request's ref.
+          mkdir -p "$RUNNER_TEMP/sarif"
+          for key in $(jq -r '.head[].key' changed.json); do
+            trivy convert --format sarif --output "$RUNNER_TEMP/sarif/$key.raw.sarif" "$RUNNER_TEMP/out-head/$key.triaged.json"
+            jq --arg c "pin-triage-$key/" '.runs[].automationDetails = {id: $c}' \
+              "$RUNNER_TEMP/sarif/$key.raw.sarif" > "$RUNNER_TEMP/sarif/$key.sarif"
+            rm "$RUNNER_TEMP/sarif/$key.raw.sarif"
           done
-          python3 scripts/triage-image-findings.py summary --summaries out-head
-          echo "Scan and triage took $(( $(date +%s) - start ))s for $(jq '(.head + .base) | length' changed.json) images."
-          python3 scripts/triage-image-findings.py gate --base out-base --head out-head
+          echo "Scanned and triaged $(jq '(.head + .base) | length' changed.json) images in $(( $(date +%s) - start ))s."
+
+      - name: Upload the changed pins' findings to code scanning
+        if: steps.plan.outputs.count != '0'
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+        with:
+          sarif_file: ${{ runner.temp }}/sarif
+
+      # Fails with a generic message; which pin and which finding is only in
+      # code scanning for this pull request.
+      - name: Fail on a known-exploited finding the change adds
+        if: steps.plan.outputs.count != '0'
+        run: python3 scripts/triage-image-findings.py gate --base "$RUNNER_TEMP/out-base" --head "$RUNNER_TEMP/out-head"
 
       - name: Mark as checked
         id: done

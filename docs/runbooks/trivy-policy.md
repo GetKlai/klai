@@ -216,11 +216,13 @@ If the new image has open HIGH/CRITICAL findings on first scan: do not weaken th
 
 ## The code-scanning tab for third-party images
 
-The Trivy alerts from `scan-pinned-images.yml` are an action list: every open one is something a person should do something about this week. On 2026-11-24 the tab held 1,275 alerts and nobody acted on any; the weekly run now triages each image's result with `scripts/triage-image-findings.py` before it uploads, and keeps the full Trivy result as the `trivy-*` artifacts.
+The Trivy alerts from `scan-pinned-images.yml` are an action list: every open one is something a person should do something about this week. On 2026-11-24 the tab held 1,275 alerts and nobody acted on any; the weekly run now triages each image's result with `scripts/triage-image-findings.py` before it uploads.
+
+This repository is public, and so are its Actions logs, step summaries, artifacts and issues. They carry counts only: never a vulnerability identifier, a package with its version, or the image a kept finding sits on. The detail is on the code-scanning tab (for `main`, and for a pull request's ref), which is not public. Raw scan results, triage output and OpenVEX documents stay on the runner; the only per-image artifact is `aggregate-*` (total, kept, count per reason). Debug a finding from the tab, or rerun `scripts/trivy-scan-image.sh` and the `triage` subcommand locally.
 
 ### How a finding gets onto the tab
 
-It is uploaded when at least one of these holds (the reason is in the run summary per image, and in the `triage-*` artifact per finding):
+It is uploaded when at least one of these holds (the run summary counts findings per reason over all images; the tab shows each finding):
 
 | Reason | Rule | Source of the number |
 |---|---|---|
@@ -236,17 +238,17 @@ Exposure is derived from the repository, never typed in: an image is **exposed**
 ### How a finding leaves the tab
 
 - **Fixed**: the next scan no longer finds it (usually a Renovate bump), and GitHub closes it.
-- **Below the rule**: it no longer meets any clause; the next upload omits it and GitHub closes it as fixed. It is still in the `trivy-*` artifact.
+- **Below the rule**: it no longer meets any clause; the next upload omits it and GitHub closes it as fixed. A local rerun of the scan still shows it.
 - **Stale SBOM**: Trivy reads every `*.spdx`, `*.spdx.json`, `*.cdx`, `*.cdx.json` in an image. A layer whose SBOM lists packages at other versions than the ones the image installed, and which installed nothing itself, describes another tree (a copied project directory) and is dropped. A vendor SBOM written with the software it describes (Bitnami's under `opt/bitnami/`, pip's vendored-library list) is kept.
-- **VEX**: `.vex/unused-components.json` declares a component that is in the image but never executed by that service (a bundled `kubectl`, `litestream`, `gosu`, a database client the service does not use). Each statement has an OpenVEX justification, a reason, its evidence, an expiry within 365 days and the compose conditions it rests on; the run emits a standard OpenVEX document per image in the `triage-*` artifact. `scripts/validate-vex.sh` fails when a statement has expired or a condition no longer holds, and the weekly run stops applying such a statement, so its findings come back.
+- **VEX**: `.vex/unused-components.json` declares a component that is in the image but never executed by that service (a bundled `kubectl`, `litestream`, `gosu`, a database client the service does not use). Each statement has an OpenVEX justification, a reason, its evidence, an expiry within 365 days and the compose conditions it rests on; the triage writes a standard OpenVEX document per image on the runner. Statements describe components and the reason they never run; the validator rejects any entry that names a vulnerability identifier, because these files are public. `scripts/validate-vex.sh` fails when a statement has expired or a condition no longer holds, and the weekly run stops applying such a statement, so its findings come back.
 - **Stale category**: a category the scan job no longer produces (a renamed key, a removed service) gets an empty upload, which is how GitHub closes the alerts of a configuration that stopped reporting.
 
 ### What to do with one
 
-1. `kev` on a running image: the run is red and the `CI failure: Scan pinned external images` issue lists the identifier and the image. Bump the pin today if a fixed upstream release exists; otherwise follow Recipe 6, step 3.
+1. `kev` on a running image: the run fails with "the image scan left findings that need action; see the code-scanning tab", and the usual `CI failure: Scan pinned external images` issue opens. Find the finding on the tab (filter by tool Trivy). Bump the pin today if a fixed upstream release exists; otherwise follow Recipe 6, step 3.
 2. `critical-exposed`, `epss`, `critical-overdue`: bump the pin (or merge the Renovate pull request) within the limit.
 3. The finding is real but the code never runs here: add a statement to `.vex/unused-components.json` with the evidence from compose and from the image, run `./scripts/validate-vex.sh`, and open a pull request. Do not dismiss the alert: a dismissal survives the next scan and hides the next real finding in the same place.
-4. A pull request that changes a pin runs `image-pin-triage.yml` through the required `quality` check and fails if the new pin adds a KEV finding on an exposed or content-consuming image that the old pin did not have.
+4. A pull request that changes a pin runs `image-pin-triage.yml` through the required `quality` check and fails, with a generic message, if the new pin adds a KEV finding on an exposed or content-consuming image that the old pin did not have. The findings of the changed pins are on the pull request's code-scanning view (categories `pin-triage-*`).
 
 ---
 

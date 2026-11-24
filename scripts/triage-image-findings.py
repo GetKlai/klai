@@ -29,11 +29,15 @@ nobody classified is exactly how an exposed image would end up "internal".
 Subcommands (all JSON in, JSON or Markdown out):
   targets   compose JSON -> scan targets (same keys and categories as before)
   stale     open alerts + targets -> categories nobody uploads any more
-  feeds     Trivy results -> KEV and EPSS for their ids (fails on an outage)
-  triage    one Trivy result -> triaged Trivy JSON, summary, OpenVEX
-  summary   summaries -> Markdown table, report JSON; --fail-on-kev
+  kev       the CISA KEV catalog, downloaded once per run (fails on an outage)
+  triage    one Trivy result + EPSS for its ids -> triaged Trivy JSON, summary
+            and OpenVEX (kept on the runner) and a counts-only aggregate
+  summary   aggregates -> totals in Markdown; --fail-on-kev
   changed   base and head targets -> pins a pull request changes
   gate      base and head summaries -> fail on a KEV finding the change adds
+
+Public surfaces (logs, step summaries, artifacts, issues) carry counts only;
+the detail goes to the code-scanning tab as SARIF. See "Reporting" below.
   validate  .vex/unused-components.json and deploy/image-exposure.json
 
 Standard library only. Tests: python3 -m unittest scripts/tests/test_triage_image_findings.py
@@ -366,6 +370,26 @@ def validate_vex(doc, deploy, dev, now):
     return errors
 
 
+VULN_ID = re.compile(r"\b(CVE-\d{4}-\d{4,}|GHSA(-[0-9a-z]{4}){3})\b", re.I)
+
+
+def identifier_mentions(obj, where="$"):
+    """JSON paths of strings that name a vulnerability identifier.
+
+    These files are public and describe architecture ("component X is in
+    image Y and never runs because Z"). An identifier in them would say which
+    unpatched finding sits on which live image. The path is reported, not the
+    identifier, because the validator's output is a public log too.
+    """
+    if isinstance(obj, str):
+        return [f"{where} names a vulnerability identifier; describe the component, not the finding"] if VULN_ID.search(obj) else []
+    if isinstance(obj, dict):
+        return [m for k, v in obj.items() for m in identifier_mentions(k, where) + identifier_mentions(v, f"{where}.{k}")]
+    if isinstance(obj, list):
+        return [m for i, v in enumerate(obj) for m in identifier_mentions(v, f"{where}[{i}]")]
+    return []
+
+
 def validate_exposure(cfg, deploy, mentions):
     errors = []
     services = set(deploy.get("services") or {})
@@ -434,30 +458,30 @@ def epss_batches(ids):
         yield batch
 
 
-def fetch_feeds(ids, urlopen=urllib.request.urlopen, sleep=time.sleep):
-    """KEV and EPSS for `ids`. Raises TriageError rather than return less.
+def fetch_kev(urlopen=urllib.request.urlopen, sleep=time.sleep):
+    """The whole KEV catalog as {cveID: dateAdded}; one download per run.
 
-    No cached copy: the KEV clause is the one that matters most, and a run
-    that reports "nothing exploited" because CISA was unreachable is worse than
-    a red run, which the failure notice turns into an issue.
+    No cached copy and no partial answer: the KEV clause is the one that
+    matters most, and a run that reports "nothing exploited" because CISA was
+    unreachable is worse than a red run, which the failure notice reports.
+    The catalog is public CISA data, so passing it between jobs reveals nothing.
     """
     kev = _get(KEV_URL, urlopen, sleep)
     rows = kev.get("vulnerabilities") if isinstance(kev, dict) else None
     if not rows or kev.get("count") != len(rows):
         raise TriageError("KEV feed answered without its catalog (vulnerabilities empty or count mismatch)")
-    cves = sorted(i for i in ids if i.startswith("CVE-"))
+    return {row["cveID"]: row["dateAdded"] for row in rows}
+
+
+def fetch_epss(ids, urlopen=urllib.request.urlopen, sleep=time.sleep):
+    """EPSS scores for the CVE ids among `ids`, in batches; raises rather than return less."""
     epss = {}
-    for batch in epss_batches(cves):
+    for batch in epss_batches({i for i in ids if i.startswith("CVE-")}):
         page = _get(f"{EPSS_URL}?cve={','.join(batch)}&limit={len(batch)}", urlopen, sleep)
         if page.get("status") != "OK" or not isinstance(page.get("data"), list):
             raise TriageError(f"EPSS answered {page.get('status')!r} for a batch of {len(batch)} ids")
         epss.update({row["cve"]: float(row["epss"]) for row in page["data"]})
-    return {
-        "kev": {row["cveID"]: row["dateAdded"] for row in rows},
-        "kev_catalog_version": kev.get("catalogVersion"),
-        "epss": epss,
-        "epss_requested": len(cves),
-    }
+    return epss
 
 
 def report_ids(report):
@@ -628,38 +652,64 @@ def openvex(target, rows, now):
 
 
 # --- Reporting and the pull-request gate -------------------------------------
+#
+# This repository is public, and so are its Actions logs, step summaries and
+# artifacts (any signed-in user can download an artifact). Nothing printed or
+# uploaded from here names a kept finding: no vulnerability id, no package and
+# version, and no image a kept finding sits on. The detail goes only to the
+# code-scanning tab as SARIF, which is not public. What leaves this script for
+# a public surface is aggregate() and the texts below.
+
+NEEDS_ACTION = "the image scan left findings that need action; see the code-scanning tab"
+GATE_NEEDS_ACTION = "a changed image pin adds findings that need action; see the code-scanning tab for this pull request"
 
 
-def summary_markdown(summaries):
+def aggregate(summary):
+    """Counts only. The one per-image record that may be uploaded as an artifact."""
+    reasons = {}
+    for row in summary["kept"]:
+        for reason in row["reasons"]:
+            reasons[reason] = reasons.get(reason, 0) + 1
+    return {
+        "key": summary["key"],
+        "total": summary["total"],
+        "kept": len(summary["kept"]),
+        "kept_by_reason": reasons,
+        "dropped": summary["dropped"],
+        "kev_running": len(summary["kev_running"]),
+        "unknown_services": summary["unknown_services"],
+        "vex_skipped": summary["vex_skipped"],
+    }
+
+
+def summary_markdown(aggregates):
+    """Totals over all images; never which image holds a kept finding."""
+    total = sum(a["total"] for a in aggregates)
+    kept = sum(a["kept"] for a in aggregates)
+    reasons, dropped = {}, {"stale-sbom": 0, "vex": 0, "rule": 0}
+    for a in aggregates:
+        for k, v in a["kept_by_reason"].items():
+            reasons[k] = reasons.get(k, 0) + v
+        for k, v in a["dropped"].items():
+            dropped[k] += v
     lines = [
-        "| Image | Exposure | Total | Kept | Why kept | Dropped: stale SBOM / VEX / rule |",
-        "|---|---|---:|---:|---|---|",
+        f"Triaged {len(aggregates)} images: {total} findings, {kept} kept on the code-scanning tab.",
+        "",
+        "| Kept because | Count |",
+        "|---|---:|",
+        *(f"| {k} | {v} |" for k, v in sorted(reasons.items())),
+        "",
+        f"Dropped: {dropped['stale-sbom']} from stale SBOMs, {dropped['vex']} by VEX statements, {dropped['rule']} below the rule.",
     ]
-    for s in sorted(summaries, key=lambda s: (-len(s["kept"]), s["key"])):
-        why = {}
-        for row in s["kept"]:
-            for reason in row["reasons"]:
-                why[reason] = why.get(reason, 0) + 1
-        why_text = ", ".join(f"{k} {v}" for k, v in sorted(why.items())) or "-"
-        d = s["dropped"]
-        lines.append(
-            f"| `{s['image']}` | {s['exposure']} | {s['total']} | {len(s['kept'])} | {why_text} "
-            f"| {d['stale-sbom']} / {d['vex']} / {d['rule']} |"
-        )
-    total = sum(s["total"] for s in summaries)
-    kept = sum(len(s["kept"]) for s in summaries)
-    lines.append(f"| **all {len(summaries)} images** | | {total} | {kept} | | |")
-    notes = []
-    for s in summaries:
-        if s["unknown_services"]:
-            notes.append(f"- Unclassified, treated as exposed: {', '.join(s['unknown_services'])}")
-        for skipped in s["vex_skipped"]:
-            notes.append(f"- VEX statement `{skipped['id']}` not applied: {'; '.join(skipped['why'])}")
-    return "\n".join(lines + ([""] + sorted(set(notes)) if notes else [])) + "\n"
-
-
-def kev_report(summaries):
-    return sorted({(cve, s["image"]) for s in summaries for cve in s["kev_running"]})
+    # Architecture, not findings: a service the exposure map does not know, a
+    # VEX statement whose premise no longer holds.
+    notes = set()
+    for a in aggregates:
+        if a["unknown_services"]:
+            notes.add(f"- Unclassified, treated as exposed: {', '.join(a['unknown_services'])}")
+        for skipped in a["vex_skipped"]:
+            notes.add(f"- VEX statement `{skipped['id']}` not applied: {'; '.join(skipped['why'])}")
+    return "\n".join(lines + ([""] + sorted(notes) if notes else [])) + "\n"
 
 
 def changed_targets(base, head):
@@ -683,15 +733,15 @@ def introduced_kev(base_summaries, head_summaries):
         }
         for row in head["kept"]:
             if "kev" in row["reasons"] and (row["id"], row["package"]) not in before:
-                out.append((row["id"], row["package"], head["image"], head["exposure"]))
+                out.append((row["id"], row["package"], head["key"]))
     return sorted(set(out))
 
 
 # --- CLI --------------------------------------------------------------------
 
 
-def _summaries(directory):
-    return [load(p) for p in sorted(Path(directory).rglob("*.summary.json"))]
+def _load_all(directory, suffix):
+    return [load(p) for p in sorted(Path(directory).rglob(f"*{suffix}"))]
 
 
 def main(argv=None):
@@ -704,18 +754,16 @@ def main(argv=None):
     c = sub.add_parser("stale")
     c.add_argument("--alerts", required=True, help="gh api --paginate --slurp output")
     c.add_argument("--targets", required=True)
-    c = sub.add_parser("feeds")
-    c.add_argument("--scans", required=True, help="directory of Trivy JSON results")
+    c = sub.add_parser("kev")
     c.add_argument("--out", required=True)
     c = sub.add_parser("triage")
-    for name in ("scan", "targets", "key", "feeds", "deploy", "dev", "out-dir"):
+    for name in ("scan", "targets", "key", "kev", "deploy", "dev", "out-dir"):
         c.add_argument(f"--{name}", required=True)
     c.add_argument("--repo", default=".")
     c.add_argument("--exposure", default="deploy/image-exposure.json")
     c.add_argument("--vex", default=".vex/unused-components.json")
     c = sub.add_parser("summary")
-    c.add_argument("--summaries", required=True)
-    c.add_argument("--report")
+    c.add_argument("--aggregates", required=True)
     c.add_argument("--markdown")
     c.add_argument("--fail-on-kev", action="store_true")
     c = sub.add_parser("changed")
@@ -753,16 +801,10 @@ def _cmd_stale(a):
     return 0
 
 
-def _cmd_feeds(a):
-    ids = set()
-    for path in sorted(Path(a.scans).rglob("*.json")):
-        ids |= report_ids(load(path))
-    feeds = fetch_feeds(ids)
-    write(a.out, feeds)
-    print(
-        f"KEV catalog {feeds['kev_catalog_version']}: {len(feeds['kev'])} entries; "
-        f"EPSS: {len(feeds['epss'])} of {feeds['epss_requested']} CVE ids scored"
-    )
+def _cmd_kev(a):
+    kev = fetch_kev()
+    write(a.out, kev)
+    print(f"KEV catalog: {len(kev)} entries")
     return 0
 
 
@@ -780,13 +822,17 @@ def _cmd_triage(a):
     if target is None:
         raise TriageError(f"{a.key} is not a scan target")
     vex = load(a.vex) if Path(a.vex).exists() else {}
-    out, summary, vexdoc = triage(load(a.scan), target, classes, load(a.feeds), vex, deploy, dev, today())
+    report = load(a.scan)
+    feeds = {"kev": load(a.kev), "epss": fetch_epss(report_ids(report))}
+    out, summary, vexdoc = triage(report, target, classes, feeds, vex, deploy, dev, today())
+    # These four files hold the detail and stay on the runner; only the
+    # aggregate may be uploaded as an artifact.
     d = Path(a.out_dir)
     d.mkdir(parents=True, exist_ok=True)
     write(d / f"{a.key}.triaged.json", out)
     write(d / f"{a.key}.summary.json", summary)
     write(d / f"{a.key}.openvex.json", vexdoc)
-    print(f"{a.key}: {summary['total']} findings, {len(summary['kept'])} kept, exposure {summary['exposure']}")
+    write(d / f"{a.key}.aggregate.json", aggregate(summary))
     for service in summary["unknown_services"]:
         print(f"::warning::{service} is not classified in deploy/image-exposure.json and is treated as exposed")
     for skipped in summary["vex_skipped"]:
@@ -795,17 +841,13 @@ def _cmd_triage(a):
 
 
 def _cmd_summary(a):
-    summaries = _summaries(a.summaries)
-    markdown = summary_markdown(summaries)
+    aggregates = _load_all(a.aggregates, ".aggregate.json")
+    markdown = summary_markdown(aggregates)
     print(markdown)
     if a.markdown:
         Path(a.markdown).write_text(markdown)
-    kev = kev_report(summaries)
-    if a.report:
-        write(a.report, {"kev_running": [{"id": i, "image": img} for i, img in kev]})
-    if kev and a.fail_on_kev:
-        for cve, image in kev:
-            print(f"::error::{cve} is in the CISA KEV catalog and present on {image}")
+    if a.fail_on_kev and sum(x["kev_running"] for x in aggregates):
+        print(f"::error::{NEEDS_ACTION}")
         return 1
     return 0
 
@@ -816,32 +858,34 @@ def _cmd_changed(a):
 
 
 def _cmd_gate(a):
-    found = introduced_kev(_summaries(a.base), _summaries(a.head))
-    for cve, pkg, image, exposure in found:
-        print(f"::error::{image} ({exposure}) adds {cve} in {pkg}, which is in the CISA KEV catalog")
-    if not found:
-        print("No changed pin adds a KEV finding on an exposed or content-consuming image.")
-    return 1 if found else 0
+    found = introduced_kev(_load_all(a.base, ".summary.json"), _load_all(a.head, ".summary.json"))
+    if found:
+        print(f"::error::{GATE_NEEDS_ACTION}")
+        return 1
+    print("No changed pin adds a known-exploited finding on an exposed or content-consuming image.")
+    return 0
 
 
 def _cmd_validate(a):
     deploy, dev = load(a.deploy), load(a.dev)
-    errors = validate_vex(load(a.vex), deploy, dev, today())
-    cfg = load(a.exposure)
+    vex, cfg = load(a.vex), load(a.exposure)
+    errors = validate_vex(vex, deploy, dev, today())
     errors += validate_exposure(cfg, deploy, find_route_mentions(a.repo))
+    errors += [f"{a.vex}: {e}" for e in identifier_mentions(vex)]
+    errors += [f"{a.exposure}: {e}" for e in identifier_mentions(cfg)]
     if not errors:
         classify(deploy, dev, cfg, _route_texts(a.repo, cfg))
     for message in errors:
         print(f"::error::{message}")
     if not errors:
-        print(f"[validate-vex] {a.vex}: {len(load(a.vex).get('statements') or [])} statements OK; {a.exposure} OK")
+        print(f"[validate-vex] {a.vex}: {len(vex.get('statements') or [])} statements OK; {a.exposure} OK")
     return 1 if errors else 0
 
 
 COMMANDS = {
     "targets": _cmd_targets,
     "stale": _cmd_stale,
-    "feeds": _cmd_feeds,
+    "kev": _cmd_kev,
     "triage": _cmd_triage,
     "summary": _cmd_summary,
     "changed": _cmd_changed,

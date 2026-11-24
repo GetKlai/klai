@@ -68,10 +68,9 @@ on:
       # Rolls back what was deployed since the last green E2E run. It ends red
       # after every rollback, and its rollback-report artifact sets the label.
       - Auto-rollback
-      # Red when a finding in the CISA KEV catalog remains on a third-party
-      # image that runs in production (or when the scan itself broke). One
-      # issue for all such findings; its findings-report artifact names only
-      # the public identifier and the image.
+      # Red when the weekly image scan leaves findings that need action, or
+      # broke. The issue stays generic; the detail is only on the
+      # code-scanning tab, which this public repository does not expose.
       - Scan pinned external images
     types: [completed]
 
@@ -193,39 +192,6 @@ jobs:
               core.warning(`could not read the rollback-report artifact: ${flat(err.message)}`);
             }
 
-            // The image scan's findings-report artifact: {kev_running: [{id, image}]}.
-            // Same untrusted-text handling as above; only a public identifier and
-            // an image reference that match these patterns reach the issue, so no
-            // exploit detail can.
-            let kev = null;
-            if (run.name === 'Scan pinned external images') {
-              try {
-                const { data: listed } = await github.rest.actions.listWorkflowRunArtifacts({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: run.id,
-                  name: 'findings-report',
-                });
-                const artifact = listed.artifacts.find((a) => !a.expired);
-                if (artifact) {
-                  const { data: zip } = await github.rest.actions.downloadArtifact({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    artifact_id: artifact.id,
-                    archive_format: 'zip',
-                  });
-                  const zipPath = require('path').join(process.env.RUNNER_TEMP, 'findings-report.zip');
-                  require('fs').writeFileSync(zipPath, Buffer.from(zip));
-                  const parsed = JSON.parse(require('child_process').execFileSync('unzip', ['-p', zipPath], { encoding: 'utf8' }));
-                  kev = (parsed.kev_running || []).filter(
-                    (k) => /^(CVE-\d{4}-\d{4,}|GHSA(-[0-9a-z]{4}){3})$/.test(k.id) && /^[A-Za-z0-9._\/:@-]{1,200}$/.test(k.image),
-                  ).slice(0, 50);
-                }
-              } catch (err) {
-                core.warning(`could not read the findings-report artifact: ${flat(err.message)}`);
-              }
-            }
-
             const lines = [
               `**${run.name}** failed on \`main\`.`,
               '',
@@ -233,14 +199,8 @@ jobs:
               `- Commit: \`${run.head_sha.slice(0, 9)}\``,
               `- Started: ${run.run_started_at}`,
               '',
-              ...(run.name === 'Scan pinned external images'
-                ? (kev && kev.length
-                    ? ['Findings in the CISA KEV catalog on images that run in production:', '',
-                       ...kev.map((k) => `- \`${k.id}\` on \`${k.image}\``), '',
-                       'What to do: docs/runbooks/trivy-policy.md, "The code-scanning tab for third-party images".']
-                    : ['The scan or its triage failed; open the run for the failing job.'])
-                : ['This blocks the next deploy of this service until it is green again',
-                   '(pitfall: previous-deploy-failure-blocks-yours).']),
+              'This blocks the next deploy of this service until it is green again',
+              '(pitfall: previous-deploy-failure-blocks-yours).',
               '',
               'Closes itself automatically when this workflow next succeeds on `main`.',
             ];
