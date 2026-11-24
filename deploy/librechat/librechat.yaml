@@ -152,14 +152,8 @@ interface:
   # `theme` (a deployment colour theme) is also new and stays unset: it takes a
   # theme object with no "off" value, and unset is the 0.8.8 look.
 
-# New top-level block in 0.8.9 (1.3.19). Chat Projects themselves exist since
-# 0.8.8; 0.8.9 adds per-project instructions and reference files, and this
-# block only bounds them (maxFiles has a minimum of 1, so it cannot switch the
-# feature off). Pinned to upstream's defaults.
-projects:
-  maxFiles: 50
-  maxInstructionsLength: 16000
-  maxDescriptionLength: 1000
+# No top-level `projects:` block: the v0.8.8 image rejects the key at startup,
+# so it may only be added once no tenant runs an image older than v0.8.9.
 
 balance:
   enabled: false
