@@ -1,7 +1,7 @@
 #!/bin/sh
 # Does this LibreChat config boot on this image?
 #
-# usage: librechat-config-boot.sh <image-ref> <config-file>
+# usage: chat-config-boot.sh <image-ref> <config-file>
 #
 # Why this exists: on merge, deploy-librechat-config.yml copies librechat.yaml
 # to the host and restarts every tenant chat container, which still run the
@@ -94,7 +94,7 @@ done
 docker run -d --name "${P}-app" --network "${P}-net" \
     -v "$CONFIG:/app/librechat.yaml:ro" \
     -v "$ENTRYPOINT:/klai-entrypoint.sh:ro" \
-    -e MONGO_URI="mongodb://${P}-mongo:27017/librechat-boot-test" \
+    -e MONGO_URI="mongodb://${P}-mongo:27017/chat-boot-test" \
     -e JWT_SECRET=0000000000000000000000000000000000000000000000000000000000000001 \
     -e JWT_REFRESH_SECRET=0000000000000000000000000000000000000000000000000000000000000002 \
     -e CREDS_KEY=0000000000000000000000000000000000000000000000000000000000000003 \

@@ -2,7 +2,7 @@
 # Print every distinct digest-pinned Klai LibreChat image in a compose file,
 # one ghcr.io/getklai/librechat@sha256:<64 hex> reference per line.
 #
-# usage: librechat-pinned-digests.sh <compose-file>
+# usage: chat-pinned-digests.sh <compose-file>
 #
 # Same parsing as deploy/check-klai-librechat-digest.sh: every mention of the
 # image minus comment lines. That covers both pins in deploy/docker-compose.yml,

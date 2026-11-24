@@ -1,4 +1,4 @@
-# Negative fixture for deploy/tests/librechat-config-boot.sh: the boot check
+# Negative fixture for deploy/tests/chat-config-boot.sh: the boot check
 # must FAIL on this file. LibreChat validates librechat.yaml strictly, so one
 # top-level key it does not know is enough for it to exit at startup (the
 # shape of the `projects` block that took down the pinned image in November

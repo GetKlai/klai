@@ -122,12 +122,12 @@ jobs:
             librechat_boot:
               - 'deploy/librechat/**'
               - 'deploy/docker-compose.yml'
-              - 'deploy/tests/librechat-config-boot.sh'
-              - 'deploy/tests/librechat-pinned-digests.sh'
-              - 'deploy/tests/render-tenant-librechat-yaml.py'
-              - 'deploy/tests/fixtures/librechat-unknown-top-level-field.yaml'
+              - 'deploy/tests/chat-config-boot.sh'
+              - 'deploy/tests/chat-pinned-digests.sh'
+              - 'deploy/tests/render-tenant-chat-config.py'
+              - 'deploy/tests/fixtures/chat-unknown-top-level-field.yaml'
               - 'klai-portal/backend/app/services/provisioning/generators.py'
-              - '.github/workflows/librechat-config-boot.yml'
+              - '.github/workflows/chat-config-boot.yml'
               - '.github/workflows/quality.yml'
             trivyignore:
               - '**/.trivyignore.yaml'
@@ -215,10 +215,10 @@ jobs:
     uses: ./.github/workflows/graph-contract.yml
     secrets: inherit
 
-  librechat-boot:
+  chat-boot:
     needs: changes
     if: needs.changes.outputs.librechat_boot == 'true'
-    uses: ./.github/workflows/librechat-config-boot.yml
+    uses: ./.github/workflows/chat-config-boot.yml
     secrets: inherit
 
   quality:
@@ -239,7 +239,7 @@ jobs:
       - connector
       - trivyignore
       - graph-contract
-      - librechat-boot
+      - chat-boot
     runs-on: ubuntu-latest
     steps:
       - name: Require every affected workflow to pass

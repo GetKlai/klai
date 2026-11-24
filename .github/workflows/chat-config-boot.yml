@@ -1,4 +1,4 @@
-name: LibreChat config boot
+name: Chat config boot
 
 # A pull request that changes the chat configuration or the pinned chat image
 # proves that the configuration boots on the image tenants run today and on the
@@ -47,8 +47,8 @@ jobs:
           # What tenants run when the config sync lands: the digests pinned on
           # the base branch. What they will run: the digests pinned here. Both
           # pins count (librechat-getklai and portal-api's LIBRECHAT_IMAGE).
-          sh deploy/tests/librechat-pinned-digests.sh "$RUNNER_TEMP/base-compose.yml" > "$RUNNER_TEMP/base-digests.txt"
-          sh deploy/tests/librechat-pinned-digests.sh deploy/docker-compose.yml > "$RUNNER_TEMP/head-digests.txt"
+          sh deploy/tests/chat-pinned-digests.sh "$RUNNER_TEMP/base-compose.yml" > "$RUNNER_TEMP/base-digests.txt"
+          sh deploy/tests/chat-pinned-digests.sh deploy/docker-compose.yml > "$RUNNER_TEMP/head-digests.txt"
           sort -u "$RUNNER_TEMP/base-digests.txt" "$RUNNER_TEMP/head-digests.txt" > "$RUNNER_TEMP/images.txt"
           echo "Images to boot (base and head pins, deduplicated):"
           cat "$RUNNER_TEMP/images.txt"
@@ -58,12 +58,12 @@ jobs:
           if cmp -s "$RUNNER_TEMP/base-digests.txt" "$RUNNER_TEMP/head-digests.txt" \
             && git diff --quiet FETCH_HEAD HEAD -- \
               deploy/librechat \
-              deploy/tests/librechat-config-boot.sh \
-              deploy/tests/librechat-pinned-digests.sh \
-              deploy/tests/render-tenant-librechat-yaml.py \
-              deploy/tests/fixtures/librechat-unknown-top-level-field.yaml \
+              deploy/tests/chat-config-boot.sh \
+              deploy/tests/chat-pinned-digests.sh \
+              deploy/tests/render-tenant-chat-config.py \
+              deploy/tests/fixtures/chat-unknown-top-level-field.yaml \
               klai-portal/backend/app/services/provisioning/generators.py \
-              .github/workflows/librechat-config-boot.yml; then
+              .github/workflows/chat-config-boot.yml; then
             echo "boot=false" >> "$GITHUB_OUTPUT"
             echo "No pin, config, generator or check changed; nothing to boot."
           else
@@ -79,7 +79,7 @@ jobs:
         if: steps.plan.outputs.boot == 'true'
         run: |
           set -euo pipefail
-          python3 -I deploy/tests/render-tenant-librechat-yaml.py \
+          python3 -I deploy/tests/render-tenant-chat-config.py \
             deploy/librechat/librechat.yaml twenty-crm > "$RUNNER_TEMP/rendered-librechat.yaml"
 
       - name: Boot the base and the rendered config on every pinned image
@@ -91,7 +91,7 @@ jobs:
             docker pull --quiet "$image" > /dev/null
             for config in deploy/librechat/librechat.yaml "$RUNNER_TEMP/rendered-librechat.yaml"; do
               rc=0
-              sh deploy/tests/librechat-config-boot.sh "$image" "$config" || rc=$?
+              sh deploy/tests/chat-config-boot.sh "$image" "$config" || rc=$?
               if [ "$rc" -ne 0 ]; then
                 echo "::error::$config does not boot on $image (exit $rc)"
                 failed=1
@@ -108,8 +108,8 @@ jobs:
           set -u
           image=$(head -n 1 "$RUNNER_TEMP/images.txt")
           rc=0
-          sh deploy/tests/librechat-config-boot.sh "$image" \
-            deploy/tests/fixtures/librechat-unknown-top-level-field.yaml > "$RUNNER_TEMP/negative.log" 2>&1 || rc=$?
+          sh deploy/tests/chat-config-boot.sh "$image" \
+            deploy/tests/fixtures/chat-unknown-top-level-field.yaml > "$RUNNER_TEMP/negative.log" 2>&1 || rc=$?
           cat "$RUNNER_TEMP/negative.log"
           if [ "$rc" -ne 1 ] || ! grep -q '^FAIL config-validation' "$RUNNER_TEMP/negative.log"; then
             echo "::error::the boot check did not fail with a config-validation verdict on a config with an unknown key (exit $rc), so it cannot go red"

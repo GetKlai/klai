@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render the per-tenant librechat.yaml the way portal-api does.
 
-usage: render-tenant-librechat-yaml.py <base-librechat.yaml> [mcp-server-id ...]
+usage: render-tenant-chat-config.py <base-librechat.yaml> [mcp-server-id ...]
 
 Runs the real _generate_librechat_yaml from
 klai-portal/backend/app/services/provisioning/generators.py, with the MCP
