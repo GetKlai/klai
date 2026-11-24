@@ -27,15 +27,20 @@ case "$1" in
     inspect)
         cat "$STATE/inspect" 2>/dev/null
         # `inspect_live` holds one "<compose service label> /<name>" line for a
-        # container that is always two seconds younger than the stub's own clock,
-        # so it started inside whichever window the script has open, however slow
-        # the run is. A fixed timestamp counts only while the script still reads
-        # the same second.
+        # container that starts at the stub's own clock, in the first second
+        # later than the window the script has open (the last start recorded in
+        # `after_starts`; the script counts a container only from a later second
+        # than its window start). The stub waits for that second, so the start is
+        # never in the future and lies inside the window however slow the run is.
         if [[ -s "$STATE/inspect_live" ]]; then
-            now=$(date -u +%s)
-            at=$(date -u -d "@$(( now + 2 ))" +%Y-%m-%dT%H:%M:%S.000000000Z 2>/dev/null \
-                || date -u -r "$(( now + 2 ))" +%Y-%m-%dT%H:%M:%S.000000000Z)
-            echo "$at $(cat "$STATE/inspect_live")"
+            since=$(tail -n1 "$STATE/after_starts")
+            while :; do
+                now=$(date -u +%s)
+                at=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)
+                [[ "$at" > "$since" ]] && break
+                sleep 0.2
+            done
+            echo "${at%Z}.000000000Z $(cat "$STATE/inspect_live")"
         fi
         exit 0 ;;
     run) ;;
