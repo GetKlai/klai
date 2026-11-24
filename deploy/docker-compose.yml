@@ -1021,7 +1021,15 @@ services:
   # validator-env-parity).
   vaultwarden:
     logging: *log-rotation
-    image: vaultwarden/server:1.37.5
+    # The Alpine build of the same release: upstream ships both from one
+    # source and calls the choice "mostly a matter of preference" (wiki,
+    # "Which container image to use"). The Debian build carried 121 fixable
+    # HIGH/CRITICAL findings in its OS packages on 2026-11-24, among them
+    # MariaDB client libraries this sqlite setup never loads; the Alpine one
+    # scanned at 0. Both run the same /healthcheck.sh (sh and curl), and
+    # 1.37.5 went Debian -> Alpine -> Debian on one data volume with the
+    # same schema version and an account and vault item intact.
+    image: vaultwarden/server:1.37.5-alpine
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
