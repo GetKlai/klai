@@ -1242,9 +1242,17 @@ services:
       - socket-proxy
 
   # ─── GlitchTip (frontend error tracking) ────────────────────────────────
+  # Since 7.0 GlitchTip runs as one process: glitchtip-web also hosts the task
+  # worker and the scheduler, so there is no separate worker service. The 7.0
+  # image no longer has ./bin/run-celery-with-beat.sh, and the worker service
+  # that still called it is what failed the first 7.0.0 rollout (compose sync
+  # run 43294644746, 2026-11-12: its container stayed 'created'). Starting web
+  # also runs the migrations under an advisory lock, so glitchtip-migrate
+  # starting next to it is safe. The CELERY_WORKER_* variables went with the
+  # worker: neither 6.2.6 nor 7.0.0 reads them.
   glitchtip-web:
     logging: *log-rotation
-    image: glitchtip/glitchtip:6.2.6
+    image: glitchtip/glitchtip:7.0.0
     restart: unless-stopped
     depends_on:
       postgres:
@@ -1261,8 +1269,6 @@ services:
       DEFAULT_FROM_EMAIL: errors@${DOMAIN}
       EMAIL_URL: ${GLITCHTIP_EMAIL_URL}
       ENABLE_USER_REGISTRATION: "False"
-      CELERY_WORKER_AUTOSCALE: "1,3"
-      CELERY_WORKER_MAX_TASKS_PER_CHILD: "10000"
     volumes:
       - glitchtip-data:/code/uploads
     networks:
@@ -1276,34 +1282,9 @@ services:
       retries: 3
       start_period: 60s
 
-  glitchtip-worker:
-    logging: *log-rotation
-    image: glitchtip/glitchtip:6.2.6
-    restart: unless-stopped
-    command: ./bin/run-celery-with-beat.sh
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://glitchtip:${GLITCHTIP_DB_PASSWORD}@postgres:5432/glitchtip
-      REDIS_URL: ${GLITCHTIP_REDIS_URL}
-      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
-      GLITCHTIP_DOMAIN: https://errors.${DOMAIN}
-      EMAIL_URL: ${GLITCHTIP_EMAIL_URL}
-      ENABLE_USER_REGISTRATION: "False"
-      CELERY_WORKER_AUTOSCALE: "1,3"
-      CELERY_WORKER_MAX_TASKS_PER_CHILD: "10000"
-    volumes:
-      - glitchtip-data:/code/uploads
-    networks:
-      - net-postgres
-      - net-redis
-
   glitchtip-migrate:
     logging: *log-rotation
-    image: glitchtip/glitchtip:6.2.6
+    image: glitchtip/glitchtip:7.0.0
     command: "./manage.py migrate"
     restart: "no"
     depends_on:

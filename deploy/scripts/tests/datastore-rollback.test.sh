@@ -52,8 +52,6 @@ OLD_COMPOSE='services:
     image: glitchtip/glitchtip:6.2.6
   glitchtip-web:
     image: glitchtip/glitchtip:6.2.6
-  glitchtip-worker:
-    image: glitchtip/glitchtip:6.2.6
   qdrant:
     image: qdrant/qdrant:v1.19.2
   redis:
