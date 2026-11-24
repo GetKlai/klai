@@ -1,0 +1,118 @@
+name: Chat config boot
+
+# A pull request that changes the chat configuration or the pinned chat image
+# proves that the configuration boots on the image tenants run today and on the
+# image they will run.
+#
+# Why: on merge, deploy-librechat-config.yml copies librechat.yaml to the host,
+# regenerates every tenant's config and restarts the tenant chat containers,
+# which still run the image pinned in deploy/docker-compose.yml. A config moved
+# to a newer upstream schema added a top-level `projects` block that the running
+# image rejects at startup ("Unrecognized key(s) in object"), and only a
+# reviewer's question caught it. The unit tests read the YAML; none of them
+# starts LibreChat.
+#
+# Pull requests reach this workflow through the unfiltered `quality.yml`
+# (workflow_call, path filter `librechat_boot`), which aggregates it into the one
+# required `quality` check. A failure here fails `quality`; the job is skipped
+# only when none of its paths changed.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      # The default checkout of a pull request is the merge of its head into the
+      # base, which is what main will contain once it lands.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Read the base branch's pins and decide what to boot
+        id: plan
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          git show FETCH_HEAD:deploy/docker-compose.yml > "$RUNNER_TEMP/base-compose.yml"
+
+          # What tenants run when the config sync lands: the digests pinned on
+          # the base branch. What they will run: the digests pinned here. Both
+          # pins count (librechat-getklai and portal-api's LIBRECHAT_IMAGE).
+          sh deploy/tests/chat-pinned-digests.sh "$RUNNER_TEMP/base-compose.yml" > "$RUNNER_TEMP/base-digests.txt"
+          sh deploy/tests/chat-pinned-digests.sh deploy/docker-compose.yml > "$RUNNER_TEMP/head-digests.txt"
+          sort -u "$RUNNER_TEMP/base-digests.txt" "$RUNNER_TEMP/head-digests.txt" > "$RUNNER_TEMP/images.txt"
+          echo "Images to boot (base and head pins, deduplicated):"
+          cat "$RUNNER_TEMP/images.txt"
+
+          # Compose changes constantly for unrelated services. Boot only when
+          # a pin, the config, its generator or this check changed.
+          if cmp -s "$RUNNER_TEMP/base-digests.txt" "$RUNNER_TEMP/head-digests.txt" \
+            && git diff --quiet FETCH_HEAD HEAD -- \
+              deploy/librechat \
+              deploy/tests/chat-config-boot.sh \
+              deploy/tests/chat-pinned-digests.sh \
+              deploy/tests/render-tenant-chat-config.py \
+              deploy/tests/fixtures/chat-unknown-top-level-field.yaml \
+              klai-portal/backend/app/services/provisioning/generators.py \
+              .github/workflows/chat-config-boot.yml; then
+            echo "boot=false" >> "$GITHUB_OUTPUT"
+            echo "No pin, config, generator or check changed; nothing to boot."
+          else
+            echo "boot=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tenants do not get the base file as is: portal-api re-renders it per
+      # tenant with _generate_librechat_yaml (a YAML round trip that also adds
+      # the enabled catalog servers to mcpServers and every modelSpec). Boot
+      # both, the rendered one with a catalog server enabled so the added keys
+      # are exercised too.
+      - name: Render a tenant config from the base file
+        if: steps.plan.outputs.boot == 'true'
+        run: |
+          set -euo pipefail
+          python3 -I deploy/tests/render-tenant-chat-config.py \
+            deploy/librechat/librechat.yaml twenty-crm > "$RUNNER_TEMP/rendered-librechat.yaml"
+
+      - name: Boot the base and the rendered config on every pinned image
+        if: steps.plan.outputs.boot == 'true'
+        run: |
+          set -u
+          failed=0
+          while read -r image; do
+            docker pull --quiet "$image" > /dev/null
+            for config in deploy/librechat/librechat.yaml "$RUNNER_TEMP/rendered-librechat.yaml"; do
+              rc=0
+              sh deploy/tests/chat-config-boot.sh "$image" "$config" || rc=$?
+              if [ "$rc" -ne 0 ]; then
+                echo "::error::$config does not boot on $image (exit $rc)"
+                failed=1
+              fi
+            done
+          done < "$RUNNER_TEMP/images.txt"
+          exit "$failed"
+
+      # The check has to be able to go red: a config with one unknown top-level
+      # key must fail, with the validation verdict and not for another reason.
+      - name: Prove the check fails on a config the image rejects
+        if: steps.plan.outputs.boot == 'true'
+        run: |
+          set -u
+          image=$(head -n 1 "$RUNNER_TEMP/images.txt")
+          rc=0
+          sh deploy/tests/chat-config-boot.sh "$image" \
+            deploy/tests/fixtures/chat-unknown-top-level-field.yaml > "$RUNNER_TEMP/negative.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/negative.log"
+          if [ "$rc" -ne 1 ] || ! grep -q '^FAIL config-validation' "$RUNNER_TEMP/negative.log"; then
+            echo "::error::the boot check did not fail with a config-validation verdict on a config with an unknown key (exit $rc), so it cannot go red"
+            exit 1
+          fi
+          echo "Negative proof held: exit 1 with a config-validation verdict."
