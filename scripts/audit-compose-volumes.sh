@@ -17,6 +17,11 @@
 #      match one of the image's known data paths — either an env var in the
 #      DATA_PATH_KEYS list, an explicit conventional path we've curated, or
 #      the inventory entry's declared data_path_source with `verified: true`.
+#   C. Every inventory entry is backed up or exempt for a reason, and the
+#      inventory agrees with deploy/scripts/backup.sh in both directions. The
+#      password manager's volume sat at `backup: skip` with a note saying
+#      backup.sh did not archive it, and nothing failed on that until
+#      2026-11-24; four entries claimed `tar` for volumes no step archived.
 #
 # Exits non-zero on any violation. Intended to run in CI on PRs that touch
 # deploy/docker-compose.yml or deploy/volume-mounts.yaml.
@@ -75,6 +80,13 @@ CONVENTIONAL_PATHS=(
   /code/uploads
   /gitea-data   # gitea maps /data
 )
+
+BACKUP_SCRIPT="deploy/scripts/backup.sh"
+# What makes losing a volume acceptable. Anything else is a backup or a gap.
+SKIP_REASONS=(cache rebuildable model-weights logs metrics source-controlled runtime)
+# Steps backup.sh runs that archive no compose mount: the upload of the set,
+# and a host directory (/opt/klai/research-uploads) no compose service mounts.
+STEPS_WITHOUT_MOUNT=(encrypt_and_upload backup_research_uploads)
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -358,10 +370,78 @@ else
 fi
 
 echo ""
-total=$((violations_registry + violations_mismatch))
+echo "=== Part C: backup coverage against ${BACKUP_SCRIPT} ==="
+
+violations_backup=0
+gaps=0
+coverage_violation() {
+  violations_backup=$((violations_backup+1))
+  echo "  → $1" >&2
+}
+
+if [[ ! -f "${BACKUP_SCRIPT}" ]]; then
+  echo "error: ${BACKUP_SCRIPT} not found" >&2
+  exit 2
+fi
+run_steps="$(sed -n 's/^[[:space:]]*run_step "[^"]*" \([a-z_]*\)$/\1/p' "${BACKUP_SCRIPT}")"
+[[ -n "${run_steps}" ]] || { echo "error: no run_step lines found in ${BACKUP_SCRIPT}" >&2; exit 2; }
+
+# Unit separators, not tabs: read collapses runs of tabs, and empty fields
+# are the point of this check.
+COVERAGE_CACHE="$(mktemp)"
+trap 'rm -f "${INVENTORY_CACHE}" "${COVERAGE_CACHE}"' EXIT
+YQ -o=json deploy/volume-mounts.yaml | JQ -r '
+  (.mounts // {}) | to_entries[] |
+  [.key, (.value.host // ""), (.value.backup // ""), (.value.backup_step // ""),
+   (.value.skip_reason // ""), (.value.gap // "")] | join("\u001f")
+' > "${COVERAGE_CACHE}"
+
+used_steps=" "
+# shellcheck disable=SC2094 # the loop and the awk inside it both only read the cache
+while IFS=$'\x1f' read -r key host backup step reason gap; do
+  [[ -z "${key}" ]] && continue
+  case "${backup}" in
+    skip)
+      if [[ "${reason}" == same-volume-as:* ]]; then
+        other="${reason#same-volume-as:}"
+        other_backup="$(awk -F $'\x1f' -v k="${other}" -v h="${host}" '$1 == k && $2 == h { print $3 }' "${COVERAGE_CACHE}")"
+        if [[ -z "${other_backup}" || "${other_backup}" == skip ]]; then
+          coverage_violation "${key}: skip_reason ${reason} must name an entry for the same volume (${host}) that is not skipped"
+        fi
+      elif [[ " ${SKIP_REASONS[*]} " != *" ${reason} "* ]]; then
+        coverage_violation "${key}: backup: skip needs a skip_reason saying why losing it is acceptable (${SKIP_REASONS[*]}, same-volume-as:<key>); got '${reason}'"
+      fi
+      ;;
+    missing)
+      gaps=$((gaps+1))
+      if [[ -z "${gap}" ]]; then
+        coverage_violation "${key}: backup: missing needs a gap: line saying what is unprotected"
+      else
+        echo "UNPROTECTED ${key} (${host}): ${gap}"
+      fi
+      ;;
+    *)
+      if [[ -z "${step}" ]]; then
+        coverage_violation "${key}: backup: '${backup}' needs a backup_step naming the ${BACKUP_SCRIPT} function that backs it up (or skip/missing)"
+      elif ! grep -qx "${step}" <<< "${run_steps}"; then
+        coverage_violation "${key}: backup_step ${step} is not run by ${BACKUP_SCRIPT}"
+      else
+        used_steps+="${step} "
+      fi
+      ;;
+  esac
+done < "${COVERAGE_CACHE}"
+
+while IFS= read -r step; do
+  [[ " ${STEPS_WITHOUT_MOUNT[*]} " == *" ${step} "* || "${used_steps}" == *" ${step} "* ]] && continue
+  coverage_violation "${BACKUP_SCRIPT} runs ${step}, but no inventory entry names it as backup_step"
+done <<< "${run_steps}"
+
+echo ""
+total=$((violations_registry + violations_mismatch + violations_backup))
 if [[ "${total}" -gt 0 ]]; then
-  echo "audit-compose-volumes: FAILED (${violations_registry} unregistered mount(s), ${violations_mismatch} image mismatch(es))" >&2
+  echo "audit-compose-volumes: FAILED (${violations_registry} unregistered mount(s), ${violations_mismatch} image mismatch(es), ${violations_backup} backup coverage violation(s))" >&2
   exit 1
 fi
 
-echo "audit-compose-volumes: OK — ${rows} persistent mount(s) verified against inventory and image metadata."
+echo "audit-compose-volumes: OK — ${rows} persistent mount(s) verified against inventory and image metadata; ${gaps} known unprotected volume(s) listed above."

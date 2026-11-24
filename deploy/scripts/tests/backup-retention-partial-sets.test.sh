@@ -52,6 +52,7 @@ if [[ "$all" == *" INFO persistence" ]]; then echo 'rdb_last_bgsave_status:ok'; 
 if [[ "$all" == *" INFO keyspace" ]]; then printf '# Keyspace\ndb0:keys=3,expires=0,avg_ttl=0\n'; exit 0; fi
 if [[ "$all" == *" GRAPH.LIST" ]]; then exit 0; fi
 if [[ "$all" == *"/stats"* ]]; then echo '{"indexes":{}}'; exit 0; fi
+if [[ "$all" == *"/vaultwarden backup" ]]; then echo "Backup to '/data/db_20260717_020000.sqlite3' was successful"; exit 0; fi
 # pg_dumpall writes to stdout; STUB_EMPTY_DUMP_USER makes one dump come out empty.
 if [[ "$all" == *pg_dumpall* ]]; then
     [[ -n "${STUB_EMPTY_DUMP_USER:-}" && "$all" == *"-U $STUB_EMPTY_DUMP_USER"* ]] || echo '-- dump'
@@ -83,6 +84,7 @@ STUB
 for stub in sleep rsync age curl tar; do
     printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/bin/$stub"
 done
+printf '#!/usr/bin/env bash\necho ok\n' >"$TMP/bin/sqlite3"
 chmod +x "$TMP/bin"/*
 
 run_backup() { # run_backup <date>: exit code in $rc, log in $TMP/out

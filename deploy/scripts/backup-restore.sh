@@ -26,7 +26,7 @@
 #   postgres gitea mongodb redis vexa_redis meilisearch qdrant falkordb
 #   garage_meta garage_data firecrawl_postgres listmonk_postgres crm_postgres
 #   fider_postgres umami_postgres crm_storage listmonk_uploads scribe_audio
-#   research_uploads
+#   vaultwarden_db vaultwarden_files research_uploads
 #
 # The fact an artifact must reproduce (backup-facts.txt, written by backup.sh,
 # is part of every set):
@@ -41,6 +41,9 @@
 #   tar artifacts         the member count and the hash of the sorted member
 #                         names recorded at backup time, and as many files in
 #                         the restored volume
+#   vaultwarden_db        the copy opens in a scratch directory, passes
+#                         integrity_check and holds the server's own tables;
+#                         no Vaultwarden is started on it
 # and for every file its recorded checksum, so a truncated or damaged copy is
 # named before an engine is started. A fact that cannot be compared (no
 # recorded line, no table in a dump) is a failure.
@@ -76,6 +79,8 @@ umami_postgres      pg      umami-postgres-all.sql       umami-postgres
 crm_storage         tar     crm-storage.tar.gz           -
 listmonk_uploads    tar     listmonk-uploads.tar.gz      -
 scribe_audio        tar     scribe-audio.tar.gz          -
+vaultwarden_db      sqlite  vaultwarden-db.sqlite3       -
+vaultwarden_files   tar     vaultwarden-files.tar.gz     -
 research_uploads    tar     research-uploads.tar.gz      -
 '
 
@@ -295,6 +300,28 @@ rs_tar() {
   echo "$want_n files and the member listing as recorded; restored into throwaway volume $vol"
 }
 
+# Tables every Vaultwarden database has had since its first two schema steps
+# of 2018 (upstream migrations/sqlite). A copy without them is not one the
+# server can start on.
+readonly RS_VAULT_TABLES="__diesel_schema_migrations users devices ciphers folders organizations users_organizations"
+
+# rs_sqlite <file>: the copy, put in a scratch directory, opens read-only,
+# passes integrity_check and holds those tables. Nothing is started on it: a
+# second Vaultwarden would be one more place the team's credentials are served
+# from, and the database itself is what a restore puts back.
+rs_sqlite() {
+  local db="$AW/scratch/db.sqlite3" check tables t missing=()
+  command -v sqlite3 > /dev/null || { echo "sqlite3 is not installed"; return 1; }
+  mkdir -p "$AW/scratch" && cp "$1" "$db" || return 1
+  check="$(sqlite3 -readonly "$db" 'PRAGMA integrity_check;' 2>&1)"
+  [[ "$check" == ok ]] || { echo "integrity_check: $(head -n 3 <<< "$check" | paste -sd';' -)"; return 1; }
+  tables="$(sqlite3 -readonly "$db" "select name from sqlite_master where type = 'table';" 2>&1)" \
+    || { echo "the tables cannot be listed: $tables"; return 1; }
+  for t in $RS_VAULT_TABLES; do grep -qx "$t" <<< "$tables" || missing+=("$t"); done
+  (( ${#missing[@]} == 0 )) || { echo "tables missing: ${missing[*]}"; return 1; }
+  echo "integrity_check ok, $(wc -l <<< "$tables" | tr -d ' ') tables with the server's own among them; opened in a scratch directory, no server started"
+}
+
 # rs_path <file name>: where the plain file is, decrypting an .age copy into
 # the artifact's work directory. The staging copy of research-uploads is a directory.
 rs_path() {
@@ -341,6 +368,7 @@ rs_artifact() {
     meili) rs_snapshot "$a" meilisearch "$svc" "${paths[@]}" ;;
     qdrant) rs_snapshot "$a" qdrant "$svc" "${paths[@]}" ;;
     tar) rs_tar "$a" "${paths[0]}" "$file" ;;
+    sqlite) rs_sqlite "${paths[0]}" ;;
   esac
 }
 

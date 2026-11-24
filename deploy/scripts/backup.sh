@@ -23,7 +23,7 @@ readonly SECRETS_DIR="${SECRETS_DIR:-${COMPOSE_DIR}/secrets}"
 readonly MONGODB_NETWORK="${MONGODB_NETWORK:-klai-net-mongodb}"
 readonly MONGODB_MIN_NOFILE="${MONGODB_MIN_NOFILE:-64000}"
 readonly QDRANT_NETWORK="${QDRANT_NETWORK:-klai-net}"
-readonly TOTAL_STEPS=16
+readonly TOTAL_STEPS=21
 
 # How many day-directories stay on core-01 after a successful run.
 #
@@ -831,6 +831,87 @@ backup_scribe_audio() {
   fi
 }
 
+# The team password manager. Its SQLite database is copied with Vaultwarden's
+# own `/vaultwarden backup` (upstream src/db/mod.rs backup_sqlite, since
+# 1.32.1): VACUUM INTO on a read-only connection, a transactionally consistent
+# copy taken while the server keeps running, which a file copy of db.sqlite3
+# is not while part of the data still sits in db.sqlite3-wal. It runs inside
+# the container because the image ships no sqlite3 (upstream wiki, "Backing up
+# your vault") and the host's sqlite3 cannot open the root-owned volume as
+# klai; public-01's backup-kuma.sh takes Uptime Kuma's copy the same way. The
+# rest of what the wiki says to keep (rsa_key*, attachments, sends,
+# config.json) goes into a tar; icon_cache is refetched and left out.
+#
+# Both artifacts are made under .partial names and recorded only when both
+# exist and the copy passes integrity_check, so a failure ships neither and
+# the run ends red. Unlike the optional services above, a stopped container is
+# a failure too: a night without this copy must not look green.
+backup_vaultwarden() {
+  local container db files out copy check
+
+  container="$(ctr vaultwarden)"
+  db="${BACKUP_DIR}/vaultwarden-db.sqlite3"
+  files="${BACKUP_DIR}/vaultwarden-files.tar.gz"
+  rm -f "${db}" "${files}" "${db}.partial" "${files}.partial"
+
+  if ! container_running "${container}"; then
+    fail "Vaultwarden container is not running"
+    return 1
+  fi
+
+  out="$(docker exec "${container}" /vaultwarden backup 2>&1)" \
+    || { fail "vaultwarden backup failed: ${out}"; return 1; }
+  copy="$(sed -n "s/^Backup to '\(\/data\/db_[0-9_]*\.sqlite3\)' was successful$/\1/p" <<< "${out}")"
+  [[ -n "${copy}" ]] || { fail "vaultwarden backup named no copy: ${out}"; return 1; }
+  if ! docker cp "${container}:${copy}" "${db}.partial"; then
+    docker exec "${container}" rm -f "${copy}" || true
+    rm -f "${db}.partial"
+    fail "copying ${copy} out of the vaultwarden container failed"
+    return 1
+  fi
+  # The copy holds the same data as the live database in the same volume, so
+  # one left behind is no exposure, but it must not pile up night after night.
+  docker exec "${container}" rm -f "${copy}" \
+    || log "      WARNING: ${copy} stays in the vaultwarden volume; remove it by hand"
+  chmod 600 "${db}.partial" || { rm -f "${db}.partial"; return 1; }
+
+  check="$(sqlite3 "${db}.partial" 'PRAGMA integrity_check;' 2>&1)"
+  if [[ "${check}" != ok ]]; then
+    rm -f "${db}.partial"
+    fail "the vaultwarden copy fails integrity_check: ${check}"
+    return 1
+  fi
+
+  # rsa_key.pem exists from the server's first start on, so its absence means
+  # the wrong directory, not an empty vault.
+  if ! docker run --rm \
+      --volumes-from "${container}:ro" \
+      -v "${BACKUP_DIR}:/backup" \
+      -e OWNER="$(id -u):$(id -g)" \
+      alpine sh -c '
+        set -e
+        cd /data
+        test -s rsa_key.pem
+        set --
+        for f in rsa_key* attachments sends config.json; do
+          if [ -e "$f" ]; then set -- "$@" "$f"; fi
+        done
+        tar -czf /backup/vaultwarden-files.tar.gz.partial "$@"
+        chown "$OWNER" /backup/vaultwarden-files.tar.gz.partial
+        chmod 600 /backup/vaultwarden-files.tar.gz.partial
+      '; then
+    rm -f "${db}.partial" "${files}.partial"
+    fail "the vaultwarden files tar failed"
+    return 1
+  fi
+
+  if ! { mv "${db}.partial" "${db}" && mv "${files}.partial" "${files}"; }; then
+    rm -f "${db}" "${files}" "${db}.partial" "${files}.partial"
+    return 1
+  fi
+  record_file "${db}" && record_file "${files}"
+}
+
 backup_research_uploads() {
   local output="${BACKUP_DIR}/research-uploads"
   local listing
@@ -987,6 +1068,7 @@ main() {
   run_step "Umami Postgres: dump all databases" backup_umami_postgres
   run_step "Fider Postgres: dump all databases" backup_fider_postgres
   run_step "Scribe audio: tar failed retry recordings" backup_scribe_audio
+  run_step "Vaultwarden: SQLite copy and key files" backup_vaultwarden
   run_step "Research uploads: rsync user uploads" backup_research_uploads
   run_step "Encrypt and upload to Storage Box" encrypt_and_upload
 

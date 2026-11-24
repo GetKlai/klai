@@ -8,6 +8,13 @@
 #      MUST fail (Part A catches it).
 #   4. Generic image mismatch: edit a data entry's container_path to a bogus
 #      value unrelated to falkordb → audit MUST fail (Part B catches it).
+#   5-9. Backup coverage (Part C). The baseline already holds entries that are
+#      backed up by a step backup.sh runs and entries skipped with a reason,
+#      and passes. These must fail: the password manager back at
+#      `backup: skip` without a reason (its state until 2026-11-24), a skip
+#      whose reason is not one that makes loss acceptable, a second consumer
+#      pointing at a skipped entry, an entry whose step backup.sh does not run,
+#      and a step backup.sh runs that no entry names.
 #
 # The point of scenarios 3 and 4 is to prove that the audit catches the CLASS
 # of bug — not just the one specific pattern we hit on 2026-04-19.
@@ -22,6 +29,8 @@ setup_fixture() {
   cp "${REPO_ROOT}/deploy/docker-compose.yml" "${dest}/deploy/"
   cp "${REPO_ROOT}/deploy/volume-mounts.yaml"  "${dest}/deploy/"
   cp "${REPO_ROOT}/scripts/audit-compose-volumes.sh" "${dest}/scripts/"
+  mkdir -p "${dest}/deploy/scripts"
+  cp "${REPO_ROOT}/deploy/scripts/backup.sh" "${dest}/deploy/scripts/"
   chmod +x "${dest}/scripts/audit-compose-volumes.sh"
 }
 
@@ -121,9 +130,77 @@ else
 fi
 rm -rf "${fx4}"
 
+# ── Scenarios 5-9: backup coverage ─────────────────────────────────────────
+#
+# set_field <file> <entry> <field> <value>, within one entry: `backup` is
+# replaced, an empty value deletes the field, any other field is added after
+# the backup: line (the fields set here do not exist in those entries yet).
+set_field() {
+  awk -v e="$2" -v f="$3" -v v="$4" '
+    /^  [a-zA-Z0-9_-]+:$/ { inside = ($0 == "  " e ":") }
+    inside && $1 == f ":" && (f == "backup" || v == "") { if (v != "") print "    " f ": " v; next }
+    { print }
+    inside && $1 == "backup:" && f != "backup" && v != "" { print "    " f ": " v }
+  ' "$1" > "$1.new" && mv "$1.new" "$1"
+}
+
+# expect_coverage_failure <title> <fixture> <stderr pattern>
+expect_coverage_failure() {
+  local err
+  if err="$(cd "$2" && bash scripts/audit-compose-volumes.sh 2>&1 >/dev/null)"; then
+    echo "FAIL — audit accepted: $1" >&2
+    failures=$((failures+1))
+  elif ! grep -q -- "$3" <<< "${err}"; then
+    echo "FAIL — audit failed, but not on backup coverage ($3): $1" >&2
+    echo "${err}" | tail -n 5 >&2
+    failures=$((failures+1))
+  else
+    echo "PASS"
+  fi
+  rm -rf "$2"
+}
+
+echo ""
+echo "=== Scenario 5: the password manager skipped without a reason must fail ==="
+fx=$(mktemp -d); setup_fixture "${fx}"
+set_field "${fx}/deploy/volume-mounts.yaml" vaultwarden backup skip
+set_field "${fx}/deploy/volume-mounts.yaml" vaultwarden backup_step ""
+expect_coverage_failure "vaultwarden at backup: skip without skip_reason" "${fx}" "vaultwarden: backup: skip needs a skip_reason"
+
+echo ""
+echo "=== Scenario 6: a skip whose reason does not make loss acceptable must fail ==="
+fx=$(mktemp -d); setup_fixture "${fx}"
+set_field "${fx}/deploy/volume-mounts.yaml" calnode backup skip
+set_field "${fx}/deploy/volume-mounts.yaml" calnode skip_reason "not-yet-archived"
+expect_coverage_failure "calnode skipped as not-yet-archived" "${fx}" "calnode: backup: skip needs a skip_reason"
+
+echo ""
+echo "=== Scenario 7: a second consumer pointing at a skipped entry must fail ==="
+fx=$(mktemp -d); setup_fixture "${fx}"
+set_field "${fx}/deploy/volume-mounts.yaml" crm-storage backup skip
+set_field "${fx}/deploy/volume-mounts.yaml" crm-storage skip_reason "same-volume-as:crm-storage-worker"
+set_field "${fx}/deploy/volume-mounts.yaml" crm-storage-worker backup skip
+set_field "${fx}/deploy/volume-mounts.yaml" crm-storage-worker skip_reason "same-volume-as:crm-storage"
+expect_coverage_failure "crm-storage and its worker each pointing at the other" "${fx}" "crm-storage: skip_reason same-volume-as:crm-storage-worker must name"
+
+echo ""
+echo "=== Scenario 8: an entry whose backup_step backup.sh does not run must fail ==="
+fx=$(mktemp -d); setup_fixture "${fx}"
+grep -v 'run_step "Vaultwarden: ' "${fx}/deploy/scripts/backup.sh" > "${fx}/backup.sh.new"
+mv "${fx}/backup.sh.new" "${fx}/deploy/scripts/backup.sh"
+expect_coverage_failure "vaultwarden named, its step not run" "${fx}" "vaultwarden: backup_step backup_vaultwarden is not run"
+
+echo ""
+echo "=== Scenario 9: a step backup.sh runs that no entry names must fail ==="
+fx=$(mktemp -d); setup_fixture "${fx}"
+set_field "${fx}/deploy/volume-mounts.yaml" gitea backup missing
+set_field "${fx}/deploy/volume-mounts.yaml" gitea backup_step ""
+set_field "${fx}/deploy/volume-mounts.yaml" gitea gap "a gap"
+expect_coverage_failure "backup_gitea runs, no entry names it" "${fx}" "runs backup_gitea, but no inventory entry names it"
+
 echo ""
 if [[ "${failures}" -gt 0 ]]; then
   echo "test-audit-compose: ${failures} scenario(s) failed." >&2
   exit 1
 fi
-echo "test-audit-compose: all 4 scenarios behaved as expected."
+echo "test-audit-compose: all 9 scenarios behaved as expected."
