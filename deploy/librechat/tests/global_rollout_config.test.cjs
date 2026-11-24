@@ -11,7 +11,7 @@ const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/deploy-l
 // The regenerate call moved out of the workflow into a host script (22 October 2026).
 const regenerate = fs.readFileSync(path.join(repoRoot, 'deploy/scripts/tenant-config-regenerate.sh'), 'utf8');
 
-assert.match(config, /^version: 1\.3\.13$/m);
+assert.match(config, /^version: 1\.3\.19$/m);
 // 2026-08-13: endpointsMenu/sidePanel are confirmed stripped from 0.8.7's
 // interfaceSchema (zero references in packages/data-provider/src/config.ts
 // inside ghcr.io/danny-avila/librechat:v0.8.7) -- setting them is a stale
