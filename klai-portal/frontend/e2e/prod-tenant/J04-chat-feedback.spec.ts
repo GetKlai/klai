@@ -49,7 +49,7 @@ test('J04 - chat feedback click reaches LibreChat feedback route and marks activ
   const prompt = `Zeg alleen "hallo" en niets anders. Prod smoke ${Date.now()}`
 
   await frame.locator('#prompt-textarea').fill(prompt)
-  await frame.locator('#send-button').click()
+  await frame.locator('[data-testid="send-button"]').click()
 
   // Mode-agnostic completion signal: the regenerate control is only
   // rendered for a finished assistant turn (it cannot regenerate a

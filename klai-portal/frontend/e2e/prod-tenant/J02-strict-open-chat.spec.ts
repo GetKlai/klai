@@ -58,7 +58,7 @@ async function askChat(page: Page, prompt: string): Promise<string> {
   // page as a whole could still see the previous turn's reply.
   const repliesBefore = await frame.locator('.agent-turn').count()
   await frame.locator('#prompt-textarea').fill(prompt)
-  await frame.locator('#send-button').click()
+  await frame.locator('[data-testid="send-button"]').click()
   // Polled through latestReplyText so the wait reads the reply the way the
   // assertions do.
   await expect
