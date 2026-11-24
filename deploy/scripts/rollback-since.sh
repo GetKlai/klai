@@ -6,11 +6,16 @@
 # over ssh after a red E2E run on main has been confirmed by a second red run.
 #
 # Usage:
-#   rollback-since.sh <since-ts> --until <until-ts> [--rehearse]
+#   rollback-since.sh <since-ts> --until <until-ts> [--red-after <ts>] [--rehearse]
 #
 #   <since-ts>   start of the last green run's job
 #   --until      creation time of the red run; a deploy after it was not what
 #                that run saw, so it is left alone
+#   --red-after  completion time of the newest E2E run an earlier round of
+#                auto-rollback.yml started after its rollback, when that run
+#                failed and no green run came after it (outcome
+#                e2e_already_red, below). A value that is not a timestamp is
+#                ignored, so the run rolls back as it would without it
 #   --rehearse   handle the rollback-canary service only, so the whole chain can
 #                be exercised on production without touching a real service
 #   Times are UTC in the ledger's own format (2026-10-28T04:00:00Z) and are
@@ -41,11 +46,23 @@
 # later runs only read ledger lines after the later of <since-ts> and that time,
 # so a deploy is undone once even when E2E stays red.
 #
+# Already red: from 2026-11-19 to 2026-11-22 the login journey failed because of
+# a setting in the identity provider. With no green run after it, every later
+# deploy fell inside the window, was confirmed red and rolled back, CRM database
+# restores included. The one proof that E2E is red for a reason outside the
+# deploys is the system's own experiment: an earlier round rolled back and the
+# E2E run it started afterwards was red too (--red-after). Then a round changes
+# nothing and ends e2e_already_red, but only when that evidence is newer than
+# the last replay (R6 below) and every deploy left in the window has a ledger
+# line later than the evidence plus SERVING_MARGIN. Anything else rolls back.
+#
 # Exit codes
 #   0  nothing to roll back; nothing changed
 #   3  every service found was rolled back                     (rolled_back)
 #   4  at least one rollback failed or could not be attempted,
 #      or the ledger is missing                                (rollback_failed)
+#   5  E2E was red after an earlier rollback, before every
+#      deploy in the window; nothing changed                   (e2e_already_red)
 #   1  bad arguments, or the scripts could not be copied
 #
 # Report: <reports>/e2e-rollback.json, one object in the shape
@@ -70,22 +87,38 @@ COMPOSE_MARKER="$KLAI_DIR/.compose-commit"
 PREV_STATE="$KLAI_DIR/.compose-prev-state"
 CANARY="rollback-canary"
 TS_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+# A ledger line is written when a deploy finishes, while the new version has
+# served since its recreate: for an image the probe (60 s) and the error watch
+# (300 s, polled every 30 s) come after it, about 6.5 minutes; a compose sync
+# runs its gates one after another after the first recreate, and the longest
+# of the last 40 green sync runs took 682 s end to end (2026-11-24). 15 minutes
+# covers both with headroom, so a deploy whose ledger line is within this of
+# the evidence may already have been serving during that E2E run and is
+# treated as a possible cause. A data store major that dumps and restores for
+# longer than this is the known gap.
+SERVING_MARGIN=900
 
-usage() { echo "usage: ${0##*/} <since-ts> --until <until-ts> [--rehearse]   (times YYYY-MM-DDTHH:MM:SSZ)" >&2; exit 1; }
+usage() { echo "usage: ${0##*/} <since-ts> --until <until-ts> [--red-after <ts>] [--rehearse]   (times YYYY-MM-DDTHH:MM:SSZ)" >&2; exit 1; }
 
 (( $# >= 1 )) || usage
 SINCE="$1"
 shift
 UNTIL=""
+RED_AFTER=""
 REHEARSE=0
 while (( $# > 0 )); do
     case "$1" in
         --until) (( $# >= 2 )) || usage; UNTIL="$2"; shift 2 ;;
+        --red-after) (( $# >= 2 )) || usage; RED_AFTER="$2"; shift 2 ;;
         --rehearse) REHEARSE=1; shift ;;
         *) usage ;;
     esac
 done
 [[ "$SINCE" =~ $TS_RE && "$UNTIL" =~ $TS_RE ]] || usage
+if [[ -n "$RED_AFTER" && ! "$RED_AFTER" =~ $TS_RE ]]; then
+    echo "::warning::--red-after '$RED_AFTER' is not YYYY-MM-DDTHH:MM:SSZ; ignored, so this run rolls back as without it"
+    RED_AFTER=""
+fi
 # The canary sits in a compose profile; without it compose does not see it.
 (( REHEARSE )) && export COMPOSE_PROFILES="rollback-rehearsal"
 
@@ -143,9 +176,9 @@ fail_event() {
 # finish <outcome> <gate> <code>
 finish() {
     local report
-    report="$(printf '{"service":"%s","kind":"e2e","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","since":"%s","until":"%s","skipped":"%s","log":"%s"}' \
+    report="$(printf '{"service":"%s","kind":"e2e","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","since":"%s","until":"%s","red_after":"%s","skipped":"%s","log":"%s"}' \
         "$(json_str "${SERVICES% }")" "$(json_str "${FROMS% }")" "$(json_str "${TOS% }")" "$(json_str "${COMMITS% }")" \
-        "$2" "$1" "$(now)" "$AFTER" "$UNTIL" "$(json_str "${SKIPPED% }")" "$(json_str "$LOG")")"
+        "$2" "$1" "$(now)" "$AFTER" "$UNTIL" "$RED_AFTER" "$(json_str "${SKIPPED% }")" "$(json_str "$LOG")")"
     printf '%s\n' "$report" > "$REPORT_DIR/e2e-rollback.json"
     echo "ROLLBACK_REPORT $report"
     exit "$3"
@@ -168,6 +201,24 @@ PLAN="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" '
     }
     END { for (k in from) print ts[k] "\t" k "\t" from[k] "\t" to[k] "\t" commit[k] "\t" n[k] }
 ' "$LEDGER" | sort -t "$(printf '\t')" -k2,2r -k1,1r)"
+
+# GNU date on core-01 and in CI, BSD date on a Mac.
+epoch() { date -u -d "$1" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$1" +%s; }
+# The oldest deploy this run would undo; the canary never counts.
+FIRST="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" -v canary="$CANARY" '
+    $1 > after && $1 <= until && $7 == "deployed" && ($2 == "image" || $2 == "compose") && $3 != canary { print $1; exit }
+' "$LEDGER")"
+if [[ -n "$FIRST" && -n "$RED_AFTER" && "$RED_AFTER" > "$AFTER" ]] \
+    && (( $(epoch "$FIRST") > $(epoch "$RED_AFTER") + SERVING_MARGIN )); then
+    while IFS=$'\t' read -r _ts _kind svc _from to commit _n; do
+        [[ -n "$svc" && "$svc" != "$CANARY" ]] || continue
+        SERVICES+="$svc "
+        TOS+="$svc=$to "
+        COMMITS+="$commit "
+    done <<< "$PLAN"
+    echo "::error::E2E prod-tenant was still red after the last rollback (run completed $RED_AFTER), and every deploy in ($AFTER, $UNTIL] came more than ${SERVING_MARGIN}s later (first $FIRST); nothing rolled back, the deploys in the window (${SERVICES% }) are not blamed"
+    finish e2e_already_red e2e-already-red 5
+fi
 
 # skip_newer <service> <why>: a later deploy is live; leave it, say so.
 skip_newer() {

@@ -181,6 +181,11 @@ jobs:
       - name: rollback-since replay suite
         run: bash deploy/scripts/tests/rollback-since.test.sh
 
+      # Which E2E run proves that E2E is red for a reason outside the deploys;
+      # a wrong pick leaves a breaking deploy live.
+      - name: e2e-rollback-evidence suite
+        run: bash deploy/scripts/tests/e2e-rollback-evidence.test.sh
+
       # Its data half: a restore that drops the wrong database, or restores past
       # the 30-minute window, loses customer writes.
       - name: datastore rollback suite

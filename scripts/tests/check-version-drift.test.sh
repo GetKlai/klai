@@ -11,9 +11,13 @@ mkdir "$tmp/bin"
 
 cat > "$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
-# gh <group> <cmd> ... --jq <expr>: run <expr> over $STUB_DIR/<group>-<cmd>.json
-[ "$1" = api ] && exit 1
-file="$STUB_DIR/$1-$2.json"
+# gh <group> <cmd> ... --jq <expr>: run <expr> over $STUB_DIR/<group>-<cmd>.json;
+# gh api only answers issue events, from $STUB_DIR/issue-events.json.
+if [ "$1" = api ]; then
+  case "$*" in */events*) file="$STUB_DIR/issue-events.json" ;; *) exit 1 ;; esac
+else
+  file="$STUB_DIR/$1-$2.json"
+fi
 while [ $# -gt 0 ]; do [ "$1" = --jq ] && { expr=$2; break; }; shift; done
 jq -r "$expr" "$file"
 # Like the real gh, `pr checks` exits 8 while a check is still pending.
@@ -34,6 +38,7 @@ jq -n '
    pr(103; "app/klai-renovate"; 5; "🚦 **Automerge**: Disabled by config."),
    pr(104; "mvletter"; 4; "🚦 **Automerge**: Enabled.")]' > "$tmp/pr-list.json"
 checks() { jq -n "[{bucket: \"$1\", name: \"$2\"}, {bucket: \"pass\", name: \"quality\"}]" > "$tmp/pr-checks.json"; }
+echo '[]' > "$tmp/issue-events.json"
 # The dashboard carries only the notice timestamp-optional causes on purpose.
 jq -n '[{title: "Dependency Dashboard", author: {login: "app/klai-renovate"}, body: "## Repository Problems\n\nRenovate tried to run on this repository, but found these problems.\n\n - WARN: Some release(s) did not have a releaseTimestamp, but as we are running with minimumReleaseAgeBehaviour=timestamp-optional, proceeding.\n"}]' > "$tmp/issue-list.json"
 jq -n '[{createdAt: (now - 3600 | todate)}]' > "$tmp/run-list.json"
@@ -72,5 +77,23 @@ out=$(run_script)
 grep -q 'FAIL: GetKlai/klai: automerge PR #101 open 11d is stuck' <<<"$out" || fail "11-day pending PR not reported"
 
 grep -q "Dashboard has a 'Repository Problems' section" <<<"$out" && fail "the timestamp-optional notice was reported as a problem"
+
+# E2E prod-tenant red on main: its ci-failure issue open for 30 hours fails the
+# run and names the issue and its age; open for 2 hours is fine.
+dashboard=$(cat "$tmp/issue-list.json")
+e2e_issue() { jq --argjson h "$1" '. + [{number: 2001, title: "CI failure: E2E prod-tenant", createdAt: (now - $h * 3600 | todate), author: {login: "app/github-actions"}, body: ""}]' <<<"$dashboard" > "$tmp/issue-list.json"; }
+e2e_issue 30
+out=$(run_script)
+grep -q 'FAIL: GetKlai/klai: #2001 CI failure: E2E prod-tenant has been open 30h (limit 24h)' <<<"$out" || fail "30-hour-old E2E issue not reported"
+e2e_issue 2
+out=$(run_script)
+grep -q '#2001 CI failure: E2E prod-tenant has been open' <<<"$out" && fail "a 2-hour-old E2E issue was reported"
+grep -q 'OK:   GetKlai/klai: #2001 CI failure: E2E prod-tenant open 2h' <<<"$out" || fail "2-hour-old E2E issue not noted"
+
+# Created five days ago but reopened two hours ago: red for two hours, not five days.
+e2e_issue 120
+jq -n '[{event: "closed", created_at: (now - 50 * 3600 | todate)}, {event: "reopened", created_at: (now - 2 * 3600 | todate)}]' > "$tmp/issue-events.json"
+out=$(run_script)
+grep -q 'OK:   GetKlai/klai: #2001 CI failure: E2E prod-tenant open 2h' <<<"$out" || fail "a reopened issue was aged from its creation"
 
 echo "check-version-drift: PASS"
