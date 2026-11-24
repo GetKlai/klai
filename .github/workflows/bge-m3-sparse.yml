@@ -65,7 +65,7 @@ jobs:
           cache: true
 
       # Same flags as the service workflows (see retrieval-api.yml for why the
-      # CLI is called directly). This image has no .trivyignore.yaml.
+      # CLI is called directly).
       - name: Run Trivy vulnerability scanner
         run: |
           trivy image \
@@ -75,6 +75,7 @@ jobs:
             --ignore-unfixed \
             --scanners vuln \
             --exit-code 1 \
+            --ignorefile deploy/bge-m3-sparse/.trivyignore.yaml \
             bge-m3-sparse:ci
 
       - name: Upload Trivy SARIF to GitHub Security tab
