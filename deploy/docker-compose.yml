@@ -1299,7 +1299,12 @@ services:
   glitchtip-migrate:
     logging: *log-rotation
     image: glitchtip/glitchtip:7.0.0
-    command: "./manage.py migrate"
+    # GlitchTip 7's own pre-deploy entrypoint (manage.py init_database): it
+    # migrates under a Postgres advisory lock. The web service runs the same
+    # initialisation when it starts, and a bare `manage.py migrate` next to it
+    # takes no lock: on 2026-11-24 the two ran the same migration at once, the
+    # one-shot died on a duplicate column and the sync rolled back.
+    command: "./bin/run-migrate.sh"
     restart: "no"
     depends_on:
       postgres:
