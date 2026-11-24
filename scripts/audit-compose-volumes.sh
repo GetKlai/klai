@@ -383,8 +383,15 @@ if [[ ! -f "${BACKUP_SCRIPT}" ]]; then
   echo "error: ${BACKUP_SCRIPT} not found" >&2
   exit 2
 fi
-run_steps="$(sed -n 's/^[[:space:]]*run_step "[^"]*" \([a-z_]*\)$/\1/p' "${BACKUP_SCRIPT}")"
+run_steps="$(sed -n 's/^[[:space:]]*run_step "[^"]*" \([A-Za-z0-9_]*\)[[:space:]]*\(#.*\)\{0,1\}$/\1/p' "${BACKUP_SCRIPT}")"
 [[ -n "${run_steps}" ]] || { echo "error: no run_step lines found in ${BACKUP_SCRIPT}" >&2; exit 2; }
+# A run_step call this cannot read would be a step the inventory check never
+# sees, so an unreadable call is an error rather than a skipped line.
+run_step_calls="$(grep -cE '^[[:space:]]*run_step[[:space:]]' "${BACKUP_SCRIPT}")"
+if [[ "${run_step_calls}" != "$(grep -c . <<< "${run_steps}")" ]]; then
+  echo "error: ${BACKUP_SCRIPT} has ${run_step_calls} run_step call(s) but only $(grep -c . <<< "${run_steps}") could be read; keep each on one line as: run_step \"<label>\" <function>" >&2
+  exit 2
+fi
 
 # Unit separators, not tabs: read collapses runs of tabs, and empty fields
 # are the point of this check.

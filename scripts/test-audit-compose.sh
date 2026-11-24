@@ -199,8 +199,14 @@ set_field "${fx}/deploy/volume-mounts.yaml" gitea gap "a gap"
 expect_coverage_failure "backup_gitea runs, no entry names it" "${fx}" "runs backup_gitea, but no inventory entry names it"
 
 echo ""
+echo "=== Scenario 10: a run_step call the audit cannot read must fail ==="
+fx=$(mktemp -d); setup_fixture "${fx}"
+printf '  run_step "Extra: tar" \\\n    backup_extra\n' >> "${fx}/deploy/scripts/backup.sh"
+expect_coverage_failure "a run_step call split over two lines" "${fx}" "could be read"
+
+echo ""
 if [[ "${failures}" -gt 0 ]]; then
   echo "test-audit-compose: ${failures} scenario(s) failed." >&2
   exit 1
 fi
-echo "test-audit-compose: all 9 scenarios behaved as expected."
+echo "test-audit-compose: all 10 scenarios behaved as expected."
