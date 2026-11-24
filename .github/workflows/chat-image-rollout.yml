@@ -18,8 +18,13 @@ name: Chat image rollout
 # The compose-managed tenant (librechat-getklai) is not part of this: compose
 # owns its image and deploy-compose.yml moves it at merge, ahead of the canary.
 #
-# Two jobs on purpose: `plan` only reads, `rollout` is the one that moves
-# containers. Auto-rollback leaves a red E2E run alone when a `rollout` job of
+# The canary must be marked synthetic on core-01: the line
+# KLAI_TENANT_PURPOSE=synthetic in /opt/klai/librechat/<slug>/.env. Without it
+# the run refuses (exit 4), so a secret that points at a customer tenant can
+# never make that customer the canary.
+#
+# Two jobs on purpose: `plan` moves no container (it only writes the baseline
+# state when none exists), `rollout` is the one that moves containers. Auto-rollback leaves a red E2E run alone when a `rollout` job of
 # this workflow ran while it did, because this sequence answers that red itself.
 #
 # Triggers: a push that touches the compose file (the run does nothing when the

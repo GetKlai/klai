@@ -31,7 +31,7 @@ __all__ = [
 # Written only by deploy/scripts/chat-image-rollout-host.sh, in the shared
 # LibreChat data directory that portal-api mounts at /librechat.
 IMAGE_ROLLOUT_STATE_FILE: Final = "image-rollout.json"
-_ROLLOUT_PHASES: Final = frozenset({"stable", "canary", "fleet", "rejected"})
+_ROLLOUT_PHASES: Final = frozenset({"stable", "canary", "fleet", "reverting", "rejected"})
 
 _DIGEST_REF: Final = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 
@@ -86,7 +86,8 @@ class ImageRolloutState:
 
     ``stable`` is the image the fleet is proven on. ``canary`` moves only the
     canary tenant to ``candidate``; ``fleet`` moves everyone there while the
-    second proof runs; ``rejected`` and ``stable`` keep everyone on ``stable``.
+    second proof runs; ``reverting`` (a put-back in progress, not yet
+    verified), ``rejected`` and ``stable`` keep everyone on ``stable``.
     """
 
     phase: str
@@ -125,7 +126,7 @@ def load_image_rollout_state(path: Path) -> ImageRolloutState | None:
     candidate = str(data.get("candidate") or "")
     canary = str(data.get("canary") or "")
     required = {"stable": stable}
-    if phase in ("canary", "fleet"):
+    if phase in ("canary", "fleet", "reverting"):
         required["candidate"] = candidate
     for field, image in required.items():
         if not _DIGEST_REF.match(image):

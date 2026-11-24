@@ -76,20 +76,47 @@ def image_bakes_in_patches(image: str) -> bool:
     return image.startswith(_KLAI_LIBRECHAT_IMAGE_PREFIX)
 
 
-def _tenant_librechat_image(slug: str) -> str:
-    """Image for this tenant: its env override, else the rollout state, else the env default.
+_PROVISIONED_CHAT_LABELS = ["klai.managed_by=portal-api-provisioning", "klai.kind=librechat"]
 
-    Both are read per call rather than cached. The rollout state file is
-    rewritten on the host between the canary and the fleet step without
-    restarting portal-api, so a cached copy would recreate tenants on the
-    wrong image -- the silent-no-op failure this SPEC exists to remove.
+
+def _fleet_librechat_image(client) -> str:
+    """The one image every provisioning-managed chat container runs.
+
+    The fallback while no rollout state exists. The env default is NOT that:
+    a compose deploy puts a new pin there before anything proved it, and
+    handing it out would move every new or recreated tenant onto an unproven
+    image. What the fleet already runs is the last image anything proved.
+    A fleet on more than one image has no such answer, so it fails closed;
+    an empty fleet (a new host) has nothing to protect and takes the default.
+    """
+    images = {
+        c.attrs.get("Image")
+        for c in client.containers.list(all=True, sparse=True, filters={"label": _PROVISIONED_CHAT_LABELS})
+    }
+    if not images:
+        return settings.librechat_image
+    if len(images) > 1:
+        raise RuntimeError(
+            f"no chat image rollout state and the fleet runs more than one image ({sorted(images)}); "
+            "refusing to pick one. Run the Chat image rollout workflow, which writes the state."
+        )
+    return images.pop()
+
+
+def _tenant_librechat_image(slug: str, client) -> str:
+    """Image for this tenant: its env override, else the rollout state, else what the fleet runs.
+
+    Read per call rather than cached. The rollout state file is rewritten on
+    the host between the canary and the fleet step without restarting
+    portal-api, so a cached copy would recreate tenants on the wrong image --
+    the silent-no-op failure this SPEC exists to remove.
     """
     overrides = parse_librechat_image_overrides(settings.librechat_image_overrides)
     if slug in overrides:
         image = overrides[slug]
     else:
         state = load_image_rollout_state(Path(settings.librechat_container_data_path) / IMAGE_ROLLOUT_STATE_FILE)
-        image = state.image_for(slug) if state else settings.librechat_image
+        image = state.image_for(slug) if state else _fleet_librechat_image(client)
     if image != settings.librechat_image:
         logger.info("librechat_image_override_applied", slug=slug, image=image)
     return image
@@ -788,6 +815,9 @@ def _start_librechat_container(
     names = validate_slug_for_provisioning(slug, domain=settings.domain)
     client = docker.from_env()
     container_name = names.librechat_container
+    # Before anything is removed: a state file that cannot be read, or a fleet
+    # with no single image, must leave the running container alone.
+    image = _tenant_librechat_image(slug, client)
 
     # Remove stale container if it exists (e.g. failed previous provisioning).
     # Record its image first so a failed replacement can be rolled back.
@@ -814,7 +844,7 @@ def _start_librechat_container(
             slug,
             env_file_host_path,
             mcp_servers,
-            image=_tenant_librechat_image(slug),
+            image=image,
         )
     except Exception:
         if rollback_on_failure and old_image_ref:

@@ -189,6 +189,10 @@ jobs:
       - name: chat image rollout suite
         run: bash deploy/scripts/tests/chat-image-rollout.test.sh
 
+      # Which red E2E run Auto-rollback leaves to the chat image rollout.
+      - name: chat rollout overlap suite
+        run: bash deploy/scripts/tests/chat-rollout-owns-red.test.sh
+
       # Which E2E run proves that E2E is red for a reason outside the deploys;
       # a wrong pick leaves a breaking deploy live.
       - name: e2e-rollback-evidence suite

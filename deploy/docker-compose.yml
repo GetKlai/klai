@@ -1087,9 +1087,10 @@ services:
       # first, proves it with E2E prod-tenant, then moves the fleet, and puts
       # back what moved on red. What each tenant runs meanwhile comes from the
       # rollout state on the host (/opt/klai/librechat/image-rollout.json),
-      # which portal-api reads per container create; this value only applies
-      # while that file does not exist. LIBRECHAT_IMAGE_OVERRIDES (unset)
-      # still pins a single tenant above both.
+      # which portal-api reads per container create. Without that file
+      # portal-api hands out the one image the fleet already runs, never this
+      # pin; this value only applies to a host with no tenant at all.
+      # LIBRECHAT_IMAGE_OVERRIDES (unset) still pins a single tenant above all.
       LIBRECHAT_IMAGE: ghcr.io/getklai/librechat@sha256:9ddb8b2709dcaecb30a020dc9b46d705e8f83995ca549d29829a21ceee769bb6
       # SPEC-SEC-HYGIENE-001 REQ-28.4: explicit deployment-environment marker.
       # Pydantic Settings reads PORTAL_ENV; the in-code default is "production"
