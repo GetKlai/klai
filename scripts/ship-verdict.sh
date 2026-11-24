@@ -96,10 +96,38 @@ TRIGGERS="$(awk '
 [[ -n "$TRIGGERS" ]] || die "no workflow_run.workflows list found in $E2E_FILE at $SHORT"
 DEPLOY_SET="$(jq -nc --arg t "$TRIGGERS" --arg x "$EXTRA_DEPLOY" '($t | split("\n") | map(select(length > 0))) + [$x]')"
 
-deploy_runs() {
-  ghr run list --repo "$REPO" --commit "$SHA" --event push --limit 100 \
+never_started() { # run json -> true for a run that was cancelled before any job began
+  [[ "$(jq -r .conclusion <<<"$1")" == cancelled ]] \
+    && [[ "$(ghr run view "$(jq -r .databaseId <<<"$1")" --repo "$REPO" --json jobs | jq '.jobs | length')" == 0 ]]
+}
+
+# A concurrency group keeps one waiting run: a second push while a deploy is
+# running cancels the run that was waiting, before it starts a job. The newer
+# run deploys a main that contains this commit, so its outcome is this
+# commit's outcome. Until that run exists the answer is "still queued".
+successor() { # run json -> the first later push run of that workflow on main that did start
+  local later r
+  later="$(ghr run list --repo "$REPO" --workflow "$(jq -r .workflowName <<<"$1")" --branch main --event push --limit 30 \
     --json databaseId,workflowName,status,conclusion,createdAt,updatedAt \
-    | jq -c --argjson set "$DEPLOY_SET" '[.[] | select(.workflowName as $n | $set | index($n))]'
+    | jq -c --arg t "$(jq -r .createdAt <<<"$1")" '[.[] | select(.createdAt > $t)] | sort_by(.createdAt)[]')"
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    never_started "$r" || { echo "$r"; return; }
+  done <<<"$later"
+  jq -c '.status = "queued" | .conclusion = ""' <<<"$1"
+}
+
+deploy_runs() {
+  local runs r out='[]'
+  runs="$(ghr run list --repo "$REPO" --commit "$SHA" --event push --limit 100 \
+    --json databaseId,workflowName,status,conclusion,createdAt,updatedAt \
+    | jq -c --argjson set "$DEPLOY_SET" '.[] | select(.workflowName as $n | $set | index($n))')"
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    if never_started "$r"; then r="$(successor "$r")"; fi
+    out="$(jq -c --argjson r "$r" '. + [$r]' <<<"$out")"
+  done <<<"$runs"
+  echo "$out"
 }
 
 # An Auto-rollback run since the merge that uploaded rollback-report.
@@ -118,7 +146,8 @@ rollback_report_run() {
 failed_step() { # run id -> "job / step"
   ghr run view "$1" --repo "$REPO" --json jobs | jq -r '
     [.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out")][0]
-    | "\(.name) / \([.steps[] | select(.conclusion == "failure" or .conclusion == "timed_out")][0].name // "(no failing step recorded)")"'
+    | if . == null then "(no failing job recorded)"
+      else "\(.name) / \([.steps[] | select(.conclusion == "failure" or .conclusion == "timed_out")][0].name // "(no failing step recorded)")" end'
 }
 
 now_epoch() { jq -n 'now | floor'; }

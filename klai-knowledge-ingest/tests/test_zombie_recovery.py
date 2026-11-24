@@ -47,19 +47,40 @@ def _make_proc_app(
 ) -> MagicMock:
     """Build a proc_app whose job_manager returns canned data.
 
-    ``twins`` are the other jobs in the queue, listed by their queueing lock.
+    ``twins`` are the other jobs in the queue, listed by their queueing lock;
+    a test may append to ``proc_app.queue`` to defer one later.
     """
     proc_app = MagicMock()
+    proc_app.queue = [*stalled_jobs, *twins]
     proc_app.job_manager = MagicMock()
     proc_app.job_manager.get_stalled_jobs = AsyncMock(return_value=stalled_jobs)
     proc_app.job_manager.retry_job_by_id_async = AsyncMock(return_value=None)
     proc_app.job_manager.finish_job_by_id_async = AsyncMock(return_value=None)
-    proc_app.job_manager.list_jobs_async = AsyncMock(
-        side_effect=lambda queueing_lock: [
-            job for job in [*stalled_jobs, *twins] if job.queueing_lock == queueing_lock
+
+    def _list_jobs(id=None, queueing_lock=None):
+        return [
+            job
+            for job in proc_app.queue
+            if id in (None, job.id) and queueing_lock in (None, job.queueing_lock)
         ]
-    )
+
+    proc_app.job_manager.list_jobs_async = AsyncMock(side_effect=_list_jobs)
     return proc_app
+
+
+def _twin_deferred_during_retry(
+    proc_app: MagicMock, job: SimpleNamespace, task_name: str | None = None
+) -> None:
+    """A job deferred under ``job``'s queueing lock after the twin check, before
+    the retry: procrastinate 3.12's retry then closes the zombie ``failed``."""
+
+    async def _retry(job_id, retry_at):
+        twin = _twin(job)
+        twin.task_name = task_name or job.task_name
+        proc_app.queue.append(twin)
+        job.status = "failed"
+
+    proc_app.job_manager.retry_job_by_id_async = AsyncMock(side_effect=_retry)
 
 
 def _job(job_id: int, queue: str, task_name: str, **task_kwargs) -> SimpleNamespace:
@@ -70,6 +91,7 @@ def _job(job_id: int, queue: str, task_name: str, **task_kwargs) -> SimpleNamesp
         task_kwargs=task_kwargs or {"artifact_id": f"artifact-{job_id}"},
         queueing_lock=f"lock-{job_id}",
         status="doing",
+        abort_requested=False,
     )
 
 
@@ -240,3 +262,70 @@ async def test_failed_finish_of_superseded_zombie_does_not_stop_the_pass():
     assert proc_app.job_manager.retry_job_by_id_async.await_args.kwargs["job_id"] == 501
     failed = [e for e in captured if e.get("event") == "procrastinate_zombie_finish_failed"]
     assert [e["job_id"] for e in failed] == [500]
+
+
+@pytest.mark.asyncio
+async def test_a_twin_deferred_during_the_retry_that_covers_the_work_is_logged_as_superseded(
+    monkeypatch,
+):
+    """The retry closed the zombie failed because a job doing the same work now
+    waits on its lock: nothing is lost, so no failed document and no retry count."""
+    job = _job(600, "graphiti-bulk", "ingest_graphiti_episode")
+    proc_app = _make_proc_app([job])
+    _twin_deferred_during_retry(proc_app, job)
+    record_lost_work = AsyncMock()
+    monkeypatch.setattr("knowledge_ingest.zombie_recovery._record_lost_work", record_lost_work)
+
+    with structlog.testing.capture_logs() as captured:
+        result = await recover_zombie_jobs(proc_app)
+
+    assert result == {"jobs_retried": 0}
+    record_lost_work.assert_not_awaited()
+    proc_app.job_manager.finish_job_by_id_async.assert_not_awaited()
+    superseded = [e for e in captured if e.get("event") == "zombie_superseded_by_queued_job"]
+    assert [e["job_id"] for e in superseded] == [600]
+
+
+@pytest.mark.asyncio
+async def test_a_twin_deferred_during_the_retry_for_other_work_records_the_lost_document(
+    monkeypatch,
+):
+    """The job now waiting on the lock builds another product, so the zombie's
+    work is lost: the document says failed, as when the twin was there before."""
+    job = _job(601, "enrich-bulk", "enrich_document_bulk")
+    proc_app = _make_proc_app([job])
+    _twin_deferred_during_retry(proc_app, job, task_name="ingest_graphiti_episode")
+    record_lost_work = AsyncMock()
+    monkeypatch.setattr("knowledge_ingest.zombie_recovery._record_lost_work", record_lost_work)
+
+    with structlog.testing.capture_logs() as captured:
+        result = await recover_zombie_jobs(proc_app)
+
+    assert result == {"jobs_retried": 0}
+    record_lost_work.assert_awaited_once_with(job)
+    proc_app.job_manager.finish_job_by_id_async.assert_not_awaited()
+    lost = [e for e in captured if e.get("event") == "zombie_work_not_covered"]
+    assert [(e["job_id"], e["log_level"]) for e in lost] == [(601, "error")]
+
+
+@pytest.mark.asyncio
+async def test_a_zombie_the_retry_fails_because_it_was_cancelled_is_not_recorded_as_lost(
+    monkeypatch,
+):
+    """procrastinate 3.12 also closes a doing job failed when its abort was
+    requested; that job was cancelled on purpose, not superseded."""
+    job = _job(602, "enrich-bulk", "enrich_document_bulk")
+    job.abort_requested = True
+    proc_app = _make_proc_app([job])
+
+    async def _retry(job_id, retry_at):
+        job.status = "failed"
+
+    proc_app.job_manager.retry_job_by_id_async = AsyncMock(side_effect=_retry)
+    record_lost_work = AsyncMock()
+    monkeypatch.setattr("knowledge_ingest.zombie_recovery._record_lost_work", record_lost_work)
+
+    result = await recover_zombie_jobs(proc_app)
+
+    assert result == {"jobs_retried": 1}
+    record_lost_work.assert_not_awaited()

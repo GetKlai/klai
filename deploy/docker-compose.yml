@@ -562,11 +562,17 @@ services:
     # created" and "analyzer serving" is a window in which chat fails hard —
     # and without a healthcheck, `docker compose up -d` returns 0 at the start
     # of it. That made every recreate of this service a silent outage of unknown
-    # length. The probe is what bounds it: curl is in the image, /health is the
-    # analyzer's own endpoint, and the six-language recognizer registry takes a
-    # few seconds to load, which start_period covers without counting failures.
+    # length. The probe is what bounds it: /health is the analyzer's own
+    # endpoint, and the six-language recognizer registry takes a few seconds
+    # to load, which start_period covers without counting failures.
+    #
+    # The probe uses the image's Python, the same call upstream's own
+    # HEALTHCHECK makes, not curl: upstream dropped curl (and with it libcurl
+    # and libbrotli1) from the 2.2.366 base, so a curl probe reports every
+    # build from 2.2.366 on as unhealthy. urlopen raises on a refused
+    # connection and on any HTTP status >= 400, so a failure exits non-zero.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://localhost:3000/health', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -1021,7 +1027,15 @@ services:
   # validator-env-parity).
   vaultwarden:
     logging: *log-rotation
-    image: vaultwarden/server:1.37.5
+    # The Alpine build of the same release: upstream ships both from one
+    # source and calls the choice "mostly a matter of preference" (wiki,
+    # "Which container image to use"). The Debian build carried 121 fixable
+    # HIGH/CRITICAL findings in its OS packages on 2026-11-24, among them
+    # MariaDB client libraries this sqlite setup never loads; the Alpine one
+    # scanned at 0. Both run the same /healthcheck.sh (sh and curl), and
+    # 1.37.5 went Debian -> Alpine -> Debian on one data volume with the
+    # same schema version and an account and vault item intact.
+    image: vaultwarden/server:1.37.5-alpine
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"

@@ -40,6 +40,7 @@ case "$args" in
   "run list"*"--commit"*) emit "$(pick runs_commit '[]')" ;;
   "run list"*"e2e-prod-tenant.yml"*) emit "$(pick e2e '[]')" ;;
   "run list"*"auto-rollback.yml"*) emit "$(pick autorb '[]')" ;;
+  "run list"*"--workflow"*) emit "$(pick later_runs '[]')" ;;
   "run view"*)
     id=$(awk '{print $3}' <<<"$args")
     emit "$(pick "jobs.$id" '{"jobs":[]}')" ;;
@@ -230,6 +231,41 @@ run_case newer-tip live-and-proven 0 "main's tip was bbbbbbbb1" "$SHA"
 newcase offmain
 echo '{"status":"diverged"}' > "$tmp/offmain/compare.json"
 run_case offmain error 4 "not on main" "$SHA"
+
+# 12. A second push displaced the waiting sync run from its concurrency group:
+#     it ends cancelled without a job, and the newer run that did the sync
+#     decides. While that newer run does not exist yet, the answer is "queued".
+displaced() {
+  fx "$1" runs_commit <<'JSON'
+[{"databaseId":101,"workflowName":"Build and push svc-a","status":"completed","conclusion":"success","createdAt":"2026-01-10T10:00:05Z","updatedAt":"2026-01-10T10:06:00Z"},
+ {"databaseId":102,"workflowName":"Sync compose and config to core-01","status":"completed","conclusion":"cancelled","createdAt":"2026-01-10T10:00:06Z","updatedAt":"2026-01-10T10:02:00Z"}]
+JSON
+}
+newcase displaced
+displaced displaced
+fx displaced later_runs <<'JSON'
+[{"databaseId":150,"workflowName":"Sync compose and config to core-01","status":"completed","conclusion":"success","createdAt":"2026-01-10T10:02:00Z","updatedAt":"2026-01-10T10:08:00Z"},
+ {"databaseId":102,"workflowName":"Sync compose and config to core-01","status":"completed","conclusion":"cancelled","createdAt":"2026-01-10T10:00:06Z","updatedAt":"2026-01-10T10:02:00Z"},
+ {"databaseId":90,"workflowName":"Sync compose and config to core-01","status":"completed","conclusion":"failure","createdAt":"2026-01-10T09:00:00Z","updatedAt":"2026-01-10T09:05:00Z"}]
+JSON
+job_at displaced 150 2026-01-10T10:03:00Z
+fx displaced e2e <<JSON
+[{"databaseId":201,"status":"completed","conclusion":"success","event":"workflow_run","createdAt":"2026-01-10T10:08:10Z","updatedAt":"2026-01-10T10:15:00Z","headSha":"$NEWER"}]
+JSON
+job_at displaced 201 2026-01-10T10:09:00Z
+run_case displaced live-and-proven 0 "deploys finished at 2026-01-10T10:08:00Z" "$SHA"
+
+newcase displaced-waiting
+displaced displaced-waiting
+run_case displaced-waiting pending 3 "Sync compose and config to core-01=queued" --no-wait "$SHA"
+
+# 13. A sync run cancelled after it started is a failed deploy, not a displaced one.
+newcase cancelled-midway
+displaced cancelled-midway
+fx cancelled-midway jobs.102 <<'JSON'
+{"jobs":[{"name":"sync-compose","conclusion":"cancelled","startedAt":"2026-01-10T10:01:00Z","steps":[{"name":"Sync","conclusion":"cancelled"}]}]}
+JSON
+run_case cancelled-midway failed 1 "run 102: (no failing job recorded)" "$SHA"
 
 ((fails == 0)) || { echo "$fails case(s) failed"; exit 1; }
 echo "all ship-verdict cases passed"

@@ -112,7 +112,9 @@ markers = [
     "no_mock_db_helpers: exercise real database helpers",
     "real_sparse_embedder: run the real sparse embedder instead of the autouse stub",
     "graph_contract: runs graphiti against a real FalkorDB (see tests/graph_contract/conftest.py)",
+    "perf: time budgets; left out of the parallel run and run serially (pytest -m perf -n 0)",
 ]
+addopts = "-m 'not perf'"
 
 [dependency-groups]
 dev = [

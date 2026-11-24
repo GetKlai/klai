@@ -3,18 +3,34 @@
 #
 # auto-rollback.yml runs this on the runner (not on core-01) to find the
 # evidence that E2E prod-tenant is red for a reason outside the deploys: the
-# newest completed E2E run that an earlier Auto-rollback round started after
-# its rollback, created after the last green run (<green-created>), when it
-# failed. Prints "<completed-at> <run-id>" for rollback-since.sh --red-after,
+# newest E2E run that an earlier Auto-rollback round started after its
+# rollback, created after the last green run (<green-created>), when it has
+# completed and failed. When that newest run is still queued or in progress,
+# there is no evidence yet, even if an older one was red. Prints "<completed-at> <run-id>" for rollback-since.sh --red-after,
 # or nothing.
 #
 # Such a run is a workflow_dispatch run on main, triggered by
 # github-actions[bot] (Auto-rollback dispatches with its own token), named
-# "E2E prod-tenant: after rollback by auto-rollback run <id>" (the run-name of
-# e2e-prod-tenant.yml built from the reason input; the API does not return
-# inputs), and <id> is a run of auto-rollback.yml. A person who dispatches E2E,
-# even with the same reason, is not the bot, so a manual red run is never
-# evidence; neither is a cancelled or skipped run.
+# "E2E prod-tenant: after a clean rollback by auto-rollback run <id>" (the
+# run-name of e2e-prod-tenant.yml built from the reason input; the API does not
+# return inputs), and <id> is a run of auto-rollback.yml. A person who
+# dispatches E2E, even with the same reason, is not the bot, so a manual red
+# run is never evidence; neither is a cancelled or skipped run.
+#
+# Only a clean experiment counts. Auto-rollback names the run
+# (auto-rollback-round.sh reason) "after a clean rollback" when its report said
+# rolled_back (every planned rollback succeeded, none skipped), "after a
+# partial rollback" when a service was skipped because a newer version of it is
+# live, and "after a failed rollback" otherwise; a run named before that
+# distinction existed ("after rollback by ...") cannot tell them apart. When
+# the newest post-rollback run of any of these names is not a clean one,
+# there is no evidence: after a failed rollback the deploy that broke E2E can
+# still be live, and blocking on that red run would leave it there and block
+# every rollback after it. The name is the handle because the round fixes it
+# from its own report at the moment it starts the run, it cannot change
+# afterwards, and it needs no second lookup; the round's conclusion is red
+# for both outcomes, and its report artifact expires after 30 days and is
+# uploaded best-effort.
 #
 # Fails open: when a lookup fails or answers something unexpected it prints
 # nothing and exits 0, so the round rolls back exactly as it did before this
@@ -41,16 +57,27 @@ none() { echo "::warning::$*; no evidence that E2E was red before these deploys,
 # which query parameters the API honours.
 runs="$(gh api -X GET --paginate "repos/$REPO/actions/workflows/e2e-prod-tenant.yml/runs" \
     -f branch=main -f event=workflow_dispatch -f created=">=$GREEN" -f per_page=100 \
-    --jq '.workflow_runs[] | select(.status == "completed" and .event == "workflow_dispatch"
+    --jq '.workflow_runs[] | select(.event == "workflow_dispatch"
         and .head_branch == "main" and .created_at >= "'"$GREEN"'"
         and .triggering_actor.login == "github-actions[bot]"
-        and (.display_title | test("^E2E prod-tenant: after rollback by auto-rollback run [0-9]+$")))
-      | "\(.created_at) \(.id) \(.conclusion) \(.display_title | ltrimstr("E2E prod-tenant: after rollback by auto-rollback run "))"')" \
+        and (.display_title | test("^E2E prod-tenant: after (a clean |a partial |a failed )?rollback by auto-rollback run [0-9]+$")))
+      | (.display_title | capture("after (?<kind>a clean |a partial |a failed )?rollback by auto-rollback run (?<round>[0-9]+)$")) as $t
+      | "\(.created_at) \(.id) \(.status) \(.conclusion) \($t.round) \(($t.kind // "") | ltrimstr("a ") | rtrimstr(" ") | if . == "" then "unknown" else . end)"')" \
     || none "could not list the E2E prod-tenant runs"
 [[ -n "$runs" ]] || exit 0
-read -r _created id conclusion round <<< "$(sort <<< "$runs" | tail -n1)"
+read -r _created id status conclusion round kind <<< "$(sort <<< "$runs" | tail -n1)"
+# A later round's post-rollback run that is still queued or running tests a
+# newer state than any older red run: until it completes there is no evidence.
+if [[ "$status" != completed ]]; then
+    echo "newest post-rollback E2E run $id is $status: no evidence yet" >&2
+    exit 0
+fi
 if [[ "$conclusion" != failure ]]; then
     echo "newest post-rollback E2E run $id ended $conclusion: no evidence" >&2
+    exit 0
+fi
+if [[ "$kind" != clean ]]; then
+    echo "newest post-rollback E2E run $id followed a rollback that was not clean ($kind): no evidence" >&2
     exit 0
 fi
 
