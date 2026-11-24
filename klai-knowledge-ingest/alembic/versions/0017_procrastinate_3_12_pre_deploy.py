@@ -18,7 +18,7 @@ without the queue tables (a fresh dev or CI stack) gets the installed
 package's full schema instead. Every object 3.10 code uses stays, so the
 previous image still runs on the result: the post-deploy migrations
 03.12.00_50 and 03.12.00_51 drop the old defer functions and the (id, lock)
-index and ship in a later revision.
+index and ship in revision 77a892663768.
 
 Revision ID: cb73fd8d4df4
 Revises: 7c3e9a41d2b6
@@ -41,12 +41,6 @@ FETCH_SKIP_NULL_LOCK = "03.11.00_01_pre_fetch_job_skip_null_lock.sql"
 ADD_LOCK_MODE = "03.12.00_01_pre_add_lock_mode.sql"
 RETRY_FAIL_ON_QUEUEING_LOCK = "03.12.00_02_pre_retry_job_fail_on_queueing_lock_conflict.sql"
 TODO_DOING_LOCK_INDEX = "03.12.00_03_pre_add_todo_doing_lock_index.sql"
-_PRE_DEPLOY = (
-    FETCH_SKIP_NULL_LOCK,
-    ADD_LOCK_MODE,
-    RETRY_FAIL_ON_QUEUEING_LOCK,
-    TODO_DOING_LOCK_INDEX,
-)
 
 
 def _sql(path: str) -> str:
@@ -67,11 +61,14 @@ def _scalar(query: str) -> object:
 def upgrade() -> None:
     context = op.get_context()
     if context.as_sql:
-        for name in _PRE_DEPLOY[:-1]:
-            context.impl.static_output(_sql(f"migrations/{name}"))
-        with context.autocommit_block():
-            context.impl.static_output(_sql(f"migrations/{TODO_DOING_LOCK_INDEX}"))
-        return
+        # Which files run depends on what the database already has, and the
+        # upstream files are not idempotent: printed without those checks, the
+        # script is right for an exact 3.10 schema only and fails on any other.
+        raise RuntimeError(
+            f"revision {revision} reads the queue schema before it changes it and has "
+            "no offline form; run it online, or start --sql after it "
+            f"(alembic upgrade {revision}:head --sql)"
+        )
 
     # Runs a multi-statement script, which asyncpg refuses as a prepared statement.
     from procrastinate.contrib.alembic.migrations_utils import execute_script
