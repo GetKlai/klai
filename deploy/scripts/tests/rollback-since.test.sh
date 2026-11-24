@@ -213,56 +213,89 @@ check "exit 4" test "$rc" = 4
 check "Caddyfile not restored" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
 check "reported" grep -q '"gate":"e2e-several-syncs"' "$d/logs/auto-rollback.log"
 
-# --red-since: E2E already red before the deploys in the window. Last green run
-# at SINCE (04:00) in every case below.
+# --red-after: the E2E run an earlier round started after its rollback was red
+# too (e2e-rollback-evidence.sh decides which run that is; its tests cover
+# manual runs (e), cancelled runs (c) and runs before a green one (f)). Last
+# green run at SINCE (04:00) in every case. X was deployed at 05:00 and rolled
+# back by a round whose replay started at 06:00; its E2E run completed 06:10.
 x_line="$(line 2026-10-28T05:00:00Z image retrieval-api aaaaaaaaaaa1 ghcr.io/getklai/retrieval-api:s1 s1 deployed)"
+x_back="$(line 2026-10-28T06:01:00Z image retrieval-api ghcr.io/getklai/retrieval-api:s1 aaaaaaaaaaa1 s1 rolled_back)"
+y_at() { line "$1" image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed; }
+after_x() { new_case "$1" "$x_line" "$x_back" "${@:2}"; echo 2026-10-28T06:00:00Z > "$d/.e2e-rollback-at"; }
 
-echo "# (a) green, deploy X, red: X is rolled back, as without --red-since"
+echo "# (a) green, deploy X at 05:00, red at 05:45, confirmed: X is rolled back"
 new_case seq-a "$x_line"
-run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T05:46:00Z
+run "$SINCE" --until 2026-10-28T05:45:00Z
 check "exit 3" test "$rc" = 3
 check "X back to the image of the last green run" test "$(deploys)" = "retrieval-api aaaaaaaaaaa1 --rollback e2e sha=s1 profiles="
 check "report outcome rolled_back" test "$(report outcome)" = rolled_back
 
-echo "# (b) red already, deploy Y, red: nothing rolled back"
-new_case seq-b \
-    "$(line 2026-10-28T05:00:00Z image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed)" \
-    "$(line 2026-10-28T05:10:00Z compose compose bbb222 ccc333 ccc333 deployed)"
-run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T04:30:00Z
+echo "# (b) X rolled back, its E2E run red at 06:10, Y at 07:00, red at 07:30: blocked"
+after_x seq-b "$(y_at 2026-10-28T07:00:00Z)" "$(line 2026-10-28T07:05:00Z compose compose bbb222 ccc333 ccc333 deployed)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
 check "exit 5" test "$rc" = 5
 check "nothing rolled back" test ! -s "$d/fixtures/deploys"
 check "compose untouched" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
 check "report outcome e2e_already_red, gate e2e-already-red" test "$(report outcome) $(report gate)" = "e2e_already_red e2e-already-red"
-check "report names the deploys it does not blame" test "$(report service)" = "klai-mailer compose"
-check "report says since when E2E is red" test "$(report red_since)" = 2026-10-28T04:30:00Z
-check "said in the run log" grep -q '::error::E2E prod-tenant has been red since 2026-10-28T04:30:00Z, before the first deploy' <<< "$out"
-check "no replay time recorded, so the next red run decides the same way" test ! -e "$d/.e2e-rollback-at"
+check "report names the deploys it does not blame, not X" test "$(report service)" = "klai-mailer compose"
+check "report carries the evidence time" test "$(report red_after)" = 2026-10-28T06:10:00Z
+check "said in the run log" grep -q '::error::E2E prod-tenant was still red after the last rollback (run completed 2026-10-28T06:10:00Z)' <<< "$out"
+check "no replay time recorded, so the next round decides the same way" test "$(cat "$d/.e2e-rollback-at")" = 2026-10-28T06:00:00Z
 
-echo "# (c) X broke E2E and was rolled back, red again for another reason, deploy Y: Y stays"
-new_case seq-c \
-    "$x_line" \
-    "$(line 2026-10-28T06:00:00Z image retrieval-api ghcr.io/getklai/retrieval-api:s1 aaaaaaaaaaa1 s1 rolled_back)" \
-    "$(line 2026-10-28T07:00:00Z image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed)"
-echo 2026-10-28T06:00:00Z > "$d/.e2e-rollback-at"
-# The oldest failure after the green run is the one that caught X (05:20).
-run "$SINCE" --until 2026-10-28T08:00:00Z --red-since 2026-10-28T05:20:00Z
-check "exit 5" test "$rc" = 5
-check "Y not rolled back" test ! -s "$d/fixtures/deploys"
-check "report names only Y" test "$(report service)" = klai-mailer
-
-echo "# (d) green, X and Y close together, one red run covers both: both rolled back"
-new_case seq-d "$x_line" \
-    "$(line 2026-10-28T05:05:00Z image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed)"
-run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T05:46:00Z
+echo "# (c) X rolled back, its E2E run cancelled or absent (no --red-after), Y at 07:00: Y is rolled back"
+after_x seq-c "$(y_at 2026-10-28T07:00:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z
 check "exit 3" test "$rc" = 3
-check "both rolled back" test "$(deploys | cut -d' ' -f1 | paste -sd' ' -)" = "klai-mailer retrieval-api"
+check "only Y rolled back" test "$(deploys | cut -d' ' -f1)" = klai-mailer
 
-echo "# (e) a fix turned E2E green, then a new deploy broke it: the old red period does not count"
-new_case seq-e "$x_line"
-# SINCE is the green run after the fix; 03:30 was the old red period.
-run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T03:30:00Z
+echo "# (d) X rolled back, its E2E run red at 06:10, Y at 06:24:59, inside the 15-minute margin: Y is rolled back"
+after_x seq-d "$(y_at 2026-10-28T06:24:59Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
 check "exit 3" test "$rc" = 3
-check "X rolled back" test "$(deploys | cut -d' ' -f1)" = retrieval-api
+check "Y rolled back" test "$(deploys | cut -d' ' -f1)" = klai-mailer
+
+echo "# (d') Y at 06:20, Z at 07:00: one deploy inside the margin rolls back the whole window"
+after_x seq-d2 "$(y_at 2026-10-28T06:20:00Z)" "$(line 2026-10-28T07:00:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 3" test "$rc" = 3
+check "both rolled back" test "$(deploys | cut -d' ' -f1 | paste -sd' ' -)" = "scribe-api klai-mailer"
+
+echo "# evidence older than the last replay says nothing about what that replay left"
+after_x seq-old "$(y_at 2026-10-28T07:00:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T05:50:00Z
+check "exit 3" test "$rc" = 3
+
+echo "# (e) a manual red run is no evidence: auto-rollback.yml passes no --red-after, Y is rolled back"
+new_case seq-e "$(y_at 2026-10-28T07:00:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z
+check "exit 3" test "$rc" = 3
+
+echo "# (f) after a blocked round a green run completes (new SINCE 08:00), Z at 09:00 breaks it: Z is rolled back"
+after_x seq-f "$(y_at 2026-10-28T07:00:00Z)" "$(line 2026-10-28T09:00:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed)"
+run 2026-10-28T08:00:00Z --until 2026-10-28T09:30:00Z
+check "exit 3" test "$rc" = 3
+check "only Z rolled back" test "$(deploys | cut -d' ' -f1)" = scribe-api
+
+echo "# (g) replay shaped like 2026-11-19..21: first round rolls back, every later round is blocked"
+new_case seq-g \
+    "$(line 2026-11-19T03:10:00Z image zitadel zzzzzzzzzzz1 ghcr.io/getklai/zitadel:s1 s1 deployed)" \
+    "$(line 2026-11-19T21:00:00Z image rabbitmq rrrrrrrrrrr1 rabbitmq:4.2.1 s2 deployed)" \
+    "$(line 2026-11-20T11:30:00Z image portal-api ppppppppppp1 ghcr.io/getklai/portal-api:s3 s3 deployed)" \
+    "$(line 2026-11-20T11:40:00Z image klai-slack kkkkkkkkkkk1 ghcr.io/getklai/klai-slack:s4 s4 deployed)" \
+    "$(line 2026-11-20T20:00:00Z compose compose bbb222 ccc333 ccc333 deployed)" \
+    "$(line 2026-11-21T17:20:00Z image knowledge-ingest iiiiiiiiiii1 ghcr.io/getklai/knowledge-ingest:s5 s5 deployed)"
+G_SINCE=2026-11-18T12:40:00Z
+run "$G_SINCE" --until 2026-11-19T03:18:00Z
+check "round 1 (red 03:18, no evidence yet): zitadel rolled back, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 zitadel"
+# Round 1's replay started at 03:25 and its E2E run completed red at 03:36.
+echo 2026-11-19T03:25:00Z > "$d/.e2e-rollback-at"
+: > "$d/fixtures/deploys"
+for until in 2026-11-19T21:05:00Z 2026-11-20T11:45:00Z 2026-11-20T20:05:00Z 2026-11-21T17:25:00Z; do
+    run "$G_SINCE" --until "$until" --red-after 2026-11-19T03:36:00Z
+    check "round red at $until: blocked, exit 5" test "$rc" = 5
+done
+check "nothing after round 1 rolled back" test ! -s "$d/fixtures/deploys"
+check "compose (the CRM restore) untouched" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
 
 echo "# bad arguments"
 new_case args
@@ -270,8 +303,10 @@ run "yesterday" --until "$UNTIL"
 check "a since that is not the ledger format -> exit 1" test "$rc" = 1
 run "$SINCE"
 check "no --until -> exit 1" test "$rc" = 1
-run "$SINCE" --until "$UNTIL" --red-since "last night"
-check "a --red-since that is not the ledger format -> exit 1" test "$rc" = 1
+new_case badred "$(line 2026-10-28T05:00:00Z image retrieval-api aaaaaaaaaaa1 ghcr.io/getklai/retrieval-api:s1 s1 deployed)"
+run "$SINCE" --until "$UNTIL" --red-after "last night"
+check "a --red-after that is not the ledger format is ignored: rolled back, exit 3" test "$rc" = 3
+check "and warned" grep -q "::warning::--red-after 'last night'" <<< "$out"
 
 if (( failures > 0 )); then
     echo "$failures check(s) failed"

@@ -125,7 +125,7 @@ else ok "$RENOVATE_REPO: last successful renovate.yml run ${run_age}h ago"; fi
 # Auto-rollback undid every deploy in between. Its issue opens on the first
 # red run and closes on the next green one (ci-failure-notice.yml), so its age
 # is how long main has been red; a reopened issue counts from its reopening.
-if ! e2e=$(gh issue list -R "$RENOVATE_REPO" --state open --label ci-failure --json number,title,createdAt \
+if ! e2e=$(gh issue list -R "$RENOVATE_REPO" --state open --label ci-failure --limit 1000 --json number,title,createdAt \
   --jq '.[] | select(.title == "CI failure: E2E prod-tenant") | "\(.number) \(.createdAt)"'); then
   fail "$RENOVATE_REPO: could not list the ci-failure issues"
 elif [ -z "$e2e" ]; then
