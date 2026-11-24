@@ -42,6 +42,50 @@ The mail names the service, the failed gate and the outcome.
 In VictoriaLogs:
 `_time:30m service:auto-rollback event:auto_rollback | sort by (_time) desc | limit 10`.
 
+## E2E was already red, nothing rolled back
+
+Auto-rollback (`auto-rollback.yml`) undoes what was deployed between the last
+green E2E prod-tenant run and a confirmed red one, and then starts one more E2E
+run ("after rollback by auto-rollback run <id>"). When that run is red too, E2E
+is red for a reason the rollback did not touch. Until a green run completes, a
+later round blocks itself when every deploy in its window wrote its ledger
+line more than 15 minutes after that red run completed (the margin covers the
+minutes a deploy already serves before its ledger line: probe, error watch,
+the gates of a compose sync). It rolls nothing back and ends red with outcome
+`e2e_already_red`, and its issue (`CI failure: Auto-rollback`) gets the label
+`e2e-already-red` and names the red run. A deploy inside the margin, a
+post-rollback run that was cancelled or is missing, a red run somebody
+started by hand, or a lookup that failed: the round rolls back as before.
+From 2026-11-19 to 2026-11-22 an identity-provider setting kept the login
+journey red, and without this every deploy in those days was rolled back,
+CRM database restores included.
+
+What to do:
+
+- Open the red run named in the issue and fix what keeps E2E red; that is
+  the incident, not the deploys. The open `CI failure: E2E prod-tenant` issue
+  tracks it, and the daily Version drift run fails while that issue has been
+  open for more than 24 hours.
+- Until E2E is green again, Auto-rollback protects nothing. A deploy that
+  breaks something meanwhile is caught only by its own gates: the probe and
+  error watch of `deploy-with-rollback.sh`, and the sync gates of
+  `compose-rollback.sh`. The deploys of the red period are listed in the
+  issue (`Service`, `To`, `Commit`) if one of them needs to be undone by hand
+  (`rollback-since.sh` on core-01, see its header).
+- The first green E2E run ends the period; the next red run after a deploy
+  rolls back as before.
+
+What stays uncovered:
+
+- A post-rollback run that is red by chance blocks rollbacks until the next
+  green run. Outside the incident 45 of 593 completed E2E runs were red,
+  almost all followed by a green run within minutes, so such a period is
+  usually short, but a bad deploy that lands inside it is protected only by
+  its own probe and error watch.
+- A data store major whose dump and restore take longer than 15 minutes can
+  write its ledger line after the margin while it was already serving; it
+  would then not be blamed.
+
 ## The weekly rehearsal is missing
 
 No `rollback_rehearsal` event with outcome `ok` reached VictoriaLogs for 8
