@@ -137,6 +137,9 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
                     continue
                 # A job deferred under the lock since the check above made the
                 # retry close the zombie failed; see whether that job covers it.
+                # If it already ran to its end it is not listed as covering, and
+                # the failed outcome is refused: set_product_state only leaves
+                # pending, so the document keeps the state that job wrote.
                 closed_by_retry = True
                 twins = await _twins(proc_app, job)
         except Exception:
