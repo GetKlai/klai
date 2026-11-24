@@ -24,6 +24,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from qdrant_client.models import SparseVector
 
 from knowledge_ingest.qdrant_store import (
     _QDRANT_PAYLOAD_DENY_LIST,
@@ -31,6 +32,8 @@ from knowledge_ingest.qdrant_store import (
     upsert_chunks,
     upsert_enriched_chunks,
 )
+
+_SPARSE = SparseVector(indices=[0], values=[1.0])
 
 # ---------------------------------------------------------------------------
 # Pure unit tests on the filter helper
@@ -123,6 +126,7 @@ async def test_upsert_chunks_strips_deny_list_from_qdrant_payload():
             path="docs/page.md",
             chunks=["chunk one", "chunk two"],
             vectors=[[0.1] * 10, [0.2] * 10],
+            sparse_vectors=[_SPARSE] * 2,
             artifact_id="artifact-uuid-1",
             extra_payload=extra_payload,
         )
@@ -197,7 +201,7 @@ async def test_upsert_enriched_chunks_strips_deny_list_from_qdrant_payload():
             ],
             chunk_vectors=[[0.1] * 10, [0.2] * 10],
             question_vectors=[None, None],
-            sparse_vectors=None,
+            sparse_vectors=[_SPARSE] * 2,
             artifact_id="artifact-uuid-2",
             extra_payload=extra_payload,
             content_type="kb_article",

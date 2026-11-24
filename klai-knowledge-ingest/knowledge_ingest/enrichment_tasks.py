@@ -61,6 +61,7 @@ from knowledge_ingest.llm_capacity import (
     deferral_window_spent,
     is_llm_capacity_error,
 )
+from knowledge_ingest.sparse_embedder import SparseEmbeddingUnavailable
 
 logger = structlog.get_logger()
 
@@ -83,6 +84,17 @@ _FALKORDB_DEATHS_BEFORE_QUARANTINE = 2
 # (waits 3, 9, 27 s), the bulk lane rides out a 429 burst (4, 16, 64, 256 s).
 _INTERACTIVE_MAX_ATTEMPTS = 4
 _BULK_MAX_ATTEMPTS = 5
+
+# An unavailable sparse sidecar: no point may be written without its sparse
+# vector, so the job waits for the GPU server to come back. Its restarts took
+# about six minutes (2026-11-22 from 07:50Z and 2026-11-23 from 11:45Z; the
+# dense service's health check failed for 2 and 4 of those minutes), so a retry
+# every 2 minutes, 8 times, spans 16 minutes, well over twice that, before the
+# document records failed (sparse_unavailable). Each retry redoes the LLM work
+# of the document: the sparse vectors embed the enriched text, so they cannot
+# be fetched before it.
+_SPARSE_RETRY_SECONDS = 120
+_SPARSE_MAX_ATTEMPTS = 8
 
 
 class GraphitiEpisodeQuarantined(RuntimeError):
@@ -467,7 +479,12 @@ async def _fail_if_last_attempt(
 
     if isinstance(exc, JobAborted | _DerivedWorkFailed | GraphitiEpisodeQuarantined):
         return
-    if context is not None and context.job.attempts >= max_attempts:
+    if context is None:
+        return
+    if isinstance(exc, SparseEmbeddingUnavailable):
+        if context.job.attempts >= _SPARSE_MAX_ATTEMPTS:
+            await _finish(product, artifact_id, FAILED, "sparse_unavailable")
+    elif context.job.attempts >= max_attempts:
         await _finish(product, artifact_id, FAILED, "retries_exhausted")
 
 
@@ -547,6 +564,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 return None
             if isinstance(exception, asyncio.CancelledError):
                 return procrastinate.RetryDecision(retry_in={"seconds": 0})
+            if isinstance(exception, SparseEmbeddingUnavailable):
+                if job.attempts >= _SPARSE_MAX_ATTEMPTS:
+                    return None
+                return procrastinate.RetryDecision(retry_in={"seconds": _SPARSE_RETRY_SECONDS})
             return self.inner.get_retry_decision(exception=exception, job=job)
 
     # Backoff rationale: enrichment failures in production are dominated by
@@ -1226,7 +1247,6 @@ async def _enrich_document(
 
         total_ms = int((time.monotonic() - t_total) * 1000)
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
-        sparse_success_count = sum(1 for sv in sparse_vectors if sv is not None)
         logger.info(
             "enrichment_complete",
             kb_slug=kb_slug,
@@ -1238,7 +1258,6 @@ async def _enrich_document(
             enriched=enriched_count,
             depth=synthesis_depth,
             type=content_type,
-            sparse_ok=sparse_success_count,
             llm_ms=llm_ms,
             tei_ms=tei_ms,
             sparse_ms=sparse_ms,

@@ -213,6 +213,21 @@ class TestRetrieveSubQueries:
             )
         assert exc.value.status_code == 502
 
+    @pytest.mark.asyncio
+    async def test_all_failing_on_the_dense_service_raise_embedding_unavailable(self, monkeypatch):
+        """One dense outage fails every sub-question; the caller sees that cause."""
+        from retrieval_api.services.tei import EmbeddingUnavailable
+
+        async def fake_retrieve(sub_req, request, _auth=None):
+            raise EmbeddingUnavailable("ConnectError")
+
+        monkeypatch.setattr(retrieve_module, "retrieve", fake_retrieve)
+
+        with pytest.raises(EmbeddingUnavailable):
+            await retrieve_module._retrieve_sub_queries(
+                _request(["vraag een", "vraag twee"]), MagicMock(), MagicMock()
+            )
+
 
 class TestSubQueryFourXXPassthrough:
     @pytest.mark.asyncio

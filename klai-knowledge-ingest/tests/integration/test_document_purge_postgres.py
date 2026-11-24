@@ -861,9 +861,6 @@ async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
         AsyncMock(return_value=[EnrichedChunk("body", "ctx\n\nbody", "ctx", ["q?"])]),
     )
     monkeypatch.setattr(enrichment_tasks.embedder, "embed", AsyncMock(return_value=[[1.0]]))
-    monkeypatch.setattr(
-        enrichment_tasks.sparse_embedder, "embed_sparse_batch", AsyncMock(return_value=[None])
-    )
     for name, value in (
         ("get_kb_aliases", []),
         ("get_kb_product_rules", []),

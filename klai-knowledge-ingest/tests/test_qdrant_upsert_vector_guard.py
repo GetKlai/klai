@@ -11,11 +11,19 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, SparseIndexParams, SparseVectorParams, VectorParams
+from qdrant_client.models import (
+    Distance,
+    SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 
 import knowledge_ingest.qdrant_store as qs
 from knowledge_ingest.enrichment import EnrichedChunk
 from knowledge_ingest.qdrant_store import upsert_chunks, upsert_enriched_chunks
+
+_SPARSE = SparseVector(indices=[0], values=[1.0])
 
 
 def _good() -> list[float]:
@@ -40,6 +48,7 @@ async def test_upsert_chunks_refuses_before_deleting(vectors, expected):
                 path="doc.md",
                 chunks=["a"] * len(vectors),
                 vectors=vectors,
+                sparse_vectors=[_SPARSE] * len(vectors),
                 artifact_id="art",
             )
 
@@ -60,6 +69,7 @@ async def test_upsert_enriched_chunks_refuses_before_deleting():
                 enriched_chunks=[object()],
                 chunk_vectors=[[]],
                 question_vectors=[None],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art",
             )
 
@@ -81,6 +91,7 @@ async def test_a_question_vector_may_be_absent_but_not_empty():
                 enriched_chunks=[object()],
                 chunk_vectors=[_good()],
                 question_vectors=[[]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art",
             )
 
@@ -111,11 +122,7 @@ async def mem_client():
         },
         sparse_vectors_config={"vector_sparse": SparseVectorParams(index=SparseIndexParams())},
     )
-    no_sparse = AsyncMock(side_effect=lambda texts: [None] * len(texts))
-    with (
-        patch.object(qs, "get_client", return_value=client),
-        patch.object(qs.sparse_embedder, "embed_sparse_batch", no_sparse),
-    ):
+    with patch.object(qs, "get_client", return_value=client):
         yield client
     await client.close()
 
@@ -132,6 +139,7 @@ async def _write_raw(texts: list[str], artifact_id: str = _ART) -> None:
         path=_PATH,
         chunks=texts,
         vectors=[[1.0, 0.0, 0.0, 0.0]] * len(texts),
+        sparse_vectors=[_SPARSE] * len(texts),
         artifact_id=artifact_id,
     )
 
@@ -144,6 +152,7 @@ async def _write_enriched(texts: list[str]) -> None:
         enriched_chunks=[EnrichedChunk(t, f"ctx\n\n{t}", "ctx", []) for t in texts],
         chunk_vectors=[[0.0, 1.0, 0.0, 0.0]] * len(texts),
         question_vectors=[None] * len(texts),
+        sparse_vectors=[_SPARSE] * len(texts),
         artifact_id=_ART,
     )
 

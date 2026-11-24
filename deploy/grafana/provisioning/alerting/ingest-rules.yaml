@@ -396,3 +396,71 @@ groups:
                  documents is an outage, a single document is that document.
               3. Follow the runbook section for the reason.
           runbook_url: 'docs/runbooks/derived-product-failed.md'
+
+      # ── points_without_sparse ──────────────────────────────────────────
+      # The nightly reconcile counts the points in klai_knowledge that have no
+      # vector_sparse. Hybrid search finds such a point through the dense leg
+      # only, for good. Ingest refuses to write one since 2026-11, so any count
+      # above zero is a writer that slipped past the guard or a point from
+      # before it. Production count on 2026-11-24: 0 of 63,615 points.
+      - uid: ingest-points-without-sparse
+        title: qdrant_points_without_sparse
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 90000
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:pg_qdrant_reconcile AND points_without_sparse:>0 | stats count() as n'
+              queryType: stats
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 90000
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 90000
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 4h
+        isPaused: false
+        labels:
+          severity: high
+          spec: SPEC-OBS-001
+          service_group: ingest
+          alert_type: points_without_sparse
+        annotations:
+          summary: 'Knowledge points without a sparse vector: hybrid search finds them by dense only'
+          runbook_url: 'docs/runbooks/pg-qdrant-reconcile.md#points-without-a-sparse-vector'
+          description: |
+            The nightly reconcile counted points in klai_knowledge without
+            vector_sparse (field points_without_sparse on the
+            pg_qdrant_reconcile event). Count them per knowledge base with
+            the read-only dry run of knowledge_ingest.scripts.sparse_backfill
+            and follow the runbook; writing the vectors needs the owner's
+            approval for that run.

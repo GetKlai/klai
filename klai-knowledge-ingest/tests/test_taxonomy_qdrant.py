@@ -5,8 +5,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from qdrant_client.models import SparseVector
 
 from knowledge_ingest.qdrant_store import upsert_chunks
+
+_SPARSE = SparseVector(indices=[0], values=[1.0])
 
 
 @pytest.fixture
@@ -29,6 +32,7 @@ class TestUpsertChunksTaxonomyMultiLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 taxonomy_node_ids=[5, 7],
                 has_taxonomy=True,
@@ -49,6 +53,7 @@ class TestUpsertChunksTaxonomyMultiLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 taxonomy_node_ids=[],
                 has_taxonomy=True,
@@ -68,6 +73,7 @@ class TestUpsertChunksTaxonomyMultiLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 taxonomy_node_ids=None,
                 has_taxonomy=False,
@@ -86,6 +92,7 @@ class TestUpsertChunksTaxonomyMultiLabel:
                 path="doc.md",
                 chunks=["chunk"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
             )
 
@@ -103,6 +110,7 @@ class TestUpsertChunksTaxonomyMultiLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 tags=["sso", "okta"],
             )
@@ -120,6 +128,7 @@ class TestUpsertChunksTaxonomyMultiLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 tags=[],
             )
@@ -137,6 +146,7 @@ class TestUpsertChunksTaxonomyMultiLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 taxonomy_node_ids=None,
                 has_taxonomy=True,
@@ -159,6 +169,7 @@ class TestUpsertChunksContentLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 content_label=["sip-trunk", "voip", "telefonie"],
             )
@@ -176,6 +187,7 @@ class TestUpsertChunksContentLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
                 content_label=[],
             )
@@ -194,6 +206,7 @@ class TestUpsertChunksContentLabel:
                 path="doc.md",
                 chunks=["chunk text"],
                 vectors=[[0.1, 0.2]],
+                sparse_vectors=[_SPARSE],
                 artifact_id="art1",
             )
 
@@ -210,6 +223,7 @@ class TestUpsertChunksContentLabel:
                 path="doc.md",
                 chunks=["chunk 1", "chunk 2", "chunk 3"],
                 vectors=[[0.1] * 2, [0.2] * 2, [0.3] * 2],
+                sparse_vectors=[_SPARSE] * 3,
                 artifact_id="art1",
                 content_label=["voip", "sip"],
             )

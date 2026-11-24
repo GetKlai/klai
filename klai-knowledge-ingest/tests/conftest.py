@@ -33,9 +33,9 @@ os.environ.setdefault("GITEA_WEBHOOK_SECRET", "test-gitea-webhook-secret-789")
 # disabled. Tests that *want* to exercise the enrichment path patch
 # ``settings.enrichment_enabled = True`` themselves.
 os.environ.setdefault("ENRICHMENT_ENABLED", "false")
-# upsert_chunks embeds sparse vectors; with no sidecar URL the embedder returns
-# None at once instead of waiting out a connect timeout to an address that
-# only exists in production.
+# No sidecar URL, so a test that reaches the real sparse embedder fails at once
+# instead of waiting out a connect timeout to an address that only exists in
+# production. The autouse ``_stub_sparse_sidecar`` below answers for it.
 os.environ.setdefault("SPARSE_SIDECAR_URL", "")
 
 
@@ -293,6 +293,28 @@ def make_pg_store_mock():
 @pytest.fixture
 def pg_store_mock():
     return make_pg_store_mock()
+
+
+@pytest.fixture(autouse=True)
+def _stub_sparse_sidecar(request):
+    """Autouse: answer for the sparse sidecar, which only exists in production.
+
+    Every point needs its sparse vector (qdrant_store refuses one without), so
+    a test that writes points needs vectors; this gives each text a one-term
+    vector. Tests of the embedder's own HTTP handling opt out with the
+    ``real_sparse_embedder`` marker; a test that patches the function itself
+    overrides this patch for its own scope.
+    """
+    if request.node.get_closest_marker("real_sparse_embedder"):
+        yield
+        return
+    from qdrant_client.models import SparseVector
+
+    async def _embed(texts: list[str]) -> list[SparseVector]:
+        return [SparseVector(indices=[len(text)], values=[1.0]) for text in texts]
+
+    with patch("knowledge_ingest.sparse_embedder.embed_sparse_batch", _embed):
+        yield
 
 
 @pytest.fixture(autouse=True)

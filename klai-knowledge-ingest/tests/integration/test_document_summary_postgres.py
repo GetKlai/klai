@@ -104,11 +104,6 @@ def model():
         patch.object(
             enrichment_tasks.embedder, "embed", AsyncMock(side_effect=lambda t: [[0.1]] * len(t))
         ),
-        patch.object(
-            enrichment_tasks.sparse_embedder,
-            "embed_sparse_batch",
-            AsyncMock(side_effect=lambda t: [None] * len(t)),
-        ),
         patch.object(enrichment_tasks.qdrant_store, "upsert_enriched_chunks", AsyncMock()),
         patch.object(
             enrichment_tasks.qdrant_store, "has_chunks_from", AsyncMock(return_value=False)

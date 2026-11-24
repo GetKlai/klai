@@ -1,11 +1,15 @@
 """
 Sparse embedding client for BGE-M3 FlagEmbedding sidecar.
 
-Calls the bge-m3-sparse FastAPI sidecar and returns a Qdrant SparseVector.
-Falls back gracefully when the sidecar is unavailable.
+Calls the bge-m3-sparse FastAPI sidecar and returns Qdrant SparseVectors.
+Every point in klai_knowledge needs one, so an unavailable sidecar raises
+instead of handing back nothing.
 """
 
 from __future__ import annotations
+
+import asyncio
+import random
 
 import httpx
 import structlog
@@ -15,58 +19,61 @@ from knowledge_ingest.config import settings
 
 logger = structlog.get_logger()
 
+# Three tries with full-jitter waits of at most 2 s and 4 s ride out a dropped
+# tunnel or a sidecar swap inside one call. A restart of the GPU server (about
+# six minutes on 2026-11-22 and 2026-11-23) is longer than any caller can wait;
+# the enrichment job's queue retry covers that (enrichment_tasks).
+_MAX_ATTEMPTS = 3
 
-async def embed_sparse_batch(texts: list[str]) -> list[SparseVector | None]:
-    """
-    Embed a list of texts via the FlagEmbedding sidecar.
-    Sends texts in batches of settings.sparse_sidecar_batch_size.
-    Never raises -- a sidecar failure produces None entries (this batch and the
-    rest) with one WARNING log.
+
+class SparseEmbeddingUnavailable(RuntimeError):
+    """The sidecar gave no sparse vectors, so nothing may be written for these texts."""
+
+
+async def _embed_sub_batch(client: httpx.AsyncClient, texts: list[str]) -> list[SparseVector]:
+    resp = await client.post(
+        f"{settings.sparse_sidecar_url}/embed_sparse_batch",
+        json={"texts": texts},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if len(data["results"]) != len(texts):
+        # Shifted vectors would land on the wrong chunks.
+        raise ValueError(f"sidecar returned {len(data['results'])} results for {len(texts)} texts")
+    return [
+        SparseVector(indices=item["indices"], values=item["values"]) for item in data["results"]
+    ]
+
+
+async def embed_sparse_batch(texts: list[str]) -> list[SparseVector]:
+    """Embed ``texts`` via the sidecar in batches of ``sparse_sidecar_batch_size``.
+
+    Raises :class:`SparseEmbeddingUnavailable` when the sidecar is not
+    configured or a batch still fails after ``_MAX_ATTEMPTS`` tries.
     """
     if not settings.sparse_sidecar_url:
-        return [None] * len(texts)
+        raise SparseEmbeddingUnavailable("sparse_sidecar_url is not configured")
 
-    results: list[SparseVector | None] = []
+    results: list[SparseVector] = []
     batch_size = settings.sparse_sidecar_batch_size
-
-    for start in range(0, len(texts), batch_size):
-        sub_batch = texts[start : start + batch_size]
-        try:
-            async with httpx.AsyncClient(timeout=settings.sparse_sidecar_timeout) as client:
-                resp = await client.post(
-                    f"{settings.sparse_sidecar_url}/embed_sparse_batch",
-                    json={"texts": sub_batch},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if len(data["results"]) != len(sub_batch):
-                    # Shifted vectors would land on the wrong chunks.
-                    raise ValueError(
-                        f"sidecar returned {len(data['results'])} results for "
-                        f"{len(sub_batch)} texts"
+    async with httpx.AsyncClient(timeout=settings.sparse_sidecar_timeout) as client:
+        for start in range(0, len(texts), batch_size):
+            sub_batch = texts[start : start + batch_size]
+            for attempt in range(1, _MAX_ATTEMPTS + 1):
+                try:
+                    results += await _embed_sub_batch(client, sub_batch)
+                    break
+                except Exception as exc:
+                    logger.warning(
+                        "sparse_sidecar_batch_unavailable",
+                        attempt=attempt,
+                        max_attempts=_MAX_ATTEMPTS,
+                        error_type=type(exc).__name__,
+                        error=str(exc),
                     )
-                for item in data["results"]:
-                    results.append(
-                        SparseVector(
-                            indices=item["indices"],
-                            values=item["values"],
-                        )
-                    )
-        except Exception as exc:
-            # One unanswered batch means the sidecar is down: asking again for
-            # every remaining batch would add a full timeout each to an ingest
-            # that is waiting to write its dense vectors.
-            logger.warning("sparse_sidecar_batch_unavailable", error=str(exc))
-            results.extend([None] * (len(texts) - len(results)))
-            break
-
+                    if attempt == _MAX_ATTEMPTS:
+                        raise SparseEmbeddingUnavailable(
+                            f"sparse sidecar failed {_MAX_ATTEMPTS} times: {type(exc).__name__}"
+                        ) from exc
+                    await asyncio.sleep(random.uniform(0, 2**attempt))  # noqa: S311
     return results
-
-
-async def embed_sparse(text: str) -> SparseVector | None:
-    """
-    Call FlagEmbedding sidecar, return Qdrant SparseVector.
-    Returns None if sidecar is unreachable (caller falls back to dense-only).
-    """
-    batch_result = await embed_sparse_batch([text])
-    return batch_result[0]

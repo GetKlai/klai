@@ -37,6 +37,7 @@ from knowledge_ingest import (
     org_config,
     pg_store,
     qdrant_store,
+    sparse_embedder,
 )
 from knowledge_ingest import (
     graph as graph_module,
@@ -575,6 +576,10 @@ async def ingest_document(
         return {"status": "skipped", "reason": "empty document", "chunks": 0}
 
     vectors = await embedder.embed(texts)
+    # Before the version is recorded, like the dense vectors: an unavailable
+    # sidecar then fails the request with nothing written, and the caller's
+    # retry finds no new version claiming this content.
+    sparse_vectors = await sparse_embedder.embed_sparse_batch(texts)
 
     title = _extract_title(indexable_content, req.path, req.title)
     source_profile = resolve_source_knowledge_profile(
@@ -948,6 +953,7 @@ async def ingest_document(
         path=req.path,
         chunks=texts,
         vectors=vectors,
+        sparse_vectors=sparse_vectors,
         artifact_id=artifact_id,
         extra_payload=extra_payload,
         user_id=chunk_user_id,

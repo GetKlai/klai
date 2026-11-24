@@ -43,6 +43,7 @@ reason names; a single document is about that document.
 | reason | product | what happened |
 |---|---|---|
 | `retries_exhausted` | both | The job failed on every attempt. The preceding error lines with the same `artifact_id` carry the cause. |
+| `sparse_unavailable` | enrichment | The sparse sidecar on the GPU server did not answer for 16 minutes of retries, so no enriched point was written (the raw points stay). Check `sparse_sidecar_batch_unavailable` and the GPU server; once it is back, re-queue. |
 | `llm_capacity_exhausted` | enrichment | The LLM had no capacity for the whole deferral window (`llm_capacity.py`). |
 | `no_stored_text` | both | The row has no `document_text`; the job had nothing to work from. |
 | `quarantined` | graph | FalkorDB died repeatedly while writing this document's episode, so the document is held out of the graph for this writer build. |

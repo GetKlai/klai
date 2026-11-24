@@ -19,7 +19,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import structlog
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    SparseVectorParams,
+    VectorParams,
+)
 
 from knowledge_ingest import contextual, enrichment_tasks, pg_store, qdrant_store, rebuild_tasks
 from knowledge_ingest import graph as graph_module
@@ -61,13 +68,9 @@ async def store(graph_helpers: Contract, tenant_rows, monkeypatch, real_procrast
             name: VectorParams(size=2, distance=Distance.COSINE)
             for name in ("vector_chunk", "vector_questions")
         },
+        sparse_vectors_config={"vector_sparse": SparseVectorParams()},
     )
     monkeypatch.setattr(qdrant_store, "get_client", lambda: client)
-    monkeypatch.setattr(
-        enrichment_tasks.sparse_embedder,
-        "embed_sparse_batch",
-        AsyncMock(side_effect=lambda t: [None] * len(t)),
-    )
     app = _App()
     enrichment_tasks._register_tasks(app)
     org_id = graph_helpers.group_id
