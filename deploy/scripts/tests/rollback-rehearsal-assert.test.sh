@@ -30,7 +30,7 @@ case "$1" in
       *) echo '["sha256:layer-other"]' ;;
     esac
     exit 0 ;;
-  compose) [[ "$2" == "ps" ]] || exit 90; echo "canarycid"; exit 0 ;;
+  compose) [[ "$2" == "ps" ]] || exit 90; cat "$fx/cid"; exit 0 ;;
   inspect) cat "$fx/running_image"; exit 0 ;;
   run) c=$(cat "$fx/probe_code"); printf '%s' "$c"; [[ "$c" =~ ^2 ]] || exit 22; exit 0 ;;
 esac
@@ -44,10 +44,26 @@ printf '%s COMPOSE_PROFILES=%s\n' "$*" "${COMPOSE_PROFILES:-}" >> "$fx/deploy_ar
 n=$(wc -l < "$fx/deploy_argv")
 read -r rc outcome < <(sed -n "${n}p" "$fx/deploy_calls")
 echo "deploy stub call $n rc=$rc"
+# A forced recreate gives the canary a new container, unless keep_container.
+[[ "$*" != *--force-recreate* || -e "$fx/keep_container" ]] || echo "canarycid-$n" > "$fx/cid"
 [[ "$outcome" == "-" ]] || echo "ROLLBACK_REPORT {\"service\":\"rollback-canary\",\"outcome\":\"$outcome\"}"
 exit "$rc"
 STUB
-chmod +x "$work/docker" "$work/deploy.sh"
+# Stands in for rollback-since.sh: records its arguments and report directory,
+# exits with since_rc (default 5) and prints a report with since_outcome
+# (default e2e_already_red, "-" for none). touch_canary makes it change the
+# image the canary runs, as a round that rolled it back would.
+cat > "$work/rollback-since.sh" <<'STUB'
+#!/usr/bin/env bash
+fx="$FIXTURES"
+printf '%s REPORTS=%s\n' "$*" "${KLAI_DEPLOY_REPORTS:-}" >> "$fx/since_argv"
+outcome="$(cat "$fx/since_outcome" 2>/dev/null || echo e2e_already_red)"
+[[ "$outcome" == "-" ]] || echo "ROLLBACK_REPORT {\"service\":\"rollback-canary\",\"kind\":\"e2e\",\"outcome\":\"$outcome\"}"
+[[ ! -e "$fx/touch_canary" ]] || echo "sha256:goodimage-recreated" > "$fx/running_image"
+[[ ! -e "$fx/since_hook" ]] || source "$fx/since_hook"
+exit "$(cat "$fx/since_rc" 2>/dev/null || echo 5)"
+STUB
+chmod +x "$work/docker" "$work/deploy.sh" "$work/rollback-since.sh"
 
 # new_case <name> <running image id> <probe code>; deploy_calls is filled by the caller.
 new_case() {
@@ -55,11 +71,13 @@ new_case() {
     export FIXTURES="$fx"
     echo "$2" > "$fx/running_image"
     echo "$3" > "$fx/probe_code"
+    echo canarycid > "$fx/cid"
     : > "$fx/deploy_argv"
+    : > "$fx/since_argv"
 }
 
 run_script() {
-    out=$(KLAI_COMPOSE_DIR="$fx/opt" KLAI_DOCKER_BIN="$work/docker" KLAI_DEPLOY_WITH_ROLLBACK="$work/deploy.sh" \
+    out=$(KLAI_COMPOSE_DIR="$fx/opt" KLAI_DOCKER_BIN="$work/docker" KLAI_DEPLOY_WITH_ROLLBACK="$work/deploy.sh" KLAI_ROLLBACK_SINCE="$work/rollback-since.sh" \
           KLAI_AUTO_ROLLBACK_LOG="$fx/opt/logs/auto-rollback.log" KLAI_REHEARSAL_WAIT=0 KLAI_REHEARSAL_INTERVAL=0 \
           bash "$target" busybox:1.37.0 debian:12.15-slim 2>&1)
     rc=$?
@@ -74,19 +92,26 @@ calls() { wc -l < "$fx/deploy_argv" | tr -d ' '; }
 
 echo "# good deployed, bad rolled back, canary back on the good image"
 new_case ok "sha256:goodimage" 200
-printf '%s\n' "0 -" "3 rolled_back" > "$fx/deploy_calls"
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
 run_script
 check "exit 0" test "$rc" = 0
 check "event line appended" grep -q '"service":"auto-rollback","level":"info","event":"rollback_rehearsal","outcome":"ok"' "$event"
 check "event names the canary service, so the auto_rollback alert can exclude it" grep -q '"deploy_service":"rollback-canary"' "$event"
 check "one event line" test "$(wc -l < "$event" | tr -d ' ')" = 1
 check "good image deployed first, bad second" bash -c "sed -n 1p '$fx/deploy_argv' | grep -q '^rollback-canary busybox:1.37.0 ' && sed -n 2p '$fx/deploy_argv' | grep -q '^rollback-canary debian:12.15-slim '"
-check "same compose tag, probe and probe network on both deploys" test "$(grep -c -- '--compose-tag klai/rollback-canary:1.0-local-261028-0000 --probe http://rollback-canary:8080/ --probe-network klai-rehearsal' "$fx/deploy_argv")" = 2
-check "compose profile is on for the deploy script" test "$(grep -c 'COMPOSE_PROFILES=rollback-rehearsal$' "$fx/deploy_argv")" = 2
+check "same compose tag, probe and probe network on every deploy" test "$(grep -c -- '--compose-tag klai/rollback-canary:1.0-local-261028-0000 --probe http://rollback-canary:8080/ --probe-network klai-rehearsal' "$fx/deploy_argv")" = 3
+check "compose profile is on for the deploy script" test "$(grep -c 'COMPOSE_PROFILES=rollback-rehearsal$' "$fx/deploy_argv")" = 3
+check "scenario 2: the good image deploys again after the evidence, forced into a new container" bash -c "sed -n 3p '$fx/deploy_argv' | grep -q '^rollback-canary busybox:1.37.0 .* --force-recreate '"
+read -r s_since _ s_until _ s_red s_flag s_reports < "$fx/since_argv"
+check "scenario 2: one round, canary only (--rehearse)" test "$(wc -l < "$fx/since_argv" | tr -d ' ') $s_flag" = "1 --rehearse"
+check "scenario 2: the evidence lies after the window start and before the window end" \
+    bash -c "[[ '$s_since' < '$s_red' && '$s_red' < '$s_until' ]]"
+check "scenario 2: its report goes to a scratch directory, not the one a real round reads" \
+    bash -c "[[ '$s_reports' == REPORTS=?* && '$s_reports' != 'REPORTS=$fx/opt/deploy-reports' ]]"
 
 echo "# good tag re-pushed upstream: same layers under a new image ID (runs of 2 and 9 Nov 2026)"
 new_case reindexed "sha256:goodimage-reindexed" 200
-printf '%s\n' "0 -" "3 rolled_back" > "$fx/deploy_calls"
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
 run_script
 check "exit 0" test "$rc" = 0
 check "event line appended" grep -q '"event":"rollback_rehearsal","outcome":"ok"' "$event"
@@ -136,6 +161,93 @@ printf '%s\n' "0 -" "3 rolled_back" > "$fx/deploy_calls"
 run_script
 check "exit 1" test "$rc" = 1
 check "no event line" test ! -e "$event"
+
+echo "# scenario 2: the round does not block and rolls the canary back"
+new_case noblock "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
+echo 3 > "$fx/since_rc"; echo rolled_back > "$fx/since_outcome"
+run_script
+check "exit 1" test "$rc" = 1
+check "says the round did not block" grep -q 'the round did not block' <<< "$out"
+check "no event line" test ! -e "$event"
+
+echo "# scenario 2: the round finds no canary deploy to weigh"
+new_case noweigh "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
+echo 0 > "$fx/since_rc"; echo - > "$fx/since_outcome"
+run_script
+check "exit 1" test "$rc" = 1
+check "no event line" test ! -e "$event"
+
+echo "# scenario 2: exit 5 without an e2e_already_red report line"
+new_case noblockreport "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
+echo - > "$fx/since_outcome"
+run_script
+check "exit 1" test "$rc" = 1
+check "no event line" test ! -e "$event"
+
+echo "# scenario 2: exit 5, but the canary was recreated anyway"
+new_case touched "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
+touch "$fx/touch_canary"
+run_script
+check "exit 1" test "$rc" = 1
+check "says the round changed the canary" grep -q 'the blocked round changed the canary' <<< "$out"
+check "no event line" test ! -e "$event"
+
+echo "# scenario 2: the good image does not deploy again"
+new_case againred "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "3 rolled_back" > "$fx/deploy_calls"
+run_script
+check "exit 1" test "$rc" = 1
+check "no round run" test ! -s "$fx/since_argv"
+check "no event line" test ! -e "$event"
+
+echo "# scenario 2: the forced deploy did not replace the container"
+new_case kept "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
+touch "$fx/keep_container"
+run_script
+check "exit 1" test "$rc" = 1
+check "says the container was not replaced" grep -q 'did not replace the canary container' <<< "$out"
+check "no round run" test ! -s "$fx/since_argv"
+
+echo "# scenario 2: the canary container cannot be listed (both sides would be empty)"
+new_case unlisted "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
+cat > "$fx/since_hook" <<'HOOK'
+: > "$FIXTURES/cid"
+HOOK
+run_script
+check "exit 1" test "$rc" = 1
+check "says it cannot read the canary" grep -q 'cannot read the canary container after the blocked round' <<< "$out"
+check "no event line" test ! -e "$event"
+
+echo "# scenario 2 against the real rollback-since.sh: the deploys write ledger lines with a serving time"
+cat > "$work/deploy-ledger.sh" <<'STUB'
+#!/usr/bin/env bash
+serving="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+"$(dirname "$0")/deploy.sh" "$@"; rc=$?
+outcome=deployed; [[ "$rc" == 0 ]] || outcome=rolled_back
+printf '%s\timage\t%s\tccccccccccc1\t%s\tnone\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$outcome" "$serving" >> "$KLAI_COMPOSE_DIR/deploy-ledger.log"
+exit "$rc"
+STUB
+chmod +x "$work/deploy-ledger.sh"
+new_case real "sha256:goodimage" 200
+printf '%s\n' "0 -" "3 rolled_back" "0 -" > "$fx/deploy_calls"
+mkdir -p "$fx/opt/deploy-reports"
+echo '{"outcome":"from a real round"}' > "$fx/opt/deploy-reports/e2e-rollback.json"
+out=$(KLAI_COMPOSE_DIR="$fx/opt" KLAI_DOCKER_BIN="$work/docker" KLAI_DEPLOY_WITH_ROLLBACK="$work/deploy-ledger.sh" \
+      KLAI_ROLLBACK_SINCE="$script_dir/rollback-since.sh" KLAI_COMPOSE_ROLLBACK="$script_dir/compose-rollback.sh" \
+      KLAI_AUTO_ROLLBACK_LOG="$fx/opt/logs/auto-rollback.log" KLAI_REHEARSAL_WAIT=0 KLAI_REHEARSAL_INTERVAL=0 \
+      bash "$target" busybox:1.37.0 debian:12.15-slim 2>&1); rc=$?
+check "exit 0" test "$rc" = 0
+check "the round blocked with e2e_already_red" grep -q '^ROLLBACK_REPORT .*"outcome":"e2e_already_red"' <<< "$out"
+check "the canary was not redeployed by the round" test "$(calls)" = 3
+check "a real round's report is left alone" grep -q 'from a real round' "$fx/opt/deploy-reports/e2e-rollback.json"
+check "no replay mark written" test ! -e "$fx/opt/.e2e-rollback-at"
+check "event line appended" grep -q '"event":"rollback_rehearsal","outcome":"ok"' "$fx/opt/logs/auto-rollback.log"
 
 echo "# arguments"
 out=$(bash "$target" onlyone 2>&1); rc=$?

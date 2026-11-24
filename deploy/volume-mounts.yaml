@@ -364,7 +364,7 @@ mounts:
     kind: named
     host: vaultwarden-data
     container_path: /data
-    image: vaultwarden/server:1.36.0
+    image: vaultwarden/server:1.37.5-alpine
     category: data
     data_path_source: compose DATA_FOLDER=/data
     pii: true

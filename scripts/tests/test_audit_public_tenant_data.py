@@ -22,9 +22,13 @@ sys.modules["audit_public_tenant_data"] = audit
 _spec.loader.exec_module(audit)
 
 
+_REAL_TRACKED_PATHS = audit._tracked_paths
+
+
 @pytest.fixture(autouse=True)
 def _no_git(monkeypatch):
     monkeypatch.setattr(audit, "_known_librechat_names", lambda: {"getklai", "digest"})
+    monkeypatch.setattr(audit, "_tracked_paths", list)
 
 
 def _diff(*lines: str, path: str = "docs/x.md") -> str:
@@ -85,6 +89,78 @@ def test_a_database_name_on_a_header_line_is_still_reported():
 
 def test_a_database_name_already_on_the_default_branch_is_left_alone():
     assert audit.check(_diff("+  MONGO_URI: mongodb://librechat-getklai@mongo/librechat-getklai")) == []
+
+
+# ---- A librechat-<word> that names a file, not a customer database ----
+#
+# Tenant containers and databases are librechat-<org slug> and the slug is a
+# plain word (provisioning_names.py), so the only thing that separates a code
+# name from a tenant is whether the repository has a file or directory by it.
+
+_TRACKED = [
+    "deploy/scripts/librechat-widget-sync.sh",
+    "deploy/scripts/tests/librechat-widget-sync.test.sh",
+    ".github/workflows/deploy-librechat-gadget-build.yml",
+    "deploy/librechat-bolt-kit/run.py",
+]
+
+
+def _text_findings(text: str, monkeypatch, tracked=_TRACKED, label="commit-messages"):
+    monkeypatch.setattr(audit, "_tracked_paths", lambda: tracked)
+    return audit.check(audit.as_diff(text, label))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "add deploy/scripts/librechat-widget-sync.sh",
+        "run librechat-widget-sync.test.sh before the rollout",
+        "the librechat-gadget-build workflow",
+        "files under librechat-bolt-kit/",
+    ],
+)
+def test_a_name_that_ends_a_tracked_file_stem_is_not_a_database_name(text, monkeypatch):
+    assert _text_findings(text, monkeypatch) == []
+
+
+def test_a_file_added_by_the_same_diff_counts_before_it_is_tracked(monkeypatch):
+    diff = (
+        "+++ b/deploy/scripts/librechat-fresh-thing.mjs\n@@ -0,0 +1,1 @@\n+export {}\n"
+        "+++ b/docs/x.md\n@@ -0,0 +1,1 @@\n+see librechat-fresh-thing.mjs\n"
+    )
+
+    assert audit.check(diff) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "mongodb://librechat-acmecorp@mongo/librechat-acmecorp",  # no such file
+        "docker exec librechat-widget",  # only the head of a stem, not its tail
+        "docker exec librechat-sync",  # a middle part of a stem is not a stem
+        "docker exec librechat-brandnew-meili",  # a tenant key carries a suffix no file has
+    ],
+)
+def test_a_name_without_a_file_behind_it_is_still_a_database_name(text, monkeypatch):
+    assert [p.split(": ", 1)[1] for p in _text_findings(text, monkeypatch)] == [
+        "a customer database name that is new here"
+    ]
+
+
+def test_a_name_inside_a_longer_word_of_a_stem_is_not_excused(monkeypatch):
+    # "mylibrechat-acme" is one word; the stem does not END at a librechat- boundary.
+    findings = _text_findings("docker exec librechat-acme", monkeypatch, tracked=["deploy/mylibrechat-acme.sh"])
+
+    assert len(findings) == 1
+
+
+def test_tracked_paths_come_from_git_whatever_the_working_directory(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"deploy/scripts/librechat-widget-sync.sh": "#!/bin/sh\n", "deploy/other.txt": "x\n"})
+    monkeypatch.chdir(root / "deploy" / "scripts")
+    monkeypatch.setattr(audit, "_tracked_paths", _REAL_TRACKED_PATHS)
+
+    assert "deploy/other.txt" in audit._tracked_paths()
+    assert audit._path_names(audit._tracked_paths()) == {"widget-sync"}
 
 
 def test_a_table_comparing_the_two_paths_is_not_blocked():

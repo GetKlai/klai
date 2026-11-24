@@ -111,7 +111,9 @@ markers = [
     "postgres: requires a disposable real PostgreSQL database",
     "no_mock_db_helpers: exercise real database helpers",
     "graph_contract: runs graphiti against a real FalkorDB (see tests/graph_contract/conftest.py)",
+    "perf: time budgets; left out of the parallel run and run serially (pytest -m perf -n 0)",
 ]
+addopts = "-m 'not perf'"
 
 [dependency-groups]
 dev = [
