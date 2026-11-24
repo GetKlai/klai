@@ -68,6 +68,15 @@
 # Every exit 0/3/4 appends one line to the deploy ledger, writes
 # <reports>/<service>.json, prints it as "ROLLBACK_REPORT <json>" and, for 3 and
 # 4, appends an auto_rollback event line that Alloy ships to VictoriaLogs.
+#
+# Ledger line, tab-separated: finish time, image, service, from, to, commit,
+# outcome, serving time. The line is written when the run finishes, which on a
+# green deploy is after the probe (up to 60 s) and the error watch (300 s in
+# the workflows), while the new container has served since its recreate. The
+# eighth column is the moment just before that recreate, so
+# rollback-since.sh can tell whether a deploy was already serving while an E2E
+# run went red; it is empty when nothing was recreated. Readers that split on
+# tabs and use the first seven columns are unaffected by it.
 
 set -uo pipefail
 
@@ -194,6 +203,7 @@ TO="$IMAGE_REF"
 OUTCOME=""
 LOG_PATH=""
 REPORT_GATE="none"
+SERVING=""
 
 finish() {
     local code="$1" ts report
@@ -202,8 +212,8 @@ finish() {
     if [[ ! -e "$LEDGER" ]]; then
         : >> "$LEDGER" && chmod 0644 "$LEDGER"
     fi
-    printf '%s\timage\t%s\t%s\t%s\t%s\t%s\n' \
-        "$ts" "$SERVICE" "$FROM" "$TO" "$COMMIT" "$OUTCOME" >> "$LEDGER"
+    printf '%s\timage\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$ts" "$SERVICE" "$FROM" "$TO" "$COMMIT" "$OUTCOME" "$SERVING" >> "$LEDGER"
     # probe and probe_network let rollback-since.sh probe a replayed image the
     # same way, since the ledger does not carry them.
     report="$(printf '{"service":"%s","kind":"image","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","log":"%s","probe":"%s","probe_network":"%s"}' \
@@ -271,6 +281,7 @@ if [[ -n "$ROLLBACK_GATE" ]]; then
         OUTCOME="rollback_failed"
         finish 4
     fi
+    SERVING="$(now)"
     if "$DOCKER" tag "$IMAGE_REF" "$COMPOSE_TAG" && run_gates --force-recreate; then
         echo "::error::$SERVICE rolled back to $FROM after gate '$ROLLBACK_GATE' went red on $TO"
         OUTCOME="rolled_back"
@@ -316,6 +327,7 @@ fi
 echo "==> recreating $SERVICE"
 # Errors while the new container starts count, so the watch starts here.
 WATCH_FROM="$(now)"
+SERVING="$WATCH_FROM"
 if run_gates; then
     # --- gate 4: error rate since the deploy ----------------------------------
     watch_rc=0

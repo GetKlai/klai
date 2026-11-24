@@ -95,7 +95,9 @@ file_is() { check "$1" "$2" "$(cat "$case_dir/$3")"; }
 count_calls() { grep -c -- "$1" "$case_dir/fixtures/calls" || true; }
 call_order() { cut -d' ' -f1 "$case_dir/fixtures/calls" | paste -sd' ' -; }
 exists() { if [[ -e "$case_dir/$1" ]]; then echo yes; else echo no; fi; }
-ledger_last() { tail -n1 "$case_dir/deploy-ledger.log" | cut -f2-; }
+ledger_last() { tail -n1 "$case_dir/deploy-ledger.log" | cut -f2-7; }
+# The eighth column: when the sync first replaced a file on the host.
+serving_last() { tail -n1 "$case_dir/deploy-ledger.log" | cut -f8; }
 report() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$case_dir/deploy-reports/compose.json" "$1"; }
 reaches_end() { if grep -q REACHED_END "$case_dir/out"; then echo yes; else echo no; fi; }
 
@@ -201,6 +203,26 @@ echo "commit=ccc333 gate=compose-up-verification" > "$case_dir/.compose-rollback
 run_driver "$NEW_COMPOSE" 'rb_gate compose compose-up-verification "$KLAI_COMPOSE_DIR/scripts/'$SWEEP'"'
 check "green run with the flag present -> exit 0" 0 "$rc"
 check "  flag removed" no "$(exists .compose-rollback-failed)"
+
+# Serving time: the sync's first recreated services serve from its first file
+# replacement, while the ledger line waits for every gate (2 s here) and later
+# files are kept as well.
+new_case serving
+run_driver "$NEW_COMPOSE" 'rb_gate compose compose-up-verification sleep 2
+rb_keep "$KLAI_COMPOSE_DIR/alloy/config.alloy"'
+check "slow green gate -> exit 0" 0 "$rc"
+check "  ledger serving time is a timestamp" 1 "$(serving_last | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')"
+check "  and earlier than the finish time, by the gate" yes "$(tail -n1 "$case_dir/deploy-ledger.log" | awk -F'\t' '{ print ($8 < $1) ? "yes" : "no" }')"
+# A run that refuses before it replaced anything has served nothing new.
+new_case serving_none
+cat > "$case_dir/driver.sh" <<DRIVER
+source "$helper"
+rb_init bbb222
+rb_finish compose disk-headroom not_started
+DRIVER
+set +e; KLAI_COMPOSE_DIR="$case_dir" bash "$case_dir/driver.sh" > "$case_dir/out" 2>&1; rc=$?; set -e
+check "not_started -> exit 4" 4 "$rc"
+check "  no serving time" "" "$(serving_last)"
 
 # R6: when the restored state is red as well there is no second round.
 new_case one_attempt

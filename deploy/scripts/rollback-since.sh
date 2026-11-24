@@ -9,15 +9,21 @@
 #   rollback-since.sh <since-ts> --until <until-ts> [--red-after <ts>] [--rehearse]
 #
 #   <since-ts>   start of the last green run's job
-#   --until      creation time of the red run; a deploy after it was not what
-#                that run saw, so it is left alone
+#   --until      end of the window. auto-rollback.yml passes the moment its
+#                replay starts, so a deploy that landed while the confirmation
+#                run ran (neither red run tested it) is rolled back with the
+#                rest instead of staying live outside every window; a deploy
+#                after it is left alone
 #   --red-after  completion time of the newest E2E run an earlier round of
-#                auto-rollback.yml started after its rollback, when that run
-#                failed and no green run came after it (outcome
-#                e2e_already_red, below). A value that is not a timestamp is
-#                ignored, so the run rolls back as it would without it
+#                auto-rollback.yml started after a rollback in which every
+#                planned rollback succeeded, when that run failed and no green
+#                run came after it (outcome e2e_already_red, below). A value
+#                that is not a timestamp is ignored, so the run rolls back as
+#                it would without it
 #   --rehearse   handle the rollback-canary service only, so the whole chain can
-#                be exercised on production without touching a real service
+#                be exercised on production without touching a real service;
+#                with --red-after the already-red decision weighs the canary
+#                alone too (rollback-rehearsal-assert.sh, scenario 2)
 #   Times are UTC in the ledger's own format (2026-10-28T04:00:00Z) and are
 #   compared to ledger lines as text.
 #
@@ -42,9 +48,10 @@
 #            run calls are copied before anything changes.
 #   rollback-canary is skipped, except with --rehearse, which skips the rest.
 #
-# Never loops (R6): a real run records its start time in .e2e-rollback-at, and
-# later runs only read ledger lines after the later of <since-ts> and that time,
-# so a deploy is undone once even when E2E stays red.
+# Never loops (R6): a real run that rolled something back records its --until
+# in .e2e-rollback-at, and later runs only read ledger lines after the later of
+# <since-ts> and that time, so a deploy is undone once even when E2E stays red,
+# and the windows of consecutive rounds meet without a gap.
 #
 # Already red: from 2026-11-19 to 2026-11-22 the login journey failed because of
 # a setting in the identity provider. With no green run after it, every later
@@ -53,8 +60,10 @@
 # deploys is the system's own experiment: an earlier round rolled back and the
 # E2E run it started afterwards was red too (--red-after). Then a round changes
 # nothing and ends e2e_already_red, but only when that evidence is newer than
-# the last replay (R6 below) and every deploy left in the window has a ledger
-# line later than the evidence plus SERVING_MARGIN. Anything else rolls back.
+# the last replay (R6 below) and every deploy left in the window began to serve
+# after the evidence completed: its serving time (eighth ledger column) is
+# later, or, for a line written before that column existed, its ledger time is
+# later than the evidence plus SERVING_MARGIN. Anything else rolls back.
 #
 # Exit codes
 #   0  nothing to roll back; nothing changed
@@ -88,14 +97,17 @@ PREV_STATE="$KLAI_DIR/.compose-prev-state"
 CANARY="rollback-canary"
 TS_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 # A ledger line is written when a deploy finishes, while the new version has
-# served since its recreate: for an image the probe (60 s) and the error watch
-# (300 s, polled every 30 s) come after it, about 6.5 minutes; a compose sync
-# runs its gates one after another after the first recreate, and the longest
-# of the last 40 green sync runs took 682 s end to end (2026-11-24). 15 minutes
-# covers both with headroom, so a deploy whose ledger line is within this of
-# the evidence may already have been serving during that E2E run and is
-# treated as a possible cause. A data store major that dumps and restores for
-# longer than this is the known gap.
+# served since its recreate. Since 2026-11-24 the writers put that moment in an
+# eighth column (deploy-with-rollback.sh: just before the recreate;
+# compose-rollback.sh: just before the sync first replaces a file on the host),
+# and the already-red decision compares the evidence with it. This margin is
+# only the fallback for a line without that column, written before the change:
+# for an image the probe (60 s) and the error watch (300 s, polled every 30 s)
+# come after the recreate, about 6.5 minutes; a compose sync runs its gates one
+# after another after the first recreate, and the longest of the last 40 green
+# sync runs took 682 s end to end (2026-11-24). For such a line, a deploy whose
+# ledger time is within 15 minutes of the evidence may already have been
+# serving during that E2E run and is treated as a possible cause.
 SERVING_MARGIN=900
 
 usage() { echo "usage: ${0##*/} <since-ts> --until <until-ts> [--red-after <ts>] [--rehearse]   (times YYYY-MM-DDTHH:MM:SSZ)" >&2; exit 1; }
@@ -143,7 +155,6 @@ fi
 DEPLOY="$TOOLS/deploy-with-rollback.sh"
 COMPOSE_ROLLBACK="$TOOLS/compose-rollback.sh"
 
-STARTED="$(now)"
 AFTER="$SINCE"
 if (( ! REHEARSE )) && [[ -s "$REPLAYED_AT" ]]; then
     last="$(cat "$REPLAYED_AT")"
@@ -204,19 +215,36 @@ PLAN="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" '
 
 # GNU date on core-01 and in CI, BSD date on a Mac.
 epoch() { date -u -d "$1" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$1" +%s; }
-# The oldest deploy this run would undo; the canary never counts.
-FIRST="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" -v canary="$CANARY" '
-    $1 > after && $1 <= until && $7 == "deployed" && ($2 == "image" || $2 == "compose") && $3 != canary { print $1; exit }
+# Every deploy this run would weigh, as "<ledger time> <serving time or
+# empty>": the canary never on a real run, and only the canary on a rehearsal,
+# the same split as the replay below. Each one is checked, not only the
+# oldest, because a slow sync can finish after a deploy that started serving
+# later than it.
+WEIGHED="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" -v canary="$CANARY" -v rehearse="$REHEARSE" '
+    $1 > after && $1 <= until && $7 == "deployed" && ($2 == "image" || $2 == "compose") && (($3 == canary) == (rehearse == 1)) { print $1 "\t" $8 }
 ' "$LEDGER")"
-if [[ -n "$FIRST" && -n "$RED_AFTER" && "$RED_AFTER" > "$AFTER" ]] \
-    && (( $(epoch "$FIRST") > $(epoch "$RED_AFTER") + SERVING_MARGIN )); then
+# 0 when every weighed deploy began to serve after the evidence completed, so
+# none of them can have made that E2E run red.
+serving_after_evidence() {
+    local ts serving
+    [[ -n "$WEIGHED" ]] || return 1
+    while IFS=$'\t' read -r ts serving; do
+        if [[ "$serving" =~ $TS_RE ]]; then
+            [[ "$serving" > "$RED_AFTER" ]] || return 1
+        else
+            (( $(epoch "$ts") > $(epoch "$RED_AFTER") + SERVING_MARGIN )) || return 1
+        fi
+    done <<< "$WEIGHED"
+}
+if [[ -n "$RED_AFTER" && "$RED_AFTER" > "$AFTER" ]] && serving_after_evidence; then
     while IFS=$'\t' read -r _ts _kind svc _from to commit _n; do
-        [[ -n "$svc" && "$svc" != "$CANARY" ]] || continue
+        [[ -n "$svc" ]] || continue
+        if (( REHEARSE )); then [[ "$svc" == "$CANARY" ]] || continue; else [[ "$svc" != "$CANARY" ]] || continue; fi
         SERVICES+="$svc "
         TOS+="$svc=$to "
         COMMITS+="$commit "
     done <<< "$PLAN"
-    echo "::error::E2E prod-tenant was still red after the last rollback (run completed $RED_AFTER), and every deploy in ($AFTER, $UNTIL] came more than ${SERVING_MARGIN}s later (first $FIRST); nothing rolled back, the deploys in the window (${SERVICES% }) are not blamed"
+    echo "::error::E2E prod-tenant was still red after the last rollback (run completed $RED_AFTER), and every deploy in ($AFTER, $UNTIL] began to serve after that (by its recorded serving time, or for an older ledger line by a ledger time more than ${SERVING_MARGIN}s later); nothing rolled back, the deploys in the window (${SERVICES% }) are not blamed"
     finish e2e_already_red e2e-already-red 5
 fi
 
@@ -301,7 +329,10 @@ if (( DONE == 0 )); then
     exit 0
 fi
 
-(( REHEARSE )) || printf '%s\n' "$STARTED" > "$REPLAYED_AT"
+# UNTIL, not this run's start: the next window then begins exactly where this
+# one ended, so a deploy that finished between the two is in the next one
+# instead of in neither.
+(( REHEARSE )) || printf '%s\n' "$UNTIL" > "$REPLAYED_AT"
 
 echo "==> $DONE service(s), $FAILED failed"
 if (( FAILED > 0 )); then finish rollback_failed e2e 4; fi

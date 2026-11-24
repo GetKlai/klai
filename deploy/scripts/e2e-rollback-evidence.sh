@@ -10,11 +10,24 @@
 #
 # Such a run is a workflow_dispatch run on main, triggered by
 # github-actions[bot] (Auto-rollback dispatches with its own token), named
-# "E2E prod-tenant: after rollback by auto-rollback run <id>" (the run-name of
-# e2e-prod-tenant.yml built from the reason input; the API does not return
-# inputs), and <id> is a run of auto-rollback.yml. A person who dispatches E2E,
-# even with the same reason, is not the bot, so a manual red run is never
-# evidence; neither is a cancelled or skipped run.
+# "E2E prod-tenant: after a clean rollback by auto-rollback run <id>" (the
+# run-name of e2e-prod-tenant.yml built from the reason input; the API does not
+# return inputs), and <id> is a run of auto-rollback.yml. A person who
+# dispatches E2E, even with the same reason, is not the bot, so a manual red
+# run is never evidence; neither is a cancelled or skipped run.
+#
+# Only a clean experiment counts. Auto-rollback names the run "after a clean
+# rollback" when its report said rolled_back (every planned rollback
+# succeeded) and "after a failed rollback" otherwise; a run named before that
+# distinction existed ("after rollback by ...") cannot tell the two apart. When
+# the newest post-rollback run of any of the three names is not a clean one,
+# there is no evidence: after a failed rollback the deploy that broke E2E can
+# still be live, and blocking on that red run would leave it there and block
+# every rollback after it. The name is the handle because the round fixes it
+# from its own report at the moment it starts the run, it cannot change
+# afterwards, and it needs no second lookup; the round's conclusion is red
+# for both outcomes, and its report artifact expires after 30 days and is
+# uploaded best-effort.
 #
 # Fails open: when a lookup fails or answers something unexpected it prints
 # nothing and exits 0, so the round rolls back exactly as it did before this
@@ -44,13 +57,18 @@ runs="$(gh api -X GET --paginate "repos/$REPO/actions/workflows/e2e-prod-tenant.
     --jq '.workflow_runs[] | select(.status == "completed" and .event == "workflow_dispatch"
         and .head_branch == "main" and .created_at >= "'"$GREEN"'"
         and .triggering_actor.login == "github-actions[bot]"
-        and (.display_title | test("^E2E prod-tenant: after rollback by auto-rollback run [0-9]+$")))
-      | "\(.created_at) \(.id) \(.conclusion) \(.display_title | ltrimstr("E2E prod-tenant: after rollback by auto-rollback run "))"')" \
+        and (.display_title | test("^E2E prod-tenant: after (a clean |a failed )?rollback by auto-rollback run [0-9]+$")))
+      | (.display_title | capture("after (?<kind>a clean |a failed )?rollback by auto-rollback run (?<round>[0-9]+)$")) as $t
+      | "\(.created_at) \(.id) \(.conclusion) \($t.round) \(($t.kind // "") | ltrimstr("a ") | rtrimstr(" ") | if . == "" then "unknown" else . end)"')" \
     || none "could not list the E2E prod-tenant runs"
 [[ -n "$runs" ]] || exit 0
-read -r _created id conclusion round <<< "$(sort <<< "$runs" | tail -n1)"
+read -r _created id conclusion round kind <<< "$(sort <<< "$runs" | tail -n1)"
 if [[ "$conclusion" != failure ]]; then
     echo "newest post-rollback E2E run $id ended $conclusion: no evidence" >&2
+    exit 0
+fi
+if [[ "$kind" != clean ]]; then
+    echo "newest post-rollback E2E run $id followed a rollback that was not clean ($kind): no evidence" >&2
     exit 0
 fi
 

@@ -8,8 +8,16 @@ name: Rollback rehearsal
 # the rollback-canary service on core-01 (tiny HTTP server, no customer traffic,
 # no data), then a deliberately broken one, both through the real
 # deploy-with-rollback.sh, and asserts the broken one was rolled back and the
-# good one answers again within 5 minutes. The whole sequence lives in
-# deploy/scripts/rollback-rehearsal-assert.sh (installed to /opt/klai/scripts by
+# good one answers again within 5 minutes. A second scenario proves the
+# already-red block of auto-rollback.yml on the same canary: taking the moment
+# after that clean rollback as a red post-rollback E2E run, it deploys the good
+# image again and runs rollback-since.sh --rehearse with that moment as
+# --red-after, which must end e2e_already_red without touching the canary; a
+# round that rolls the canary back instead ends this run red. Only the canary
+# is weighed and the report goes to a scratch directory, so neither real
+# services nor the evidence a real round reads are involved. The whole
+# sequence lives in deploy/scripts/rollback-rehearsal-assert.sh (installed to
+# /opt/klai/scripts by
 # deploy-compose.yml, tested in deploy-scripts-tests.yml); this workflow only
 # starts it.
 #
@@ -63,4 +71,5 @@ jobs:
             set -e
             test -x /opt/klai/scripts/deploy-with-rollback.sh
             test -x /opt/klai/scripts/rollback-rehearsal-assert.sh
+            test -x /opt/klai/scripts/rollback-since.sh
             /opt/klai/scripts/rollback-rehearsal-assert.sh ${{ env.GOOD_IMAGE }} ${{ env.BAD_IMAGE }}

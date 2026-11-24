@@ -21,7 +21,14 @@
 # Exit codes of a red run: 3 rolled back, 4 rollback failed (and not_started or
 # shadow_failed, which changed nothing). The ledger line,
 # the report (<reports>/compose.json, also printed as "ROLLBACK_REPORT <json>")
-# and the auto_rollback event follow the contract of deploy-with-rollback.sh.
+# and the auto_rollback event follow the contract of deploy-with-rollback.sh,
+# including the eighth ledger column: the moment this run first replaced a file
+# on the host (the first rb_keep, which comes before the compose files are
+# swapped and before any data store cutover or recreate) or, for a replay,
+# began its restore. A sync writes its ledger line after all of its gates,
+# which took up to 682 s on the last 40 green runs (2026-11-24) and longer with
+# a data store dump and restore, while the first recreated services served
+# from the start of that.
 #
 # A rollback_failed run leaves $RB_DIR/.compose-rollback-failed (commit and
 # gate). While it exists the files on the host are a state nobody verified, so
@@ -74,6 +81,7 @@ RB_TOUCHED=()
 RB_FROM="none"
 RB_TO=""
 RB_LOG=""
+RB_SERVING=""
 
 # shellcheck source=deploy/scripts/datastore-rollback.sh
 source "$(dirname "${BASH_SOURCE[0]}")/datastore-rollback.sh"
@@ -99,6 +107,7 @@ rb_init() {
 # that is still current.
 rb_keep() {
   local f
+  [[ -n "$RB_SERVING" ]] || RB_SERVING="$(rb_now)"
   for f in "$@"; do
     # A path this run creates has nothing to copy; a restore removes it again.
     if [[ ! -e "$f" ]]; then RB_NEW+=("$f"); continue; fi
@@ -112,6 +121,7 @@ rb_touched() { RB_TOUCHED+=("$@"); }
 
 rb_restore() {
   local f rc=0
+  [[ -n "$RB_SERVING" ]] || RB_SERVING="$(rb_now)"
   for f in "${RB_NEW[@]}"; do rm -rf "$f" || rc=1; done
   for f in "${RB_KEPT[@]}"; do
     if [[ -d "$f.prev" ]]; then
@@ -169,8 +179,8 @@ rb_finish() {
   if [[ ! -e "$RB_LEDGER" ]]; then
     : >> "$RB_LEDGER" && chmod 0644 "$RB_LEDGER"
   fi
-  printf '%s\tcompose\t%s\t%s\t%s\t%s\t%s\n' \
-    "$ts" "$service" "$RB_FROM" "$RB_TO" "$RB_TO" "$outcome" >> "$RB_LEDGER"
+  printf '%s\tcompose\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$ts" "$service" "$RB_FROM" "$RB_TO" "$RB_TO" "$outcome" "$RB_SERVING" >> "$RB_LEDGER"
   report="$(printf '{"service":"%s","kind":"compose","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","log":"%s"}' \
     "$(rb_json "$service")" "$(rb_json "$RB_FROM")" "$(rb_json "$RB_TO")" "$(rb_json "$RB_TO")" \
     "$(rb_json "$gate")" "$outcome" "$ts" "$(rb_json "$RB_LOG")")"

@@ -129,7 +129,7 @@ new_case green "0" "200"
 run_script --probe http://retrieval-api:8040/health --compose-tag klai/retrieval-api:local
 check "exit 0" test "$rc" = 0
 check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
-check "ledger carries commit and kind" grep -q $'\timage\tretrieval-api\t0123456789ab\tghcr.io/getklai/retrieval-api:abc123\tabc123\tdeployed$' "$ledger"
+check "ledger carries commit and kind" grep -q $'\timage\tretrieval-api\t0123456789ab\tghcr.io/getklai/retrieval-api:abc123\tabc123\tdeployed\t' "$ledger"
 check "report outcome deployed" grep -q '"outcome":"deployed"' "$report"
 check "report line printed on stdout" grep -q '^ROLLBACK_REPORT {' <<< "$out"
 check "report keeps the probe for a later replay" grep -q '"probe":"http://retrieval-api:8040/health","probe_network":"klai-net"' "$report"
@@ -193,6 +193,10 @@ check "exit 0" test "$rc" = 0
 check "helper called once with service, deploy time and window" grep -Eqx 'retrieval-api [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z --window 300' "$fx/watch_argv"
 check "the watch starts when the recreate starts, not after the gates" test "$(( $(cat "$fx/watch_ran_at") - $(date -u -d "$(awk '{print $2}' "$fx/watch_argv")" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$(awk '{print $2}' "$fx/watch_argv")" +%s) ))" -ge 2
 check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
+check "ledger serving time (column 8) is the recreate, the time the watch counts from" \
+    test "$(awk -F'\t' 'END { print $8 }' "$ledger")" = "$(awk '{print $2}' "$fx/watch_argv")"
+check "and earlier than the finish time in column 1, which comes after the 2 s recreate" \
+    test "$(awk -F'\t' 'END { print ($8 < $1) }' "$ledger")" = 1
 
 echo "# gate 4: the helper is missing -> nothing is deployed"
 new_case watchmissing "0" "200"
@@ -292,7 +296,7 @@ check "no registry pull" bash -c "! grep -q '^pull' '$fx/docker_argv'"
 check "the old image tagged as the running container's compose tag" has_line "$fx/docker_argv" "tag aaaaaaaaaaa1 klai/retrieval-api:local"
 check "forced recreate" has_line "$fx/compose_up_argv" "--no-pull --force-recreate retrieval-api"
 check "ledger reads like a deploy-time rollback: from = serving again, to = rejected" \
-    grep -q $'\timage\tretrieval-api\taaaaaaaaaaa1\t0123456789ab\tabc123\trolled_back$' "$ledger"
+    grep -q $'\timage\tretrieval-api\taaaaaaaaaaa1\t0123456789ab\tabc123\trolled_back\t' "$ledger"
 check "report gate e2e" grep -q '"gate":"e2e","outcome":"rolled_back"' "$report"
 check "auto_rollback event with gate e2e" grep -q '"outcome":"rolled_back","deploy_service":"retrieval-api","gate":"e2e"' "$event"
 
@@ -303,6 +307,7 @@ IMAGE=aaaaaaaaaaa1 run_script --rollback e2e
 check "exit 4" test "$rc" = 4
 check "gate rollback-image-missing" grep -q '"gate":"rollback-image-missing","outcome":"rollback_failed"' "$report"
 check "nothing recreated" test ! -s "$fx/compose_up_argv"
+check "so no serving time in the ledger" test -z "$(awk -F'\t' 'END { print $8 }' "$ledger")"
 
 echo "# --rollback: the old image is red too -> the one that ran goes back, exit 4"
 new_case rb_red "1 0" "200"
