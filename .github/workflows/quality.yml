@@ -34,6 +34,7 @@ jobs:
       connector: ${{ steps.filter.outputs.connector }}
       trivyignore: ${{ steps.filter.outputs.trivyignore }}
       graph_contract: ${{ steps.filter.outputs.graph_contract }}
+      librechat_boot: ${{ steps.filter.outputs.librechat_boot }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -117,6 +118,16 @@ jobs:
               - 'klai-libs/graphiti-compat/**'
               - 'deploy/docker-compose.yml'
               - '.github/workflows/graph-contract.yml'
+              - '.github/workflows/quality.yml'
+            librechat_boot:
+              - 'deploy/librechat/**'
+              - 'deploy/docker-compose.yml'
+              - 'deploy/tests/chat-config-boot.sh'
+              - 'deploy/tests/chat-pinned-digests.sh'
+              - 'deploy/tests/render-tenant-chat-config.py'
+              - 'deploy/tests/fixtures/chat-unknown-top-level-field.yaml'
+              - 'klai-portal/backend/app/services/provisioning/generators.py'
+              - '.github/workflows/chat-config-boot.yml'
               - '.github/workflows/quality.yml'
             trivyignore:
               - '**/.trivyignore.yaml'
@@ -204,6 +215,12 @@ jobs:
     uses: ./.github/workflows/graph-contract.yml
     secrets: inherit
 
+  chat-boot:
+    needs: changes
+    if: needs.changes.outputs.librechat_boot == 'true'
+    uses: ./.github/workflows/chat-config-boot.yml
+    secrets: inherit
+
   quality:
     name: quality
     if: always()
@@ -222,6 +239,7 @@ jobs:
       - connector
       - trivyignore
       - graph-contract
+      - chat-boot
     runs-on: ubuntu-latest
     steps:
       - name: Require every affected workflow to pass
