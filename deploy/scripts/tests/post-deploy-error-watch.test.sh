@@ -23,8 +23,21 @@ printf '%s\n' "$*" >> "$STATE/docker_argv"
 # `ps -q` and `inspect` serve the overlap check from a state file: one line per
 # running container, "<StartedAt> <compose service label> /<name>".
 case "$1" in
-    ps) [[ -s "$STATE/inspect" ]] && echo c1; exit 0 ;;
-    inspect) cat "$STATE/inspect" 2>/dev/null; exit 0 ;;
+    ps) [[ -s "$STATE/inspect" || -s "$STATE/inspect_live" ]] && echo c1; exit 0 ;;
+    inspect)
+        cat "$STATE/inspect" 2>/dev/null
+        # `inspect_live` holds one "<compose service label> /<name>" line for a
+        # container that is always two seconds younger than the stub's own clock,
+        # so it started inside whichever window the script has open, however slow
+        # the run is. A fixed timestamp counts only while the script still reads
+        # the same second.
+        if [[ -s "$STATE/inspect_live" ]]; then
+            now=$(date -u +%s)
+            at=$(date -u -d "@$(( now + 2 ))" +%Y-%m-%dT%H:%M:%S.000000000Z 2>/dev/null \
+                || date -u -r "$(( now + 2 ))" +%Y-%m-%dT%H:%M:%S.000000000Z)
+            echo "$at $(cat "$STATE/inspect_live")"
+        fi
+        exit 0 ;;
     run) ;;
     *) echo "stub: unexpected docker args: $*" >&2; exit 90 ;;
 esac
@@ -109,7 +122,7 @@ printf '%s\n' 'OTHER=1' 'VICTORIALOGS_AUTH_USER=vluser' "VICTORIALOGS_AUTH_PASSW
 
 # new_case <after sequence> [<before sequence>]
 new_case() {
-    rm -f "$STATE"/*.n "$STATE/queries.log" "$STATE/docker_argv" "$STATE/bad_query" "$STATE/inspect" "$STATE/after_starts"
+    rm -f "$STATE"/*.n "$STATE/queries.log" "$STATE/docker_argv" "$STATE/bad_query" "$STATE/inspect" "$STATE/inspect_live" "$STATE/after_starts"
     printf '%s\n' $1 > "$STATE/after"
     printf '%s\n' ${2:-0} > "$STATE/before"
     deployed=$(date -u +%s)
@@ -247,7 +260,7 @@ check "exit 3" test "$rc" = 3
 
 echo "# after MAX_RESTARTS restarts the last window decides"
 new_case "42 42 42" "0 0 0"
-overlap_after 1 litellm
+echo "litellm /klai-core-litellm-1" > "$STATE/inspect_live"
 run_watch knowledge-ingest --window 0
 check "exit 3" test "$rc" = 3
 check "restarted twice, then breached" bash -c 'grep -q "window restarted (2/2)" <<< "$0" && grep -q "BREACH knowledge-ingest: 42" <<< "$0"' "$out"
