@@ -1,8 +1,8 @@
 diff --git a/api/server/index.js b/api/server/index.js
-index 8477c3b57..a99ee63ef 100644
+index e38945062..92a0fd12d 100644
 --- a/api/server/index.js
 +++ b/api/server/index.js
-@@ -132,7 +132,12 @@ const configureGenerationStreams = () => {
+@@ -161,7 +161,12 @@ const configureGenerationStreams = () => {
    const streamServices = createStreamServices();
    GenerationJobManager.configure({
      ...streamServices,
@@ -15,4 +15,4 @@ index 8477c3b57..a99ee63ef 100644
 +    cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS ?? 'true'),
    });
    GenerationJobManager.setApprovalExpiredHandler(recordExpiredScheduleApproval);
-   GenerationJobManager.setTerminalHostActionHandler(
+   GenerationJobManager.setAdmissionGuard(agentEventMethods.isAgentTriggerPrincipalActive);

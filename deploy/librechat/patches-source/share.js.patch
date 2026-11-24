@@ -1,5 +1,5 @@
 diff --git a/api/server/routes/share.js b/api/server/routes/share.js
-index 3cd5761cb..29935c45c 100644
+index 34430581d..dd09757e6 100644
 --- a/api/server/routes/share.js
 +++ b/api/server/routes/share.js
 @@ -124,6 +124,93 @@ const resolveSharedLinkExpiration = (req, conversationId) =>

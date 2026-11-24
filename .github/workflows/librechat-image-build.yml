@@ -32,7 +32,7 @@ on:
       librechat_tag:
         description: 'Upstream LibreChat tag to build from'
         type: string
-        default: 'v0.8.8'
+        default: 'v0.8.9'
       patch_revision:
         description: 'Klai patch revision suffix (the <n> in -klai.<n>)'
         type: string
@@ -43,7 +43,7 @@ permissions:
   packages: write
 
 env:
-  DEFAULT_LIBRECHAT_TAG: v0.8.8
+  DEFAULT_LIBRECHAT_TAG: v0.8.9
   DEFAULT_PATCH_REVISION: '1'
 
 jobs:

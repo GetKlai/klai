@@ -1,4 +1,4 @@
-version: 1.3.13
+version: 1.3.19
 
 cache: true
 
@@ -110,6 +110,50 @@ interface:
   # New in 0.8.7 (1.3.13): retain uploaded agent files after the run
   # completes instead of the previous ephemeral-only behaviour.
   retainAgentFiles: false
+
+  # New in 0.8.9 (1.3.19), diffed against interfaceSchema in
+  # packages/data-provider/src/config.ts of LibreChat v0.8.8. New capabilities
+  # are off; keys that only choose a layout are pinned to the value that
+  # reproduces the 0.8.8 screen, so an upstream default change cannot move it.
+  # Welcome-screen mascot (users could opt in from Settings).
+  mascot: false
+  # Opening the artifacts pane in its own browser window; the docked pane stays.
+  artifactUndocking: false
+  # Reply alerts: unseen count in the tab title/favicon, desktop notifications
+  # and a chime. All three default to on; 0.8.8 had none of them.
+  replyNotifications:
+    tabBadge: false
+    desktop: false
+    sound: false
+  # Idle list of recently used files in the composer palette; 0 turns it off
+  # (searching the palette still finds files).
+  composerRecentFiles: 0
+  # Layout choices, pinned to the 0.8.8 rendering: the selected spec's name
+  # heads the welcome screen, the disclaimer sits at the bottom of the page,
+  # and every response names its author.
+  landingHeading: entity
+  landingFooter: true
+  messageAuthor: always
+  # Title ownership. false exists only for a rolling upgrade across several API
+  # replicas; each tenant runs one container, and false would answer 409 to a
+  # rename while an answer is still streaming.
+  runningChatRename: true
+  # Only matters when ANALYTICS_GTM_ID is set, which Klai never does; true keeps
+  # the consent banner in front of Google Tag Manager if that ever changes.
+  analyticsConsent: true
+  # Already false upstream: ?theme= on an entry link may not set the colour mode.
+  colorModeFromUrl: false
+  # How long a left conversation's history stays cached in the browser. Not a
+  # visible surface (returning to a released conversation refetches it); 0.8.8
+  # had no such release step. Pinned to upstream's defaults (60 s, the most
+  # recent one conversation).
+  historyCacheTtlMs: 60000
+  historyCacheRecent: 1
+  # `theme` (a deployment colour theme) is also new and stays unset: it takes a
+  # theme object with no "off" value, and unset is the 0.8.8 look.
+
+# No top-level `projects:` block: the v0.8.8 image rejects the key at startup,
+# so it may only be added once no tenant runs an image older than v0.8.9.
 
 balance:
   enabled: false
