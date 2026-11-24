@@ -9,7 +9,10 @@
 # direct SARIF scan produces (checked on 2026-11-24 against a 312-result scan:
 # identical rule ids, locations and messages), so existing alerts keep matching.
 #
-# Severity and fix filters are the WARN tier of .trivy.yaml. One retry, because
+# Severity filter as the WARN tier of .trivy.yaml, but WITHOUT --ignore-unfixed:
+# a known-exploited finding matters most when there is no fix, so the triage
+# sees unfixed findings and keeps them when they are in KEV or cross the EPSS
+# threshold on an image that is not internal. One retry, because
 # registry pulls fail transiently; a second failure fails the job and leaves
 # that image's alerts as they were rather than closing them.
 set -eu
@@ -23,7 +26,6 @@ for attempt in 1 2; do
         --list-all-pkgs \
         --output "$out" \
         --severity CRITICAL,HIGH \
-        --ignore-unfixed \
         --scanners vuln \
         --image-src remote \
         --timeout 6m \

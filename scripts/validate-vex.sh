@@ -31,5 +31,8 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 yq -o=json deploy/docker-compose.yml > "$TMP/deploy.json"
 yq -o=json docker-compose.dev.yml > "$TMP/dev.json"
+yq -o=json deploy/docker-compose.gpu.yml > "$TMP/gpu.json"
 
-python3 scripts/triage-image-findings.py validate --deploy "$TMP/deploy.json" --dev "$TMP/dev.json"
+# Extra arguments pass through, e.g. --check-images to re-verify a statement
+# whose image pin moved by reading its evidence from the new image.
+python3 scripts/triage-image-findings.py validate --deploy "$TMP/deploy.json" --dev "$TMP/dev.json" --gpu "$TMP/gpu.json" "$@"

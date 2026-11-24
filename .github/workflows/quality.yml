@@ -167,6 +167,9 @@ jobs:
             image_pins:
               - 'deploy/docker-compose.yml'
               - 'docker-compose.dev.yml'
+              - 'deploy/docker-compose.gpu.yml'
+              - 'klai-portal/backend/app/core/config.py'
+              - 'renovate.json5'
               - 'deploy/crawl4ai/Dockerfile'
               - 'deploy/image-exposure.json'
               - 'deploy/caddy/Caddyfile'

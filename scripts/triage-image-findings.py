@@ -96,8 +96,9 @@ JUSTIFICATIONS = {
 VEX_MAX_DAYS = 365  # the same ceiling .trivyignore.yaml entries have
 REASON_MIN_CHARS = 40
 
-RANK = {"internal": 0, "content": 1, "exposed": 2, "unknown": 3}
-EXPOSED_LIKE = {"content", "exposed", "unknown"}
+RANK = {"internal": 0, "reachable": 1, "content": 2, "exposed": 3, "unknown": 4}
+# Criticals and high exploit-prediction scores count on all of these alike.
+EXPOSED_LIKE = {"reachable", "content", "exposed", "unknown"}
 
 # The upload job's analysis key; GitHub keeps one alert set per tool, key and
 # category, so stale categories are only those of this job.
@@ -129,30 +130,133 @@ def today():
 # --- Targets ----------------------------------------------------------------
 
 
-def targets(deploy, dev, crawl4ai_base):
-    groups = {}
-    for source, compose in (("deploy", deploy), ("dev", dev)):
+IMAGE_ENV = re.compile(r"(^|_)IMAGE$")
+IMAGE_OVERRIDES_ENV = re.compile(r"_IMAGE_OVERRIDES$")
+IMAGE_REF = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[\w.-]+)?(@sha256:[0-9a-f]{64})?$")
+SETTING_DEFAULT = re.compile(r'^\s*(\w*image\w*)\s*:\s*str\s*=\s*"([^"]*)"', re.M)
+
+
+def image_refs(composes, settings_text=""):
+    """Every image the stack can start, whatever the syntax of its pin.
+
+    Returns (source, owner, kind, image) for `image:` keys, environment values
+    named *_IMAGE (the meeting-bot image is pinned only as BROWSER_IMAGE on its
+    runtime, the tenant chat image as LIBRECHAT_IMAGE on portal-api), the
+    slug=image lists in *_IMAGE_OVERRIDES, and the image defaults in the
+    portal's settings that compose does not override. A value that is not a
+    plain image reference stops the run instead of dropping the image.
+    """
+    refs = []
+    for source, compose in composes.items():
         for service, spec in ((compose or {}).get("services") or {}).items():
-            image = (spec or {}).get("image")
-            if not image:
-                continue
-            if CRAWL4AI_IMAGE.search(image):
-                # Built on the server and never pushed; its Dockerfile adds no
-                # packages, so the FROM image carries the same package set.
-                image = crawl4ai_base
-            if EXCLUDED_IMAGE.search(image):
-                continue
-            groups.setdefault(image, []).append((source, service))
+            if (spec or {}).get("image"):
+                refs.append((source, service, "image", spec["image"]))
+            for var, value in env_of(spec).items():
+                values = []
+                if IMAGE_OVERRIDES_ENV.search(var):
+                    values = [entry.partition("=")[2].strip() for entry in value.split(",") if entry.strip()]
+                elif IMAGE_ENV.search(var) and value:
+                    values = [value]
+                for image in values:
+                    if not IMAGE_REF.match(image):
+                        raise TriageError(f"{source}/{service} {var} is not a plain image reference, so no scan can cover it")
+                    refs.append((source, f"{service}.{var}", "env", image))
+    portal_env = env_of(((composes.get("deploy") or {}).get("services") or {}).get("portal-api"))
+    for name, image in SETTING_DEFAULT.findall(settings_text):
+        if name.upper() not in portal_env and IMAGE_REF.match(image) and (":" in image or "@" in image):
+            refs.append(("deploy", f"portal-api.{name.upper()}", "default", image))
+    return refs
+
+
+def targets(composes, crawl4ai_base, settings_text=""):
+    groups = {}
+    for source, owner, kind, image in image_refs(composes, settings_text):
+        if CRAWL4AI_IMAGE.search(image):
+            # Built on the server and never pushed; its Dockerfile adds no
+            # packages, so the FROM image carries the same package set.
+            image = crawl4ai_base
+        if EXCLUDED_IMAGE.search(image):
+            continue
+        groups.setdefault(image, []).append((source, owner, kind))
     out = []
     for image, members in groups.items():
-        key = "__".join(sorted(f"{s}_{n}" for s, n in members))
+        # The key (and so the category GitHub correlates alerts by) comes from
+        # the `image:` members when there are any, so an environment reference
+        # to an image a service already runs does not rename its category.
+        named = [m for m in members if m[2] == "image"] or members
+        key = "__".join(sorted(f"{s}_{o}" for s, o, _ in named))
         out.append({
             "key": key,
-            "services": sorted(f"{s}/{n}" for s, n in members),
+            "services": sorted({f"{s}/{o}" for s, o, _ in members}),
             "image": image,
             "category": "pinned-service-" + re.sub(r"[^A-Za-z0-9_.-]", "_", key),
         })
     return sorted(out, key=lambda t: t["key"])
+
+
+def load_json5(text):
+    """Parse the JSON5 subset renovate.json5 uses: comments, single quotes,
+    unquoted keys, trailing commas and backslash line continuations."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'":
+            j, buf = i + 1, []
+            while text[j] != c:
+                if text[j] == "\\":
+                    nxt = text[j + 1]
+                    if nxt == "\n":
+                        j += 2
+                        continue
+                    buf.append("\\" + nxt if nxt != "'" else "'")
+                    j += 2
+                    continue
+                buf.append('\\"' if text[j] == '"' else text[j])
+                j += 1
+            out.append('"' + "".join(buf) + '"')
+            i = j + 1
+        elif text.startswith("//", i):
+            i = text.find("\n", i) if "\n" in text[i:] else n
+        elif text.startswith("/*", i):
+            i = text.index("*/", i) + 2
+        elif c.isalpha() or c in "_$":
+            m = re.match(r"[A-Za-z_$][\w$]*", text[i:])
+            word = m.group(0)
+            out.append(word if word in ("true", "false", "null") else f'"{word}"')
+            i += len(word)
+        else:
+            out.append(c)
+            i += 1
+    return json.loads(re.sub(r",(\s*[}\]])", r"\1", "".join(out)))
+
+
+def unrecognised_renovate_pins(renovate, files, recognised):
+    """Lines Renovate's custom regex managers treat as image pins that the
+    target derivation does not know.
+
+    `files` maps the stack's pin files (compose files, portal settings) to
+    their text. A match there whose line value is not an image the derivation
+    produced (scanned or deliberately excluded) means an image pin in a
+    syntax this script does not read, and the gate fails closed on it.
+    """
+    errors = []
+    for manager in renovate.get("customManagers") or []:
+        if manager.get("customType") != "regex":
+            continue
+        patterns = [re.compile(p.strip("/")) for p in manager.get("managerFilePatterns") or []]
+        for path, text in files.items():
+            if not any(p.search(path) for p in patterns):
+                continue
+            for pattern in manager.get("matchStrings") or []:
+                for m in re.finditer(pattern.replace("(?<", "(?P<"), text):
+                    start = text.rfind("\n", 0, m.start()) + 1
+                    end = text.find("\n", m.start())
+                    line = text[start:end if end >= 0 else None].split("#", 1)[0].strip()
+                    value = re.split(r"[:=]\s*", line, maxsplit=1)[-1].strip().strip("'\"")
+                    if value not in recognised:
+                        lineno = text.count("\n", 0, m.start()) + 1
+                        errors.append(f"{path}:{lineno} is an image pin to Renovate that the scan targets do not include")
+    return errors
 
 
 def crawl4ai_base(dockerfile_text):
@@ -248,8 +352,17 @@ def find_route_mentions(repo):
     return found
 
 
-def classify(deploy, dev, cfg, route_texts):
-    """Return {"deploy/<svc>" | "dev/<svc>": (class, reason)}."""
+def classify(deploy, dev, cfg, route_texts, gpu=None):
+    """Return {"<source>/<owner>": (class, reason)} for every service and every
+    environment-pinned image ("<service>.<VAR>") in the compose files.
+
+    Classes, most exposed first: exposed (derived from the proxy routes, the
+    runtime route writers and public ports), content (listed: parses
+    untrusted input), reachable (derived: shares a compose network with an
+    exposed or content-consuming service, so one hop behind it, as a
+    pre-authentication injection through a public application would be),
+    internal (listed), unknown (none of these; treated as exposed).
+    """
     services = deploy.get("services") or {}
     exposed = {}
     for path, text in sorted(route_texts.items()):
@@ -263,38 +376,53 @@ def classify(deploy, dev, cfg, route_texts):
                     f"{path} routes to {host!r}, which is neither a compose service nor a "
                     "runtime_upstreams entry in deploy/image-exposure.json"
                 )
-            image = env_of(services.get(runtime["service"])).get(runtime["env"], "")
+            env = env_of(services.get(runtime["service"]))
+            image = env.get(runtime["env"], "")
             if not image or "${" in image:
                 raise TriageError(
                     f"{path} routes to {host!r}, whose image comes from {runtime['env']} of "
                     f"{runtime['service']}, and compose does not pin that value"
                 )
-            matched = [s for s, spec in services.items() if (spec or {}).get("image") == image]
-            if not matched:
-                raise TriageError(
-                    f"{path} routes to containers running {image}, which no compose service "
-                    "runs, so no scan covers the image tenants are served from"
-                )
-            for service in matched:
-                exposed.setdefault(service, f"{runtime['reason']} ({path})")
+            reason = f"{runtime['reason']} ({path})"
+            for var in (runtime["env"], runtime.get("overrides_env")):
+                if var:
+                    exposed.setdefault(f"{runtime['service']}.{var}", reason)
+            for service, spec in services.items():
+                if (spec or {}).get("image") == image:
+                    exposed.setdefault(service, reason)
     for service, spec in services.items():
         if (spec or {}).get("network_mode") == "host":
             exposed.setdefault(service, "runs in the host network namespace")
         for port in (spec or {}).get("ports") or []:
             if public_port(port):
                 exposed.setdefault(service, f"publishes {port} on every host interface")
+    owners = list(services)
+    for _, owner, kind, _ in image_refs({"deploy": deploy}):
+        if kind == "env" and owner not in owners:
+            owners.append(owner)
+    facing = {s for s in services if s in exposed or s in cfg["content_consumers"]}
+    nets = {s: networks_of(spec) or {"default"} for s, spec in services.items()}
     classes = {}
-    for service in services:
-        if service in exposed:
-            classes[f"deploy/{service}"] = ("exposed", exposed[service])
-        elif service in cfg["content_consumers"]:
-            classes[f"deploy/{service}"] = ("content", cfg["content_consumers"][service])
-        elif service in cfg["internal"]:
-            classes[f"deploy/{service}"] = ("internal", cfg["internal"][service])
+    for owner in owners:
+        if owner in exposed:
+            classes[f"deploy/{owner}"] = ("exposed", exposed[owner])
+        elif owner in cfg["content_consumers"]:
+            classes[f"deploy/{owner}"] = ("content", cfg["content_consumers"][owner])
+        elif owner in nets and (peer := next((f for f in sorted(facing) if nets[f] & nets[owner]), None)):
+            net = sorted(nets[peer] & nets[owner])[0]
+            classes[f"deploy/{owner}"] = ("reachable", f"shares network {net} with {peer}")
+        elif owner in cfg["internal"]:
+            classes[f"deploy/{owner}"] = ("internal", cfg["internal"][owner])
         else:
-            classes[f"deploy/{service}"] = ("unknown", "not classified in deploy/image-exposure.json, treated as exposed")
+            classes[f"deploy/{owner}"] = ("unknown", "not classified in deploy/image-exposure.json, treated as exposed")
     for service in (dev or {}).get("services") or {}:
         classes[f"dev/{service}"] = ("internal", "docker-compose.dev.yml runs on developer machines only")
+    for service in (gpu or {}).get("services") or {}:
+        key = f"gpu/{service}"
+        for section, cls in (("content_consumers", "content"), ("internal", "internal")):
+            if key in cfg[section]:
+                classes[key] = (cls, cfg[section][key])
+        classes.setdefault(key, ("unknown", "not classified in deploy/image-exposure.json, treated as exposed"))
     return classes
 
 
@@ -328,13 +456,63 @@ def condition_failures(stmt, deploy, dev):
         for net in cond.get("networks_exclude") or []:
             if net in networks_of(spec):
                 failures.append(f"{cond['service']} joins network {net}")
+        if cond.get("entrypoint_unchanged") and (spec.get("entrypoint") or spec.get("command")):
+            failures.append(f"{cond['service']} overrides the image's entrypoint or command")
     return failures
 
 
-def validate_vex(doc, deploy, dev, now):
+def image_file_contains(image, path, text):
+    """True when `path` inside `image` contains `text` (read with the container runtime)."""
+    done = subprocess.run(
+        ["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "cat", image, path],
+        capture_output=True, text=True, timeout=600, check=False,
+    )
+    return done.returncode == 0 and text in done.stdout
+
+
+def pin_failures(stmt, current, check_image=None):
+    """A statement is evidence about the image versions it was verified on.
+
+    `verified_against` lists those references. When a service of the
+    statement now runs another reference (a Renovate bump), the statement
+    holds only if its `image_checks` (a file in the image contains a text)
+    pass on the new reference; a statement without machine-checkable evidence
+    needs a person to re-verify it and update `verified_against`.
+    """
+    failures = []
+    for service in stmt.get("services") or []:
+        image = current.get(service)
+        if image is None:
+            failures.append(f"{service} runs no scanned image")
+        elif image not in (stmt.get("verified_against") or []):
+            checks = stmt.get("image_checks") or []
+            if not checks:
+                failures.append(f"{service} now runs {image}, which this statement was not verified against; re-verify")
+            elif check_image is None:
+                failures.append(f"{service} now runs {image}; its image checks did not run (use --check-images)")
+            elif not all(check_image(image, c["path"], c["contains"]) for c in checks):
+                failures.append(f"{service} now runs {image}, and its image checks fail")
+    return sorted(set(failures))
+
+
+def statement_failures(stmt, deploy, dev, now, current=None, check_image=None):
+    why = condition_failures(stmt, deploy, dev)
+    if dt.date.fromisoformat(str(stmt["expires"])) < now:
+        why.append(f"expired on {stmt['expires']}")
+    if current is not None:
+        why += pin_failures(stmt, current, check_image)
+    return why
+
+
+def current_images(target_list):
+    return {s: t["image"] for t in target_list for s in t["services"]}
+
+
+def validate_vex(doc, deploy, dev, now, current=None, check_image=None):
     """Return error strings for .vex/unused-components.json; empty means valid."""
     errors = []
     known = {f"deploy/{s}" for s in (deploy.get("services") or {})} | {f"dev/{s}" for s in ((dev or {}).get("services") or {})}
+    known |= set(current or {})
     seen = set()
     for i, stmt in enumerate(doc.get("statements") or []):
         sid = stmt.get("id") or f"#{i}"
@@ -357,6 +535,10 @@ def validate_vex(doc, deploy, dev, now):
             errors.append(f"{sid}: reason missing or shorter than {REASON_MIN_CHARS} characters")
         if not stmt.get("evidence"):
             errors.append(f"{sid}: no evidence")
+        if not stmt.get("conditions"):
+            errors.append(f"{sid}: needs at least one compose condition the validator can check")
+        if not stmt.get("verified_against"):
+            errors.append(f"{sid}: verified_against must name the image references the evidence was checked on")
         try:
             expires = dt.date.fromisoformat(str(stmt.get("expires")))
         except ValueError:
@@ -367,6 +549,8 @@ def validate_vex(doc, deploy, dev, now):
             elif (expires - now).days > VEX_MAX_DAYS:
                 errors.append(f"{sid}: expires more than {VEX_MAX_DAYS} days ahead")
         errors.extend(f"{sid}: {f}" for f in condition_failures(stmt, deploy, dev))
+        if current is not None:
+            errors.extend(f"{sid}: {f}" for f in pin_failures(stmt, current, check_image))
     return errors
 
 
@@ -390,9 +574,11 @@ def identifier_mentions(obj, where="$"):
     return []
 
 
-def validate_exposure(cfg, deploy, mentions):
+def validate_exposure(cfg, deploy, mentions, gpu=None):
     errors = []
     services = set(deploy.get("services") or {})
+    services |= {o for _, o, kind, _ in image_refs({"deploy": deploy}) if kind == "env"}
+    services |= {f"gpu/{s}" for s in ((gpu or {}).get("services") or {})}
     for section in ("content_consumers", "internal"):
         for service, reason in cfg[section].items():
             if service not in services:
@@ -485,7 +671,7 @@ def fetch_epss(ids, urlopen=urllib.request.urlopen, sleep=time.sleep):
 
 
 def report_ids(report):
-    return {v["VulnerabilityID"] for r in report.get("Results") or [] for v in r.get("Vulnerabilities") or []}
+    return {c for r in report.get("Results") or [] for v in r.get("Vulnerabilities") or [] if (c := cve_of(v))}
 
 
 # --- Triage -----------------------------------------------------------------
@@ -495,7 +681,12 @@ def _norm(name):
     return re.sub(r"[-_.]+", "-", name or "").lower()
 
 
-def stale_sbom_layers(result):
+def _eco(pkg):
+    purl = (pkg.get("Identifier") or pkg.get("PkgIdentifier") or {}).get("PURL") or ""
+    return purl.split("/", 1)[0]
+
+
+def stale_sbom_layers(report):
     """Layers whose SBOM-sourced packages the installed inventory contradicts.
 
     Trivy reads every *.spdx, *.spdx.json, *.cdx and *.cdx.json in an image
@@ -518,21 +709,45 @@ def stale_sbom_layers(result):
     opt/bitnami/, pip's pip/_vendor/bom.cdx.json next to pip's own
     dist-info), so its layer holds installed packages and it is kept even
     where a vendored copy differs from the installed one.
+
+    "Installed" is computed across the whole image (every language result,
+    keyed by package type and name), so an SBOM whose components Trivy spread
+    over several results is judged once. The rule only decides findings that
+    no keep clause would rescue: triage() never drops a known-exploited or
+    high-EPSS finding through it, because a frozen binary with its own vendor
+    SBOM in a layer that installed nothing would otherwise vanish.
     """
+    packages = [pkg for r in report.get("Results") or [] if r.get("Class") == "lang-pkgs" for pkg in r.get("Packages") or []]
     installed, installed_layers = {}, set()
-    for pkg in result.get("Packages") or []:
+    for pkg in packages:
         if pkg.get("FilePath"):
-            installed.setdefault(_norm(pkg.get("Name")), set()).add(pkg.get("Version"))
+            installed.setdefault((_eco(pkg), _norm(pkg.get("Name"))), set()).add(pkg.get("Version"))
             installed_layers.add((pkg.get("Layer") or {}).get("DiffID"))
     stale = set()
-    for pkg in result.get("Packages") or []:
+    for pkg in packages:
         if pkg.get("FilePath") or not (pkg.get("Identifier") or {}).get("BOMRef"):
             continue
         layer = (pkg.get("Layer") or {}).get("DiffID")
-        versions = installed.get(_norm(pkg.get("Name")))
+        versions = installed.get((_eco(pkg), _norm(pkg.get("Name"))))
         if versions and pkg.get("Version") not in versions and layer not in installed_layers:
             stale.add(layer)
     return stale
+
+
+CVE_ID = re.compile(r"CVE-\d{4}-\d{4,}")
+
+
+def cve_of(vuln):
+    """The CVE a finding is known by in KEV and EPSS: its id, or the CVE alias
+    of an advisory id (GHSA, a distribution advisory) from its vendor ids or
+    references. None when there is none, so the finding cannot be joined."""
+    vid = vuln["VulnerabilityID"]
+    if vid.startswith("CVE-"):
+        return vid
+    for text in [*(vuln.get("VendorIDs") or []), *(vuln.get("References") or [])]:
+        if m := CVE_ID.search(str(text)):
+            return m.group(0)
+    return None
 
 
 def _age(since, now):
@@ -543,8 +758,14 @@ def _age(since, now):
 
 
 def keep_reasons(vuln, exposure, feeds, now):
-    """Return (reasons, overdue). An empty reason list drops the finding."""
-    vid = vuln["VulnerabilityID"]
+    """Return (reasons, overdue). An empty reason list drops the finding.
+
+    The scan no longer passes --ignore-unfixed, because a known-exploited
+    finding matters most when there is no fix. A finding without a fix is
+    kept only when it is in KEV, or crosses the EPSS threshold on an image
+    that is not internal; the severity and age clauses apply to fixable ones.
+    """
+    vid = cve_of(vuln)
     critical = vuln.get("Severity") == "CRITICAL"
     fixable = bool(vuln.get("FixedVersion"))
     published = _age(vuln.get("PublishedDate"), now)
@@ -553,8 +774,10 @@ def keep_reasons(vuln, exposure, feeds, now):
         reasons.append("kev")
         age = _age(feeds["kev"][vid], now)
         overdue = overdue or (fixable and (age is None or age > AGE_LIMIT_DAYS["kev"]))
-    if feeds["epss"].get(vid, 0.0) >= EPSS_THRESHOLD:
+    if feeds["epss"].get(vid, 0.0) >= EPSS_THRESHOLD and (fixable or exposure in EXPOSED_LIKE):
         reasons.append("epss")
+    if not fixable:
+        return reasons, overdue
     if critical and exposure in EXPOSED_LIKE:
         reasons.append("critical-exposed")
         overdue = overdue or (fixable and (published is None or published > AGE_LIMIT_DAYS["critical-exposed"]))
@@ -564,13 +787,11 @@ def keep_reasons(vuln, exposure, feeds, now):
     return reasons, overdue
 
 
-def triage(report, target, classes, feeds, vex, deploy, dev, now):
+def triage(report, target, classes, feeds, vex, deploy, dev, now, current=None, check_image=None):
     exposure, exposure_reasons = image_exposure(target, classes)
     usable, skipped = [], []
     for stmt in (vex or {}).get("statements") or []:
-        why = condition_failures(stmt, deploy, dev)
-        if dt.date.fromisoformat(str(stmt["expires"])) < now:
-            why.append(f"expired on {stmt['expires']}")
+        why = statement_failures(stmt, deploy, dev, now, current, check_image)
         if why:
             skipped.append({"id": stmt["id"], "why": why})
         else:
@@ -578,13 +799,17 @@ def triage(report, target, classes, feeds, vex, deploy, dev, now):
     out = json.loads(json.dumps(report))
     kept, dropped, applied, vex_rows = [], {"stale-sbom": 0, "vex": 0, "rule": 0}, set(), []
     total = 0
+    stale, no_cve = stale_sbom_layers(out), 0
     for result in out.get("Results") or []:
-        stale = stale_sbom_layers(result) if result.get("Class") == "lang-pkgs" else set()
         remaining = []
         for vuln in result.get("Vulnerabilities") or []:
             total += 1
+            cve = cve_of(vuln)
+            no_cve += cve is None
             ident = vuln.get("PkgIdentifier") or {}
-            if ident.get("BOMRef") and not vuln.get("PkgPath") and (vuln.get("Layer") or {}).get("DiffID") in stale:
+            exploited = cve in feeds["kev"] or feeds["epss"].get(cve, 0.0) >= EPSS_THRESHOLD
+            in_stale = ident.get("BOMRef") and not vuln.get("PkgPath") and (vuln.get("Layer") or {}).get("DiffID") in stale
+            if in_stale and result.get("Class") == "lang-pkgs" and not exploited:
                 dropped["stale-sbom"] += 1
                 continue
             path = vuln.get("PkgPath") or (result.get("Target") if result.get("Class") == "lang-pkgs" else None)
@@ -607,7 +832,7 @@ def triage(report, target, classes, feeds, vex, deploy, dev, now):
                 "path": path,
                 "reasons": reasons,
                 "overdue": overdue,
-                "epss": feeds["epss"].get(vuln["VulnerabilityID"]),
+                "epss": feeds["epss"].get(cve),
             })
         if result.get("Vulnerabilities"):
             result["Vulnerabilities"] = remaining
@@ -623,6 +848,7 @@ def triage(report, target, classes, feeds, vex, deploy, dev, now):
         "total": total,
         "kept": kept,
         "dropped": dropped,
+        "no_cve": no_cve,
         "vex_applied": sorted(applied),
         "vex_skipped": skipped,
         "kev_running": sorted({k["id"] for k in kept if "kev" in k["reasons"]}) if running else [],
@@ -655,61 +881,76 @@ def openvex(target, rows, now):
 #
 # This repository is public, and so are its Actions logs, step summaries and
 # artifacts (any signed-in user can download an artifact). Nothing printed or
-# uploaded from here names a kept finding: no vulnerability id, no package and
-# version, and no image a kept finding sits on. The detail goes only to the
-# code-scanning tab as SARIF, which is not public. What leaves this script for
-# a public surface is aggregate() and the texts below.
+# uploaded from here lets a reader tell a kept finding or WHICH image has one:
+# no vulnerability id, no package and version, no per-image count. The detail
+# goes only to the code-scanning tab as SARIF, which is not public. The weekly
+# report is computed from that tab through the API (open alerts), so no
+# per-image result ever has to travel between jobs.
 
 NEEDS_ACTION = "the image scan left findings that need action; see the code-scanning tab"
-GATE_NEEDS_ACTION = "a changed image pin adds findings that need action; see the code-scanning tab for this pull request"
+GATE_NEEDS_ACTION = "the changed image pins add findings that need action; see the code-scanning tab for this pull request"
 
 
-def aggregate(summary):
-    """Counts only. The one per-image record that may be uploaded as an artifact."""
-    reasons = {}
-    for row in summary["kept"]:
-        for reason in row["reasons"]:
-            reasons[reason] = reasons.get(reason, 0) + 1
-    return {
-        "key": summary["key"],
-        "total": summary["total"],
-        "kept": len(summary["kept"]),
-        "kept_by_reason": reasons,
-        "dropped": summary["dropped"],
-        "kev_running": len(summary["kev_running"]),
-        "unknown_services": summary["unknown_services"],
-        "vex_skipped": summary["vex_skipped"],
-    }
+def _alert_cve(alert):
+    rule = alert.get("rule") or {}
+    m = CVE_ID.search(str(rule.get("id") or "")) or CVE_ID.search(str(rule.get("help") or ""))
+    return m.group(0) if m else None
 
 
-def summary_markdown(aggregates):
-    """Totals over all images; never which image holds a kept finding."""
-    total = sum(a["total"] for a in aggregates)
-    kept = sum(a["kept"] for a in aggregates)
-    reasons, dropped = {}, {"stale-sbom": 0, "vex": 0, "rule": 0}
-    for a in aggregates:
-        for k, v in a["kept_by_reason"].items():
-            reasons[k] = reasons.get(k, 0) + v
-        for k, v in a["dropped"].items():
-            dropped[k] += v
+def tab_counts(alerts, target_list, kev, epss):
+    """Whole-run counts of what the code-scanning tab now holds for this scan."""
+    by_category = {t["category"]: t for t in target_list}
+    counts = {"images": len(target_list), "images_with_findings": 0, "findings": 0,
+              "kev": 0, "epss": 0, "other": 0, "kev_running": 0, "no_cve": 0}
+    seen = set()
+    for alert in alerts:
+        inst = alert.get("most_recent_instance") or {}
+        target = by_category.get(inst.get("category"))
+        if alert.get("state") != "open" or inst.get("analysis_key") != SCAN_JOB_KEY or target is None:
+            continue
+        seen.add(target["category"])
+        counts["findings"] += 1
+        cve = _alert_cve(alert)
+        counts["no_cve"] += cve is None
+        if cve in kev:
+            counts["kev"] += 1
+            counts["kev_running"] += any(s.startswith("deploy/") for s in target["services"])
+        elif epss.get(cve, 0.0) >= EPSS_THRESHOLD:
+            counts["epss"] += 1
+        else:
+            counts["other"] += 1
+    counts["images_with_findings"] = len(seen)
+    return counts
+
+
+def report_markdown(counts, notes=()):
     lines = [
-        f"Triaged {len(aggregates)} images: {total} findings, {kept} kept on the code-scanning tab.",
+        f"Scanned {counts['images']} images; {counts['images_with_findings']} have at least one finding "
+        f"on the code-scanning tab, {counts['findings']} findings in all.",
         "",
-        "| Kept because | Count |",
+        "| On the tab because | Count |",
         "|---|---:|",
-        *(f"| {k} | {v} |" for k, v in sorted(reasons.items())),
+        f"| in the CISA KEV catalog | {counts['kev']} |",
+        f"| EPSS at least {EPSS_THRESHOLD} | {counts['epss']} |",
+        f"| critical on an exposed, reachable or content-consuming image, or overdue | {counts['other']} |",
         "",
-        f"Dropped: {dropped['stale-sbom']} from stale SBOMs, {dropped['vex']} by VEX statements, {dropped['rule']} below the rule.",
+        f"Findings without a CVE id (not joined to KEV or EPSS): {counts['no_cve']}.",
     ]
-    # Architecture, not findings: a service the exposure map does not know, a
-    # VEX statement whose premise no longer holds.
+    return "\n".join(lines + ([""] + sorted(set(notes)) if notes else [])) + "\n"
+
+
+def architecture_notes(target_list, classes, vex, deploy, dev, now, current):
+    """Unclassified services and VEX statements that do not hold: architecture, no findings."""
     notes = set()
-    for a in aggregates:
-        if a["unknown_services"]:
-            notes.add(f"- Unclassified, treated as exposed: {', '.join(a['unknown_services'])}")
-        for skipped in a["vex_skipped"]:
-            notes.add(f"- VEX statement `{skipped['id']}` not applied: {'; '.join(skipped['why'])}")
-    return "\n".join(lines + ([""] + sorted(notes) if notes else [])) + "\n"
+    for t in target_list:
+        for s in t["services"]:
+            if classes.get(s, ("unknown",))[0] == "unknown":
+                notes.add(f"- Unclassified, treated as exposed: {s}")
+    for stmt in (vex or {}).get("statements") or []:
+        why = statement_failures(stmt, deploy, dev, now, current)
+        if why:
+            notes.add(f"- VEX statement `{stmt['id']}` not applied unless its image checks pass: {'; '.join(why)}")
+    return notes
 
 
 def changed_targets(base, head):
@@ -720,64 +961,100 @@ def changed_targets(base, head):
     return {"head": changed, "base": counterparts}
 
 
-def introduced_kev(base_summaries, head_summaries):
+def introduced_kev(base_summaries, head_summaries, main_ids=None):
+    """KEV findings on changed head pins that neither the old pin's scan nor
+    the default branch's open alerts for those services already had.
+
+    `main_ids` maps a category to the rule ids open on main. It covers a base
+    tag that can no longer be pulled, so a bump that fixes something is not
+    blocked because the image it replaces disappeared upstream.
+    """
     out = []
     for head in head_summaries:
         if head["exposure"] not in EXPOSED_LIKE:
             continue
-        before = {
-            (row["id"], row["package"])
-            for base in base_summaries
-            if set(base["services"]) & set(head["services"])
-            for row in base["kept"]
-        }
+        related = [b for b in base_summaries if set(b["services"]) & set(head["services"])]
+        before = {row["id"] for b in related for row in b["kept"]}
+        for category in {head["category"], *(b["category"] for b in related)}:
+            before |= set((main_ids or {}).get(category, ()))
         for row in head["kept"]:
-            if "kev" in row["reasons"] and (row["id"], row["package"]) not in before:
-                out.append((row["id"], row["package"], head["key"]))
+            if "kev" in row["reasons"] and row["id"] not in before:
+                out.append((row["id"], head["key"]))
     return sorted(set(out))
 
 
 # --- CLI --------------------------------------------------------------------
 
 
+STACK_FILES = ("deploy/docker-compose.yml", "docker-compose.dev.yml", "deploy/docker-compose.gpu.yml")
+SETTINGS_FILE = "klai-portal/backend/app/core/config.py"
+
+
 def _load_all(directory, suffix):
     return [load(p) for p in sorted(Path(directory).rglob(f"*{suffix}"))]
+
+
+def _composes(a):
+    out = {"deploy": load(a.deploy), "dev": load(a.dev)}
+    if getattr(a, "gpu", None):
+        out["gpu"] = load(a.gpu)
+    return out
+
+
+def _settings(a):
+    return Path(a.settings).read_text() if getattr(a, "settings", None) and Path(a.settings).exists() else ""
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    def compose_args(c, crawl=False):
+        c.add_argument("--deploy", required=True)
+        c.add_argument("--dev", required=True)
+        c.add_argument("--gpu")
+        c.add_argument("--settings", default=SETTINGS_FILE)
+        if crawl:
+            c.add_argument("--crawl4ai-dockerfile", default="deploy/crawl4ai/Dockerfile")
+
     c = sub.add_parser("targets")
-    c.add_argument("--deploy", required=True)
-    c.add_argument("--dev", required=True)
-    c.add_argument("--crawl4ai-dockerfile", required=True)
+    compose_args(c, crawl=True)
     c = sub.add_parser("stale")
     c.add_argument("--alerts", required=True, help="gh api --paginate --slurp output")
     c.add_argument("--targets", required=True)
     c = sub.add_parser("kev")
     c.add_argument("--out", required=True)
     c = sub.add_parser("triage")
-    for name in ("scan", "targets", "key", "kev", "deploy", "dev", "out-dir"):
+    for name in ("scan", "targets", "key", "kev", "out-dir"):
         c.add_argument(f"--{name}", required=True)
+    compose_args(c)
     c.add_argument("--repo", default=".")
     c.add_argument("--exposure", default="deploy/image-exposure.json")
     c.add_argument("--vex", default=".vex/unused-components.json")
-    c = sub.add_parser("summary")
-    c.add_argument("--aggregates", required=True)
+    c.add_argument("--check-images", action="store_true")
+    c = sub.add_parser("report")
+    c.add_argument("--alerts", required=True, help="gh api --paginate --slurp output")
+    c.add_argument("--targets", required=True)
+    c.add_argument("--kev", required=True)
+    compose_args(c)
+    c.add_argument("--repo", default=".")
+    c.add_argument("--exposure", default="deploy/image-exposure.json")
+    c.add_argument("--vex", default=".vex/unused-components.json")
     c.add_argument("--markdown")
-    c.add_argument("--fail-on-kev", action="store_true")
     c = sub.add_parser("changed")
     c.add_argument("--base", required=True)
     c.add_argument("--head", required=True)
     c = sub.add_parser("gate")
     c.add_argument("--base", required=True)
     c.add_argument("--head", required=True)
+    c.add_argument("--main-alerts", help="gh api --paginate --slurp output for the default branch")
     c = sub.add_parser("validate")
-    c.add_argument("--deploy", required=True)
-    c.add_argument("--dev", required=True)
+    compose_args(c, crawl=True)
     c.add_argument("--repo", default=".")
     c.add_argument("--exposure", default="deploy/image-exposure.json")
     c.add_argument("--vex", default=".vex/unused-components.json")
+    c.add_argument("--renovate", default="renovate.json5")
+    c.add_argument("--check-images", action="store_true")
     a = p.parse_args(argv)
     try:
         return COMMANDS[a.cmd](a)
@@ -786,17 +1063,20 @@ def main(argv=None):
         return 2
 
 
+def _slurp(path):
+    pages = load(path)
+    return [x for page in pages for x in page] if pages and isinstance(pages[0], list) else pages
+
+
 def _cmd_targets(a):
     base = crawl4ai_base(Path(a.crawl4ai_dockerfile).read_text())
-    print(json.dumps(targets(load(a.deploy), load(a.dev), base)))
+    print(json.dumps(targets(_composes(a), base, _settings(a))))
     return 0
 
 
 def _cmd_stale(a):
-    pages = load(a.alerts)
-    alerts = [x for page in pages for x in page] if pages and isinstance(pages[0], list) else pages
     current = {t["category"] for t in load(a.targets)}
-    entries = [{"key": c, "category": c, "image": "", "services": [], "stale": True} for c in stale_categories(alerts, current)]
+    entries = [{"key": c, "category": c, "image": "", "services": [], "stale": True} for c in stale_categories(_slurp(a.alerts), current)]
     print(json.dumps(entries))
     return 0
 
@@ -812,41 +1092,49 @@ def _route_texts(repo, cfg):
     return {path: (Path(repo) / path).read_text() for path in cfg["route_sources"]}
 
 
-def _cmd_triage(a):
-    cfg, deploy, dev = load(a.exposure), load(a.deploy), load(a.dev)
+def _classes(a, composes):
+    cfg = load(a.exposure)
     unlisted = unlisted_route_sources(find_route_mentions(a.repo), cfg)
     if unlisted:
         raise TriageError(f"unclassified route sources: {', '.join(unlisted)} (run the validate subcommand)")
-    classes = classify(deploy, dev, cfg, _route_texts(a.repo, cfg))
-    target = next((t for t in load(a.targets) if t["key"] == a.key), None)
+    return classify(composes["deploy"], composes["dev"], cfg, _route_texts(a.repo, cfg), composes.get("gpu"))
+
+
+def _cmd_triage(a):
+    composes = _composes(a)
+    classes = _classes(a, composes)
+    target_list = load(a.targets)
+    target = next((t for t in target_list if t["key"] == a.key), None)
     if target is None:
         raise TriageError(f"{a.key} is not a scan target")
     vex = load(a.vex) if Path(a.vex).exists() else {}
     report = load(a.scan)
     feeds = {"kev": load(a.kev), "epss": fetch_epss(report_ids(report))}
-    out, summary, vexdoc = triage(report, target, classes, feeds, vex, deploy, dev, today())
-    # These four files hold the detail and stay on the runner; only the
-    # aggregate may be uploaded as an artifact.
+    out, summary, vexdoc = triage(report, target, classes, feeds, vex, composes["deploy"], composes["dev"], today(),
+                                  current_images(target_list), image_file_contains if a.check_images else None)
+    # The detail stays on the runner; nothing of it is printed or uploaded.
     d = Path(a.out_dir)
     d.mkdir(parents=True, exist_ok=True)
     write(d / f"{a.key}.triaged.json", out)
     write(d / f"{a.key}.summary.json", summary)
     write(d / f"{a.key}.openvex.json", vexdoc)
-    write(d / f"{a.key}.aggregate.json", aggregate(summary))
-    for service in summary["unknown_services"]:
-        print(f"::warning::{service} is not classified in deploy/image-exposure.json and is treated as exposed")
-    for skipped in summary["vex_skipped"]:
-        print(f"::warning::VEX statement {skipped['id']} not applied: {'; '.join(skipped['why'])}")
     return 0
 
 
-def _cmd_summary(a):
-    aggregates = _load_all(a.aggregates, ".aggregate.json")
-    markdown = summary_markdown(aggregates)
+def _cmd_report(a):
+    composes = _composes(a)
+    target_list = load(a.targets)
+    alerts, kev = _slurp(a.alerts), load(a.kev)
+    open_cves = {c for x in alerts if x.get("state") == "open" and (c := _alert_cve(x))}
+    counts = tab_counts(alerts, target_list, kev, fetch_epss(open_cves))
+    vex = load(a.vex) if Path(a.vex).exists() else {}
+    notes = architecture_notes(target_list, _classes(a, composes), vex, composes["deploy"], composes["dev"], today(),
+                               current_images(target_list))
+    markdown = report_markdown(counts, notes)
     print(markdown)
     if a.markdown:
         Path(a.markdown).write_text(markdown)
-    if a.fail_on_kev and sum(x["kev_running"] for x in aggregates):
+    if counts["kev_running"]:
         print(f"::error::{NEEDS_ACTION}")
         return 1
     return 0
@@ -858,27 +1146,39 @@ def _cmd_changed(a):
 
 
 def _cmd_gate(a):
-    found = introduced_kev(_load_all(a.base, ".summary.json"), _load_all(a.head, ".summary.json"))
+    main_ids = {}
+    for alert in _slurp(a.main_alerts) if a.main_alerts else []:
+        inst = alert.get("most_recent_instance") or {}
+        if alert.get("state") == "open":
+            main_ids.setdefault(inst.get("category"), set()).add((alert.get("rule") or {}).get("id"))
+    found = introduced_kev(_load_all(a.base, ".summary.json"), _load_all(a.head, ".summary.json"), main_ids)
     if found:
         print(f"::error::{GATE_NEEDS_ACTION}")
         return 1
-    print("No changed pin adds a known-exploited finding on an exposed or content-consuming image.")
+    print("No changed pin adds a known-exploited finding on an image that is not internal.")
     return 0
 
 
 def _cmd_validate(a):
-    deploy, dev = load(a.deploy), load(a.dev)
+    composes = _composes(a)
+    deploy, dev = composes["deploy"], composes["dev"]
     vex, cfg = load(a.vex), load(a.exposure)
-    errors = validate_vex(vex, deploy, dev, today())
-    errors += validate_exposure(cfg, deploy, find_route_mentions(a.repo))
+    settings = _settings(a)
+    target_list = targets(composes, crawl4ai_base(Path(a.crawl4ai_dockerfile).read_text()), settings)
+    errors = validate_vex(vex, deploy, dev, today(), current_images(target_list), image_file_contains if a.check_images else None)
+    errors += validate_exposure(cfg, deploy, find_route_mentions(a.repo), composes.get("gpu"))
     errors += [f"{a.vex}: {e}" for e in identifier_mentions(vex)]
     errors += [f"{a.exposure}: {e}" for e in identifier_mentions(cfg)]
+    recognised = {image for *_, image in image_refs(composes, settings)}
+    pin_files = {path: (Path(a.repo) / path).read_text() for path in (*STACK_FILES, SETTINGS_FILE) if (Path(a.repo) / path).exists()}
+    errors += unrecognised_renovate_pins(load_json5((Path(a.repo) / a.renovate).read_text()), pin_files, recognised)
     if not errors:
-        classify(deploy, dev, cfg, _route_texts(a.repo, cfg))
+        classify(deploy, dev, cfg, _route_texts(a.repo, cfg), composes.get("gpu"))
     for message in errors:
         print(f"::error::{message}")
     if not errors:
-        print(f"[validate-vex] {a.vex}: {len(vex.get('statements') or [])} statements OK; {a.exposure} OK")
+        print(f"[validate-vex] {a.vex}: {len(vex.get('statements') or [])} statements OK; {a.exposure} OK; "
+              f"{len(target_list)} scan targets, every Renovate image pin among them")
     return 1 if errors else 0
 
 
@@ -887,7 +1187,7 @@ COMMANDS = {
     "stale": _cmd_stale,
     "kev": _cmd_kev,
     "triage": _cmd_triage,
-    "summary": _cmd_summary,
+    "report": _cmd_report,
     "changed": _cmd_changed,
     "gate": _cmd_gate,
     "validate": _cmd_validate,

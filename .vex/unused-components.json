@@ -1,10 +1,12 @@
 {
   "_about": [
     "Components that are present in a third-party image but never executed by the service that runs it.",
-    "Each statement becomes OpenVEX not_affected statements (one per matching finding) in the weekly scan; see scripts/triage-image-findings.py.",
+    "Architecture only: a statement names a component and why it never runs, never a vulnerability identifier (the validator rejects one).",
+    "Each statement becomes OpenVEX not_affected statements (one per matching finding) on the runner; see scripts/triage-image-findings.py.",
     "OpenVEX needs one vulnerability per statement and has no expiry field, so the per-component declaration and its expiry live here.",
-    "Validated by scripts/validate-vex.sh: OpenVEX justification, reason of 40+ characters, evidence, expiry within 365 days, and every compose condition still true.",
-    "A statement whose condition stops holding, or that expires, is not applied: its findings come back on the code-scanning tab."
+    "verified_against: the image references the evidence was checked on. When a pin moves, the statement holds only if its image_checks pass on the new image (automatic); a statement without image_checks needs a person to re-verify and update verified_against.",
+    "Validated by scripts/validate-vex.sh: OpenVEX justification, reason of 40+ characters, evidence, at least one compose condition, expiry within 365 days.",
+    "A statement that fails any of this is not applied: its findings come back on the code-scanning tab."
   ],
   "statements": [
     {
@@ -18,7 +20,10 @@
         "deploy/listmonk-db",
         "deploy/umami-postgres"
       ],
-      "component": {"path": "usr/local/bin/gosu", "purl": "pkg:golang/stdlib"},
+      "component": {
+        "path": "usr/local/bin/gosu",
+        "purl": "pkg:golang/stdlib"
+      },
       "justification": "vulnerable_code_not_in_execute_path",
       "reason": "gosu only drops from root to the postgres user once at container start (setuid and exec); it never calls the Go standard-library packages the scanner flags, such as net/http, crypto/tls or archive/tar.",
       "evidence": [
@@ -26,46 +31,150 @@
         "gosu's SECURITY.md: CVEs in Go interfaces gosu never invokes (net/http, archive/tar, encoding/xml, ...) do not apply; govulncheck is the arbiter.",
         "Scope is the stdlib module inside that one binary; findings in gosu's own dependencies stay on the tab."
       ],
-      "conditions": [],
+      "conditions": [
+        {
+          "service": "deploy/postgres",
+          "entrypoint_unchanged": true
+        },
+        {
+          "service": "dev/postgres",
+          "entrypoint_unchanged": true
+        },
+        {
+          "service": "deploy/crm-postgres",
+          "entrypoint_unchanged": true
+        },
+        {
+          "service": "deploy/fider-postgres",
+          "entrypoint_unchanged": true
+        },
+        {
+          "service": "deploy/firecrawl-postgres",
+          "entrypoint_unchanged": true
+        },
+        {
+          "service": "deploy/listmonk-db",
+          "entrypoint_unchanged": true
+        },
+        {
+          "service": "deploy/umami-postgres",
+          "entrypoint_unchanged": true
+        }
+      ],
+      "verified_against": [
+        "pgvector/pgvector:0.8.7-pg18",
+        "postgres:19.0-alpine"
+      ],
+      "image_checks": [
+        {
+          "path": "/usr/local/bin/docker-entrypoint.sh",
+          "contains": "exec gosu postgres \"$BASH_SOURCE\" \"$@\""
+        }
+      ],
       "expires": "2027-05-24"
     },
     {
       "id": "calnode-litestream",
-      "services": ["deploy/calnode"],
-      "component": {"path": "usr/local/bin/litestream"},
+      "services": [
+        "deploy/calnode"
+      ],
+      "component": {
+        "path": "usr/local/bin/litestream"
+      },
       "justification": "vulnerable_code_not_in_execute_path",
       "reason": "The image's /entrypoint.sh starts litestream only when LITESTREAM_REPLICA_URL is set; compose does not set it, so calnode runs directly and the bundled litestream binary is never executed.",
       "evidence": [
         "/entrypoint.sh in ghcr.io/calnode/calnode:0.14.0: `if [ -n \"$LITESTREAM_REPLICA_URL\" ]; then ... exec litestream replicate ...; else exec /calnode; fi`.",
         "deploy/docker-compose.yml calnode: no LITESTREAM_REPLICA_URL in environment and no env_file (checked by the condition below)."
       ],
-      "conditions": [{"service": "deploy/calnode", "env_unset": ["LITESTREAM_REPLICA_URL"]}],
+      "conditions": [
+        {
+          "service": "deploy/calnode",
+          "env_unset": [
+            "LITESTREAM_REPLICA_URL"
+          ],
+          "entrypoint_unchanged": true
+        }
+      ],
+      "verified_against": [
+        "ghcr.io/calnode/calnode:0.14.0"
+      ],
+      "image_checks": [
+        {
+          "path": "/entrypoint.sh",
+          "contains": "if [ -n \"$LITESTREAM_REPLICA_URL\" ]; then"
+        }
+      ],
       "expires": "2027-05-24"
     },
     {
       "id": "vexa-runtime-kubectl",
-      "services": ["deploy/vexa12-runtime"],
-      "component": {"path": "usr/local/bin/kubectl"},
+      "services": [
+        "deploy/vexa12-runtime"
+      ],
+      "component": {
+        "path": "usr/local/bin/kubectl"
+      },
       "justification": "vulnerable_code_not_in_execute_path",
       "reason": "The runtime only shells out to kubectl in its k8s backend; RUNTIME_BACKEND defaults to docker and compose does not set it, so bots are started through the Docker socket bridge and kubectl never runs.",
       "evidence": [
         "vexaai/v012-runtime:v0.13.1 /app/src/runtime_kernel/__main__.py: `kind = os.getenv(\"RUNTIME_BACKEND\", \"docker\")`; kubectl is called only from k8s_backend.py.",
         "deploy/docker-compose.yml vexa12-runtime: no RUNTIME_BACKEND, Docker socket mounted from runtime-api-socket-proxy (checked by the condition below)."
       ],
-      "conditions": [{"service": "deploy/vexa12-runtime", "env_in": {"RUNTIME_BACKEND": ["", "docker"]}}],
+      "conditions": [
+        {
+          "service": "deploy/vexa12-runtime",
+          "env_in": {
+            "RUNTIME_BACKEND": [
+              "",
+              "docker"
+            ]
+          }
+        }
+      ],
+      "verified_against": [
+        "vexaai/v012-runtime:v0.13.1"
+      ],
+      "image_checks": [
+        {
+          "path": "/app/src/runtime_kernel/__main__.py",
+          "contains": "os.getenv(\"RUNTIME_BACKEND\", \"docker\")"
+        }
+      ],
       "expires": "2027-05-24"
     },
     {
       "id": "vaultwarden-db-clients",
-      "services": ["deploy/vaultwarden"],
-      "component": {"purl": ["pkg:deb/debian/libpq5", "pkg:deb/debian/libmariadb3", "pkg:deb/debian/mariadb-common"]},
+      "services": [
+        "deploy/vaultwarden"
+      ],
+      "component": {
+        "purl": [
+          "pkg:deb/debian/libpq5",
+          "pkg:deb/debian/libmariadb3",
+          "pkg:deb/debian/mariadb-common"
+        ]
+      },
       "justification": "vulnerable_code_not_in_execute_path",
       "reason": "Vaultwarden runs on its built-in SQLite database here: compose sets no DATABASE_URL and does not attach the service to the postgres network, so the PostgreSQL and MariaDB client libraries are linked but never open a connection.",
       "evidence": [
         "Vaultwarden .env.template: DATABASE_URL defaults to sqlite://data/db.sqlite3; PostgreSQL or MySQL is used only when DATABASE_URL names it.",
         "deploy/docker-compose.yml vaultwarden: no DATABASE_URL, no env_file, networks klai-net only (checked by the condition below)."
       ],
-      "conditions": [{"service": "deploy/vaultwarden", "env_unset": ["DATABASE_URL"], "networks_exclude": ["net-postgres"]}],
+      "conditions": [
+        {
+          "service": "deploy/vaultwarden",
+          "env_unset": [
+            "DATABASE_URL"
+          ],
+          "networks_exclude": [
+            "net-postgres"
+          ]
+        }
+      ],
+      "verified_against": [
+        "vaultwarden/server:1.37.5"
+      ],
       "expires": "2027-05-24"
     }
   ]

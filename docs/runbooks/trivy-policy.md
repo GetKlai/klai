@@ -216,39 +216,59 @@ If the new image has open HIGH/CRITICAL findings on first scan: do not weaken th
 
 ## The code-scanning tab for third-party images
 
-The Trivy alerts from `scan-pinned-images.yml` are an action list: every open one is something a person should do something about this week. On 2026-11-24 the tab held 1,275 alerts and nobody acted on any; the weekly run now triages each image's result with `scripts/triage-image-findings.py` before it uploads.
+The Trivy alerts from `scan-pinned-images.yml` are an action list: every open one is something a person should do something about. On 2026-11-24 the tab held 1,275 alerts and nobody acted on any; the scan now triages each image's result with `scripts/triage-image-findings.py` before it uploads.
 
-This repository is public, and so are its Actions logs, step summaries, artifacts and issues. They carry counts only: never a vulnerability identifier, a package with its version, or the image a kept finding sits on. The detail is on the code-scanning tab (for `main`, and for a pull request's ref), which is not public. Raw scan results, triage output and OpenVEX documents stay on the runner; the only per-image artifact is `aggregate-*` (total, kept, count per reason). Debug a finding from the tab, or rerun `scripts/trivy-scan-image.sh` and the `triage` subcommand locally.
+### What is scanned, and how often
+
+Every image the stack can start, whatever the syntax of its pin: `image:` keys in `deploy/docker-compose.yml`, `docker-compose.dev.yml` and `deploy/docker-compose.gpu.yml`; images in environment values named `*_IMAGE` (the meeting bot's `BROWSER_IMAGE`, the tenant chat's `LIBRECHAT_IMAGE`) and the `slug=image` lists in `*_IMAGE_OVERRIDES`; and image defaults in the portal's settings that compose does not override. On 2026-11-25 that is 41 targets. `scripts/validate-vex.sh` fails when one of Renovate's custom regex managers treats a line in those files as an image pin that this derivation does not produce, so a new pin syntax cannot slip past the scan.
+
+The scan runs daily (07:00 UTC) and on every push that changes a pin. A full run took 18 runner minutes on 2026-11-24. It rescans rather than re-joining stored results, because nothing is stored outside the runner. The remaining blind window after CISA adds a vulnerability to KEV is up to one day plus CISA's own delay from exploitation to listing. EPSS does not close that window: scores can sit near zero until the day a CVE is listed.
+
+The scan no longer uses `--ignore-unfixed`. A finding without a fix is kept only when it is in KEV, or crosses the EPSS threshold on an image that is not internal.
 
 ### How a finding gets onto the tab
 
-It is uploaded when at least one of these holds (the run summary counts findings per reason over all images; the tab shows each finding):
+It is uploaded when at least one of these holds:
 
 | Reason | Rule | Source of the number |
 |---|---|---|
-| `kev` | in the CISA Known Exploited Vulnerabilities catalog | CISA KEV feed, downloaded once per run |
+| `kev` | in the CISA Known Exploited Vulnerabilities catalog (joined through the CVE alias of an advisory id where there is one) | CISA KEV feed, downloaded once per run |
 | `epss` | EPSS score at least 0.1 | FIRST EPSS API; 0.1 is well above FIRST's "every CVSS critical" effort level of 0.04 |
-| `critical-exposed` | CRITICAL on an image that is exposed, consumes untrusted content, or cannot be classified | exposure, below |
+| `critical-exposed` | CRITICAL and fixable, on an image that is exposed, reachable, consumes untrusted input, or cannot be classified | exposure, below |
 | `critical-overdue` | CRITICAL, fixable, published more than 90 days ago, on an internal image | FedRAMP 90-day tier, one step below exposed |
 
-A kept finding is marked `overdue` when it is past its limit: 14 days after CISA added it to KEV (BOD 26-04's standard KEV tier), 30 days after publication for critical on an exposed image (FedRAMP). The numbers live in one block at the top of the script.
+A kept finding is marked `overdue` when it is past its limit: 14 days after CISA added it to KEV (BOD 26-04's standard KEV tier), 30 days after publication for a critical on an image that is not internal (FedRAMP). The numbers live in one block at the top of the script.
 
-Exposure is derived from the repository, never typed in: an image is **exposed** when a service running it is a `reverse_proxy` upstream in `deploy/caddy/Caddyfile` or in the code that writes tenant routes at runtime (portal-api's tenant chat routes, the docs-app routes), or publishes a port on every host interface. `deploy/image-exposure.json` names the services that **consume untrusted content** (crawler, scraper, document converter, search, the workers that parse incoming events or mail) and the **internal** ones, each with a reason. A scanned service in none of these is treated as exposed and named in the summary. A tracked file that mentions `reverse_proxy` and is not listed in that file stops the scan, so a new route writer cannot leave an exposed image classified as internal.
+Exposure classes, most exposed first, all derived from the repository except where noted:
+
+- **exposed**: a `reverse_proxy` upstream in `deploy/caddy/Caddyfile` or in the code that writes tenant routes at runtime (portal-api's tenant chat routes, including the image in `LIBRECHAT_IMAGE` and its overrides; the docs-app routes), or a port published on every host interface.
+- **content** (listed in `deploy/image-exposure.json`, each with a reason): parses untrusted input. These are the crawler, the scraper, the document converter and search; the meeting bot and the meeting API that receives its callbacks; the local model server; the PII analyzer and anonymizer; and the workers that parse incoming events or mail.
+- **reachable**: shares a compose network with an exposed or content-consuming service, so it sits one hop behind one. A pre-authentication injection through a public application reaches it.
+- **internal** (listed): none of the above. On 2026-11-25 no scanned production image is internal, because every compose network includes an exposed or content-consuming service. Only the developer compose stays internal. The `internal` list still records the intent for services that leave such a network.
+- **unknown**: in none of the lists and not derived (today the three images of the GPU host). These are treated as exposed and named in the run summary.
+
+A tracked file that mentions `reverse_proxy` and is not listed in `deploy/image-exposure.json` stops the scan, so a new route writer cannot leave an exposed image classified as internal.
 
 ### How a finding leaves the tab
 
 - **Fixed**: the next scan no longer finds it (usually a Renovate bump), and GitHub closes it.
-- **Below the rule**: it no longer meets any clause; the next upload omits it and GitHub closes it as fixed. A local rerun of the scan still shows it.
-- **Stale SBOM**: Trivy reads every `*.spdx`, `*.spdx.json`, `*.cdx`, `*.cdx.json` in an image. A layer whose SBOM lists packages at other versions than the ones the image installed, and which installed nothing itself, describes another tree (a copied project directory) and is dropped. A vendor SBOM written with the software it describes (Bitnami's under `opt/bitnami/`, pip's vendored-library list) is kept.
-- **VEX**: `.vex/unused-components.json` declares a component that is in the image but never executed by that service (a bundled `kubectl`, `litestream`, `gosu`, a database client the service does not use). Each statement has an OpenVEX justification, a reason, its evidence, an expiry within 365 days and the compose conditions it rests on; the triage writes a standard OpenVEX document per image on the runner. Statements describe components and the reason they never run; the validator rejects any entry that names a vulnerability identifier, because these files are public. `scripts/validate-vex.sh` fails when a statement has expired or a condition no longer holds, and the weekly run stops applying such a statement, so its findings come back.
-- **Stale category**: a category the scan job no longer produces (a renamed key, a removed service) gets an empty upload, which is how GitHub closes the alerts of a configuration that stopped reporting.
+- **Below the rule**: it no longer meets any clause; the next upload omits it and GitHub closes it as fixed.
+- **Stale SBOM**: Trivy reads every `*.spdx`, `*.spdx.json`, `*.cdx` and `*.cdx.json` in an image. An SBOM is treated as stale when its layer installed nothing itself and it lists packages at other versions than the ones installed anywhere in the image; that is a copied project directory, not an inventory. A vendor SBOM written with the software it describes (Bitnami's under `opt/bitnami/`, pip's list of vendored libraries) is kept. This rule never drops a KEV or high-EPSS finding; those always go to the keep rules, even when they come from a stale SBOM. Such a row can name a package the image does not have installed; check the installed version before you act on it.
+- **VEX**: `.vex/unused-components.json` declares a component that is in the image but never executed by that service. Each statement has an OpenVEX justification, a reason, its evidence, at least one compose condition, `verified_against` (the image references it was checked on) and an expiry within 365 days. When a pin moves, a statement with `image_checks` is re-verified automatically by reading the named file from the new image. The gosu, litestream and kubectl statements work this way: the entrypoint script, and the runtime's default backend. A statement without `image_checks` fails the pull request's validator until someone re-verifies it and updates `verified_against`. The vaultwarden database-client statement works this way, because its evidence is the upstream default, not a file in the image. A statement that fails any check is not applied, so its findings come back. Statements describe components, never findings: the validator rejects a vulnerability identifier in these files.
+- **Stale category**: a category the scan job no longer produces gets an empty upload, which is how GitHub closes the alerts of a configuration that stopped reporting.
+
+### What is public and what is not
+
+This repository is public, and so are its Actions logs, step summaries, artifacts and issues. None of them name a kept finding or say which image has one. The run summary gives whole-run counts only: images scanned, images with at least one finding on the tab, and findings per reason. The detail is on the code-scanning tab, for `main` and for a pull request's ref, which is not public. Raw scan results, triage output and OpenVEX documents stay on the runner. The report job counts the tab through the API, so no per-image result travels between jobs.
+
+The pull-request gate fails with a generic message and never says which of several changed pins failed. A pull request that changes a single pin is different: its diff names the pin, so a red gate does say publicly that this incoming version has a known-exploited finding. That version is not running yet, which is why this residual disclosure is accepted, but it is not zero.
 
 ### What to do with one
 
 1. `kev` on a running image: the run fails with "the image scan left findings that need action; see the code-scanning tab", and the usual `CI failure: Scan pinned external images` issue opens. Find the finding on the tab (filter by tool Trivy). Bump the pin today if a fixed upstream release exists; otherwise follow Recipe 6, step 3.
 2. `critical-exposed`, `epss`, `critical-overdue`: bump the pin (or merge the Renovate pull request) within the limit.
-3. The finding is real but the code never runs here: add a statement to `.vex/unused-components.json` with the evidence from compose and from the image, run `./scripts/validate-vex.sh`, and open a pull request. Do not dismiss the alert: a dismissal survives the next scan and hides the next real finding in the same place.
-4. A pull request that changes a pin runs `image-pin-triage.yml` through the required `quality` check and fails, with a generic message, if the new pin adds a KEV finding on an exposed or content-consuming image that the old pin did not have. The findings of the changed pins are on the pull request's code-scanning view (categories `pin-triage-*`).
+3. The finding is real but the code never runs here: add a statement to `.vex/unused-components.json` with the evidence, a compose condition, `verified_against` and, where the evidence is a file in the image, `image_checks`. Then run `./scripts/validate-vex.sh --check-images` and open a pull request. Do not dismiss the alert: a dismissal survives the next scan and hides the next real finding in the same place.
+4. A pull request that changes a pin runs `image-pin-triage.yml` through the required `quality` check. It fails if the new pin adds a KEV finding, on an image that is not internal, that neither the old pin nor the default branch's open alerts already had. A base tag that has disappeared upstream does not block the bump, because main's alerts stand in for it. The changed pins' findings are on the pull request's code-scanning view, under the categories `pin-triage-*`.
 
 ---
 
