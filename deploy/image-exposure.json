@@ -32,7 +32,6 @@
     "firecrawl-api": "scraper API that fetches and parses arbitrary URLs",
     "docling-serve": "converts uploaded and crawled documents (PDF, Office, HTML) from outside",
     "searxng": "fetches and parses result pages from public search engines",
-    "glitchtip-worker": "processes the error events that browsers submit through glitchtip-web",
     "crm-worker": "runs the CRM's background jobs, including mail and calendar sync that parse external messages",
     "vexa12-runtime.BROWSER_IMAGE": "the meeting bot: a browser that joins external meetings and processes their pages, audio and chat",
     "ollama": "runs local models on prompts users send through the exposed LLM proxy",
