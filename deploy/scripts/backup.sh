@@ -863,7 +863,9 @@ backup_vaultwarden() {
     || { fail "vaultwarden backup failed: ${out}"; return 1; }
   copy="$(sed -n "s/^Backup to '\(\/data\/db_[0-9_]*\.sqlite3\)' was successful$/\1/p" <<< "${out}")"
   [[ -n "${copy}" ]] || { fail "vaultwarden backup named no copy: ${out}"; return 1; }
-  if ! docker cp "${container}:${copy}" "${db}.partial"; then
+  # Created 0600 before any data lands in it: the backup directory is readable
+  # by other local users, and docker cp would otherwise write it 0644.
+  if ! { install -m 600 /dev/null "${db}.partial" && docker cp "${container}:${copy}" - | tar -xOf - > "${db}.partial"; }; then
     docker exec "${container}" rm -f "${copy}" || true
     rm -f "${db}.partial"
     fail "copying ${copy} out of the vaultwarden container failed"
@@ -873,8 +875,6 @@ backup_vaultwarden() {
   # one left behind is no exposure, but it must not pile up night after night.
   docker exec "${container}" rm -f "${copy}" \
     || log "      WARNING: ${copy} stays in the vaultwarden volume; remove it by hand"
-  chmod 600 "${db}.partial" || { rm -f "${db}.partial"; return 1; }
-
   check="$(sqlite3 "${db}.partial" 'PRAGMA integrity_check;' 2>&1)"
   if [[ "${check}" != ok ]]; then
     rm -f "${db}.partial"
@@ -890,6 +890,7 @@ backup_vaultwarden() {
       -e OWNER="$(id -u):$(id -g)" \
       alpine sh -c '
         set -e
+        umask 077
         cd /data
         test -s rsa_key.pem
         set --
@@ -898,7 +899,6 @@ backup_vaultwarden() {
         done
         tar -czf /backup/vaultwarden-files.tar.gz.partial "$@"
         chown "$OWNER" /backup/vaultwarden-files.tar.gz.partial
-        chmod 600 /backup/vaultwarden-files.tar.gz.partial
       '; then
     rm -f "${db}.partial" "${files}.partial"
     fail "the vaultwarden files tar failed"

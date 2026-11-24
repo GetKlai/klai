@@ -36,7 +36,7 @@ case "$1" in
         echo "Backup to '/data/db_20261125_020000.sqlite3' was successful" ;;
       rm) rm -f "$F/vol/${3#/data/}" ;;
     esac ;;
-  cp) cp "$F/vol/${2#*:/data/}" "$3" ;;
+  cp) [[ "$3" == - ]] || exit 64; tar -cf - -C "$F/vol" "${2#*:/data/}" ;;
   run)
     # The step's own script, run against the fake volume and backup directory.
     shift
