@@ -18,8 +18,9 @@
 # Scenario 2, the already-red block of auto-rollback.yml: step 2 was a clean
 # rollback, and the moment after step 3 stands in for the E2E run that round
 # would start, completing red (the evidence).
-#   4. the good image deploys again                -> exit 0; its ledger line
-#      carries a serving time after the evidence
+#   4. the good image deploys again with --force-recreate -> exit 0, in a new
+#      container (its id must change), so its ledger line carries a serving
+#      time after the evidence
 #   5. rollback-since.sh --rehearse with that evidence as --red-after must end
 #      e2e_already_red (exit 5) and leave the canary container as it was.
 #      Exit 3 means the round did not block and rolled the canary back.
@@ -78,7 +79,7 @@ now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # its output in $WORK/<name>.out (tee keeps it in the Actions log too).
 deploy() {
     local image="$1" name="$2"
-    "$DEPLOY" "$SERVICE" "$image" --compose-tag "$COMPOSE_TAG" --probe "$PROBE_URL" --probe-network "$PROBE_NETWORK" 2>&1 \
+    "$DEPLOY" "$SERVICE" "$image" --compose-tag "$COMPOSE_TAG" --probe "$PROBE_URL" --probe-network "$PROBE_NETWORK" "${@:3}" 2>&1 \
         | tee "$WORK/$name.out"
     DEPLOY_RC="${PIPESTATUS[0]}"
 }
@@ -131,19 +132,30 @@ done
 
 # Timestamps have whole seconds and the block compares them strictly, so a
 # second between the window start, the evidence and the next recreate.
+# canary_state: "<container id> <image id>" of the canary, or exit 1 when
+# either cannot be read, so an unreadable listing never compares equal.
+canary_state() {
+    local cid image
+    cid="$("$DOCKER" compose ps -q "$SERVICE" 2>/dev/null | head -n1)"
+    [[ -n "$cid" ]] || return 1
+    image="$("$DOCKER" inspect --format '{{.Image}}' "$cid" 2>/dev/null)"
+    [[ -n "$image" ]] || return 1
+    printf '%s %s' "$cid" "$image"
+}
+first="$(canary_state)" || fail "cannot read the canary container before scenario 2"
 since="$(now)"
 sleep 1
 evidence="$(now)"
 sleep 1
-echo "==> 4/5 already red: the check after that clean rollback ended red at $evidence; $GOOD deploys again"
-deploy "$GOOD" again
+echo "==> 4/5 already red: the check after that clean rollback ended red at $evidence; $GOOD deploys again in a new container"
+# Forced: the canary already runs $GOOD, and a deploy that replaces nothing
+# records no serving time, so without it the scenario would not prove a
+# container that started after the evidence.
+deploy "$GOOD" again --force-recreate
 (( DEPLOY_RC == 0 )) || fail "the good image $GOOD did not deploy again (exit $DEPLOY_RC)"
-canary_state() {
-    local cid
-    cid="$("$DOCKER" compose ps -q "$SERVICE" 2>/dev/null | head -n1)"
-    printf '%s %s' "$cid" "$([[ -z "$cid" ]] || "$DOCKER" inspect --format '{{.Image}}' "$cid" 2>/dev/null)"
-}
-before="$(canary_state)"
+before="$(canary_state)" || fail "cannot read the canary container after the second deploy"
+[[ "${before%% *}" != "${first%% *}" ]] \
+    || fail "the second deploy did not replace the canary container (still ${first%% *})"
 
 echo "==> 5/5 a rehearsal round with that evidence must end e2e_already_red and leave the canary alone"
 KLAI_DEPLOY_REPORTS="$WORK/reports" "$ROLLBACK_SINCE" "$since" --until "$(now)" --red-after "$evidence" --rehearse 2>&1 \
@@ -157,7 +169,7 @@ case "$blocked_rc" in
 esac
 grep '^ROLLBACK_REPORT ' "$WORK/blocked.out" | grep -q '"outcome":"e2e_already_red"' \
     || fail "exit 5 but no ROLLBACK_REPORT line with outcome e2e_already_red"
-after="$(canary_state)"
+after="$(canary_state)" || fail "cannot read the canary container after the blocked round"
 [[ "$after" == "$before" ]] || fail "the blocked round changed the canary (container and image '$before' before, '$after' after)"
 
 ts="$(now)"

@@ -11,7 +11,8 @@ name: Rollback rehearsal
 # good one answers again within 5 minutes. A second scenario proves the
 # already-red block of auto-rollback.yml on the same canary: taking the moment
 # after that clean rollback as a red post-rollback E2E run, it deploys the good
-# image again and runs rollback-since.sh --rehearse with that moment as
+# image again into a new container (forced recreate, the id must change) and
+# runs rollback-since.sh --rehearse with that moment as
 # --red-after, which must end e2e_already_red without touching the canary; a
 # round that rolls the canary back instead ends this run red. Only the canary
 # is weighed and the report goes to a scratch directory, so neither real

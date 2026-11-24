@@ -224,6 +224,36 @@ set +e; KLAI_COMPOSE_DIR="$case_dir" bash "$case_dir/driver.sh" > "$case_dir/out
 check "not_started -> exit 4" 4 "$rc"
 check "  no serving time" "" "$(serving_last)"
 
+# A sync that replaced no running container started no new version: no serving
+# time. docker is a stub that lists fixtures/containers; the driver changes
+# that list between the first file and the end when a container is replaced.
+cat > "$work/docker" <<'STUB'
+#!/usr/bin/env bash
+[[ "$1 ${*: -2}" == "compose ps -q" ]] || { echo "stub: unexpected docker args: $*" >&2; exit 90; }
+cat "$KLAI_COMPOSE_DIR/fixtures/containers"
+STUB
+chmod +x "$work/docker"
+# serving_case <name> <containers at the first file> <containers at the end>
+serving_case() {
+    new_case "$1"
+    printf '%s' "$2" > "$case_dir/fixtures/containers"
+    cat > "$case_dir/driver.sh" <<DRIVER
+source "$helper"
+rb_init bbb222
+rb_keep "\$KLAI_COMPOSE_DIR/caddy/Caddyfile"
+printf '%s' "$3" > "\$KLAI_COMPOSE_DIR/fixtures/containers"
+rb_deployed
+DRIVER
+    set +e; KLAI_COMPOSE_DIR="$case_dir" KLAI_DOCKER_BIN="$work/docker" bash "$case_dir/driver.sh" > "$case_dir/out" 2>&1; rc=$?; set -e
+}
+serving_case serving_unchanged $'c1\nc2\n' $'c2\nc1\n'
+check "no container replaced -> exit 0" 0 "$rc"
+check "  no serving time" "" "$(serving_last)"
+serving_case serving_replaced $'c1\nc2\n' $'c1\nc3\n'
+check "a container replaced -> serving time" 1 "$(serving_last | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$')"
+serving_case serving_unlisted '' ''
+check "containers could not be listed -> the stamp stays" 1 "$(serving_last | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$')"
+
 # R6: when the restored state is red as well there is no second round.
 new_case one_attempt
 : > "$case_dir/fixtures/sweep_always_red"

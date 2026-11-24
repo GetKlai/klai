@@ -9,14 +9,13 @@
 #   rollback-since.sh <since-ts> --until <until-ts> [--red-after <ts>] [--rehearse]
 #
 #   <since-ts>   start of the last green run's job
-#   --until      end of the window. auto-rollback.yml passes the moment its
-#                replay starts, so a deploy that landed while the confirmation
-#                run ran (neither red run tested it) is rolled back with the
-#                rest instead of staying live outside every window; a deploy
-#                after it is left alone
+#   --until      creation time of the red run; a deploy after it was not what
+#                that run saw, so it is left alone here and falls in the next
+#                round's window (R6 below)
 #   --red-after  completion time of the newest E2E run an earlier round of
 #                auto-rollback.yml started after a rollback in which every
-#                planned rollback succeeded, when that run failed and no green
+#                planned rollback succeeded and none was skipped (outcome
+#                rolled_back), when that run failed and no green
 #                run came after it (outcome e2e_already_red, below). A value
 #                that is not a timestamp is ignored, so the run rolls back as
 #                it would without it
@@ -60,14 +59,19 @@
 # deploys is the system's own experiment: an earlier round rolled back and the
 # E2E run it started afterwards was red too (--red-after). Then a round changes
 # nothing and ends e2e_already_red, but only when that evidence is newer than
-# the last replay (R6 below) and every deploy left in the window began to serve
-# after the evidence completed: its serving time (eighth ledger column) is
-# later, or, for a line written before that column existed, its ledger time is
-# later than the evidence plus SERVING_MARGIN. Anything else rolls back.
+# the last replay (R6 below) and every deploy since that replay's window ended,
+# in this window or after it, began to serve after the evidence completed: its
+# serving time (eighth ledger column) is later, or, for a line without one,
+# its ledger time minus SERVING_MARGIN is. Anything else rolls back. This is
+# decided here, not in e2e-rollback-evidence.sh, because only this script has
+# the ledger and the previous window's end, and it already receives the
+# evidence time; the runner side passes one timestamp as before.
 #
 # Exit codes
 #   0  nothing to roll back; nothing changed
 #   3  every service found was rolled back                     (rolled_back)
+#      or rolled back, with at least one skipped because a
+#      later deploy of it is live                              (rolled_back_partial)
 #   4  at least one rollback failed or could not be attempted,
 #      or the ledger is missing                                (rollback_failed)
 #   5  E2E was red after an earlier rollback, before every
@@ -215,26 +219,36 @@ PLAN="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" '
 
 # GNU date on core-01 and in CI, BSD date on a Mac.
 epoch() { date -u -d "$1" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$1" +%s; }
-# Every deploy this run would weigh, as "<ledger time> <serving time or
-# empty>": the canary never on a real run, and only the canary on a rehearsal,
-# the same split as the replay below. Each one is checked, not only the
-# oldest, because a slow sync can finish after a deploy that started serving
-# later than it.
+# Every deploy this run weighs, as "<ledger time> <serving time or -> <1 when
+# in the window>" (a placeholder, because read collapses adjacent tabs): the canary never on a real run, and only the canary
+# on a rehearsal, the same split as the replay below. Also the deploys after
+# the window: the evidence is the E2E run an earlier round started after its
+# replay, and that round's window ended at its red run's creation (the
+# .e2e-rollback-at this run starts after), so a deploy that landed after that
+# end and began to serve before the evidence completed could have made that
+# run red. It is in this window or, when its line came after --until, in a
+# later one; either way the evidence is not proof that E2E is red on its own.
+# Each line is checked, not only the oldest, because a slow sync can finish
+# after a deploy that started serving later than it.
 WEIGHED="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" -v canary="$CANARY" -v rehearse="$REHEARSE" '
-    $1 > after && $1 <= until && $7 == "deployed" && ($2 == "image" || $2 == "compose") && (($3 == canary) == (rehearse == 1)) { print $1 "\t" $8 }
+    $1 > after && $7 == "deployed" && ($2 == "image" || $2 == "compose") && (($3 == canary) == (rehearse == 1)) { print $1 "\t" ($8 == "" ? "-" : $8) "\t" ($1 <= until) }
 ' "$LEDGER")"
-# 0 when every weighed deploy began to serve after the evidence completed, so
-# none of them can have made that E2E run red.
+# 0 when the window holds a deploy and every weighed deploy began to serve
+# after the evidence completed, so none of them can have made that E2E run red.
+# A line without a serving time counts as serving from its ledger time minus
+# SERVING_MARGIN.
 serving_after_evidence() {
-    local ts serving
-    [[ -n "$WEIGHED" ]] || return 1
-    while IFS=$'\t' read -r ts serving; do
+    local ts serving inside any=0
+    while IFS=$'\t' read -r ts serving inside; do
+        [[ -n "$ts" ]] || continue
+        [[ "$inside" != 1 ]] || any=1
         if [[ "$serving" =~ $TS_RE ]]; then
             [[ "$serving" > "$RED_AFTER" ]] || return 1
         else
-            (( $(epoch "$ts") > $(epoch "$RED_AFTER") + SERVING_MARGIN )) || return 1
+            (( $(epoch "$ts") - SERVING_MARGIN > $(epoch "$RED_AFTER") )) || return 1
         fi
     done <<< "$WEIGHED"
+    (( any ))
 }
 if [[ -n "$RED_AFTER" && "$RED_AFTER" > "$AFTER" ]] && serving_after_evidence; then
     while IFS=$'\t' read -r _ts _kind svc _from to commit _n; do
@@ -336,4 +350,7 @@ fi
 
 echo "==> $DONE service(s), $FAILED failed"
 if (( FAILED > 0 )); then finish rollback_failed e2e 4; fi
+# A skipped service still runs a newer version, so the E2E run after this
+# round does not test the state of the last green run: not a clean experiment.
+if [[ -n "$SKIPPED" ]]; then finish rolled_back_partial e2e 3; fi
 finish rolled_back e2e 3

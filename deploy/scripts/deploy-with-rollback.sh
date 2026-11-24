@@ -7,7 +7,7 @@
 # Usage:
 #   deploy-with-rollback.sh <compose-service> <image-ref-with-sha>
 #                           [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]
-#                           [--error-watch <seconds>]
+#                           [--error-watch <seconds>] [--force-recreate]
 #   deploy-with-rollback.sh <compose-service> <local-image-id> --rollback <gate>
 #                           [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]
 #
@@ -30,6 +30,10 @@
 #                         by the same number of seconds so a queued deploy of
 #                         the same service waits instead of failing. The helper
 #                         must exist and be executable, or nothing is deployed.
+#   --force-recreate      recreate the container even when compose would leave
+#                         it alone (same image and definition). The rollback
+#                         rehearsal uses it so its second scenario deploys a
+#                         container that started after its evidence.
 #   --rollback <gate>     the deploy already finished and <gate> went red later
 #                         (rollback-since.sh, gate e2e). <local-image-id> is the
 #                         ledger's `from` of that deploy; it is put back without a
@@ -75,8 +79,12 @@
 # the workflows), while the new container has served since its recreate. The
 # eighth column is the moment just before that recreate, so
 # rollback-since.sh can tell whether a deploy was already serving while an E2E
-# run went red; it is empty when nothing was recreated. Readers that split on
-# tabs and use the first seven columns are unaffected by it.
+# run went red. It is empty when the container was not replaced (compose
+# found nothing to change, or the run stopped before compose-up): then no new
+# version began to serve, and rollback-since.sh falls back to its margin rule
+# for the line. The line itself stays, because readers count every deployed
+# line (the from of the oldest one is what a replay goes back to). Readers
+# that split on tabs and use the first seven columns are unaffected.
 
 set -uo pipefail
 
@@ -102,7 +110,7 @@ ERROR_WATCH_BIN="${KLAI_ERROR_WATCH:-$KLAI_DIR/scripts/post-deploy-error-watch.s
 CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
 
 usage() {
-    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--probe-network <net>] [--compose-tag <tag>] [--error-watch <seconds>] | <compose-service> <local-image-id> --rollback <gate> [--probe <url>] [--probe-network <net>]" >&2
+    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--probe-network <net>] [--compose-tag <tag>] [--error-watch <seconds>] [--force-recreate] | <compose-service> <local-image-id> --rollback <gate> [--probe <url>] [--probe-network <net>]" >&2
     exit 1
 }
 
@@ -113,6 +121,7 @@ shift 2
 PROBE_URL=""
 COMPOSE_TAG=""
 ERROR_WATCH=0
+RECREATE=()
 ROLLBACK_GATE=""
 while (( $# > 0 )); do
     case "$1" in
@@ -120,6 +129,7 @@ while (( $# > 0 )); do
         --probe-network) (( $# >= 2 )) || usage; PROBE_NETWORK="$2"; shift 2 ;;
         --compose-tag) (( $# >= 2 )) || usage; COMPOSE_TAG="$2"; shift 2 ;;
         --error-watch) (( $# >= 2 )) || usage; ERROR_WATCH="$2"; shift 2 ;;
+        --force-recreate) RECREATE=(--force-recreate); shift ;;
         --rollback)    (( $# >= 2 )) || usage; ROLLBACK_GATE="$2"; shift 2 ;;
         *) usage ;;
     esac
@@ -163,9 +173,11 @@ short_id() { local id="${1#sha256:}"; printf '%s' "${id:0:12}"; }
 
 json_str() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
+running_cid() { "$DOCKER" compose ps -q "$SERVICE" 2>/dev/null | head -n1; }
+
 running_image_id() {
     local cid
-    cid="$("$DOCKER" compose ps -q "$SERVICE" 2>/dev/null | head -n1)"
+    cid="$(running_cid)"
     [[ -n "$cid" ]] || return 0
     "$DOCKER" inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
 }
@@ -189,11 +201,20 @@ probe() {
 # Both gates for one attempt. Sets GATE to the red one; 0 = green.
 GATE=""
 run_gates() {
-    local flags=("$@")
+    local flags=("$@") before at
+    before="$(running_cid)"
+    at="$(now)"
     # tee keeps the compose-up output readable in the Actions log and also on
     # disk for the report. PIPESTATUS, not $?, so the pipe cannot hide a failure.
     "$COMPOSE_UP" --no-pull "${flags[@]}" "$SERVICE" 2>&1 | tee "$WORK/compose-up.out"
-    if (( PIPESTATUS[0] != 0 )); then GATE="compose-up"; return 1; fi
+    local rc="${PIPESTATUS[0]}"
+    # The serving time of the first attempt that replaced the container. compose
+    # leaves a container with the same image and definition alone, and then
+    # the version that serves is the one that already ran: no new serving time.
+    # An empty listing on either side counts as a replacement, the earlier and
+    # so safer guess.
+    if [[ -z "$SERVING" && ( -z "$before" || "$(running_cid)" != "$before" ) ]]; then SERVING="$at"; fi
+    if (( rc != 0 )); then GATE="compose-up"; return 1; fi
     if [[ -n "$PROBE_URL" ]] && ! probe "$PROBE_URL"; then GATE="probe"; return 1; fi
     return 0
 }
@@ -281,7 +302,6 @@ if [[ -n "$ROLLBACK_GATE" ]]; then
         OUTCOME="rollback_failed"
         finish 4
     fi
-    SERVING="$(now)"
     if "$DOCKER" tag "$IMAGE_REF" "$COMPOSE_TAG" && run_gates --force-recreate; then
         echo "::error::$SERVICE rolled back to $FROM after gate '$ROLLBACK_GATE' went red on $TO"
         OUTCOME="rolled_back"
@@ -327,8 +347,7 @@ fi
 echo "==> recreating $SERVICE"
 # Errors while the new container starts count, so the watch starts here.
 WATCH_FROM="$(now)"
-SERVING="$WATCH_FROM"
-if run_gates; then
+if run_gates "${RECREATE[@]}"; then
     # --- gate 4: error rate since the deploy ----------------------------------
     watch_rc=0
     if (( ERROR_WATCH > 0 )); then

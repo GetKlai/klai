@@ -56,6 +56,8 @@ printf '%s\n' "$*" >> "$fx/compose_up_argv"
 n=$(wc -l < "$fx/compose_up_argv")
 rc=$(sed -n "${n}p" "$fx/compose_up_rcs"); [[ -n "$rc" ]] || rc=$(tail -n1 "$fx/compose_up_rcs")
 [[ ! -e "$fx/compose_sleep" ]] || sleep 2
+# compose replaces the container unless no_recreate says it found nothing to change.
+[[ -e "$fx/no_recreate" ]] || echo "newcontainer$n" > "$fx/running_cid"
 echo "compose-up stub call $n rc=$rc"
 exit "$rc"
 STUB
@@ -193,10 +195,33 @@ check "exit 0" test "$rc" = 0
 check "helper called once with service, deploy time and window" grep -Eqx 'retrieval-api [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z --window 300' "$fx/watch_argv"
 check "the watch starts when the recreate starts, not after the gates" test "$(( $(cat "$fx/watch_ran_at") - $(date -u -d "$(awk '{print $2}' "$fx/watch_argv")" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$(awk '{print $2}' "$fx/watch_argv")" +%s) ))" -ge 2
 check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
-check "ledger serving time (column 8) is the recreate, the time the watch counts from" \
-    test "$(awk -F'\t' 'END { print $8 }' "$ledger")" = "$(awk '{print $2}' "$fx/watch_argv")"
+check "ledger serving time (column 8) is the recreate: not before the time the watch counts from" \
+    test "$(awk -F'\t' -v w="$(awk '{print $2}' "$fx/watch_argv")" 'END { print ($8 >= w) }' "$ledger")" = 1
 check "and earlier than the finish time in column 1, which comes after the 2 s recreate" \
     test "$(awk -F'\t' 'END { print ($8 < $1) }' "$ledger")" = 1
+
+echo "# compose leaves the container alone (same image and definition): no new serving time"
+new_case norecreate "0" "200"
+touch "$fx/no_recreate"
+run_script --probe http://retrieval-api:8040/health
+check "exit 0" test "$rc" = 0
+check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
+check "no serving time, so the margin rule applies" test -z "$(awk -F'\t' 'END { print $8 }' "$ledger")"
+
+echo "# the container cannot be listed before or after: counted as replaced, the earlier guess"
+new_case unlisted "0" "200"
+touch "$fx/no_recreate"
+rm "$fx/running_cid"
+run_script
+check "exit 0" test "$rc" = 0
+check "serving time written" grep -qE $'\tdeployed\t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' "$ledger"
+
+echo "# --force-recreate: passed to compose-up, and the replaced container gets a serving time"
+new_case forced "0" "200"
+run_script --force-recreate
+check "exit 0" test "$rc" = 0
+check "compose-up forced" has_line "$fx/compose_up_argv" "--no-pull --force-recreate retrieval-api"
+check "serving time written" grep -qE $'\tdeployed\t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' "$ledger"
 
 echo "# gate 4: the helper is missing -> nothing is deployed"
 new_case watchmissing "0" "200"

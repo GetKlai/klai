@@ -40,14 +40,15 @@ echo '{"path":".github/workflows/auto-rollback.yml"}' > "$tmp/run-900.json"
 echo '{"path":".github/workflows/portal-api.yml"}' > "$tmp/run-901.json"
 echo '{"jobs":[{"completed_at":"2026-10-28T06:08:00Z"},{"completed_at":"2026-10-28T06:10:00Z"}]}' > "$tmp/jobs.json"
 
-# run <created> <id> <conclusion> <actor> <title>
-run() { jq -n --arg c "$1" --argjson id "$2" --arg k "$3" --arg a "$4" --arg t "$5" \
-  '{created_at: $c, id: $id, status: "completed", conclusion: $k, event: "workflow_dispatch", head_branch: "main", triggering_actor: {login: $a}, display_title: $t}'; }
+# run <created> <id> <conclusion> <actor> <title> [status, default completed]
+run() { jq -n --arg c "$1" --argjson id "$2" --arg k "$3" --arg a "$4" --arg t "$5" --arg s "${6:-completed}" \
+  '{created_at: $c, id: $id, status: $s, conclusion: (if $k == "" then null else $k end), event: "workflow_dispatch", head_branch: "main", triggering_actor: {login: $a}, display_title: $t}'; }
 runs() { jq -s '{workflow_runs: .}' > "$tmp/runs.json"; }
 BOT="github-actions[bot]"
 AFTER="E2E prod-tenant: after a clean rollback by auto-rollback run"
 FAILED="E2E prod-tenant: after a failed rollback by auto-rollback run"
 LEGACY="E2E prod-tenant: after rollback by auto-rollback run"
+PARTIAL="E2E prod-tenant: after a partial rollback by auto-rollback run"
 
 evidence() { out=$(STUB_DIR="$tmp" PATH="$tmp/bin:$PATH" bash "$target" GetKlai/klai "$GREEN" 2>"$tmp/err"); rc=$?; }
 check() {
@@ -72,6 +73,25 @@ echo "# a red run named before clean and failed rollbacks were told apart is no 
 evidence
 check "nothing printed, exit 0" test -z "$out" -a "$rc" = 0
 check "says why" grep -q 'not clean (unknown)' "$tmp/err"
+
+echo "# the newest post-rollback run followed a partial rollback (a service skipped): no evidence"
+{ run 2026-10-28T06:05:00Z 11 failure "$BOT" "$AFTER 900"; run 2026-10-28T07:05:00Z 19 failure "$BOT" "$PARTIAL 900"; } | runs
+evidence
+check "nothing printed, exit 0" test -z "$out" -a "$rc" = 0
+check "says why" grep -q 'not clean (partial)' "$tmp/err"
+
+echo "# a later round's post-rollback run is still running: no evidence yet, even with an older clean red one"
+for state in queued in_progress; do
+  { run 2026-10-28T06:05:00Z 11 failure "$BOT" "$AFTER 900"; run 2026-10-28T07:05:00Z 20 "" "$BOT" "$AFTER 900" "$state"; } | runs
+  evidence
+  check "$state: nothing printed, exit 0" test -z "$out" -a "$rc" = 0
+  check "$state: says why" grep -q "run 20 is $state: no evidence yet" "$tmp/err"
+done
+
+echo "# the newest post-rollback run is green: no evidence"
+{ run 2026-10-28T06:05:00Z 11 failure "$BOT" "$AFTER 900"; run 2026-10-28T07:05:00Z 21 success "$BOT" "$AFTER 900"; } | runs
+evidence
+check "nothing printed" test -z "$out"
 
 echo "# the newest post-rollback run was cancelled: no evidence, even with an older red one"
 { run 2026-10-28T06:05:00Z 11 failure "$BOT" "$AFTER 900"; run 2026-10-28T07:05:00Z 12 cancelled "$BOT" "$AFTER 900"; } | runs

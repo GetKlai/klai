@@ -347,23 +347,71 @@ run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
 check "exit 5" test "$rc" = 5
 check "report names Y, not the canary" test "$(report service)" = klai-mailer
 
-# Confirmation window. Red run created 07:30; W landed at 07:40 while the
-# confirmation ran; the replay starts at 07:50.
-w_line="$(line 2026-10-28T07:40:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed 2026-10-28T07:35:00Z)"
-echo "# (l) auto-rollback.yml ends the window at the replay start: W is rolled back with Y"
-new_case seq-l "$(y_at 2026-10-28T07:00:00Z)" "$w_line"
-run "$SINCE" --until 2026-10-28T07:50:00Z
-check "exit 3" test "$rc" = 3
-check "Y and W rolled back" test "$(deploys | cut -d' ' -f1 | sort | paste -sd' ' -)" = "klai-mailer scribe-api"
-echo "# (l') a window ending at the red run's creation (an older workflow): the next window starts there, so W is in it"
-new_case seq-l2 "$(y_at 2026-10-28T07:00:00Z)" "$w_line"
+# Confirmation window. Y deployed 07:00; the red run is created at 07:30 and
+# the window ends there; W begins to serve at 07:40 while the confirmation
+# runs (ledger line 07:45); the replay starts at 07:50; its post-rollback run
+# completes red at 08:00. Z deploys after that (serving 08:10, line 08:20) and
+# a later red run is created at 08:30.
+w_line="$(line 2026-10-28T07:45:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed 2026-10-28T07:40:00Z)"
+z_line="$(line 2026-10-28T08:20:00Z image klai-connector kkkkkkkkkkk1 ghcr.io/getklai/klai-connector:s6 s6 deployed 2026-10-28T08:10:00Z)"
+# round1 <case> <lines...>: the first round, which ends its window at the red run.
+round1() {
+    new_case "$@"
+    run "$SINCE" --until 2026-10-28T07:30:00Z
+    check "round 1: Y rolled back, W left for the next window, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 klai-mailer"
+    check "round 1: replay mark is the window's end" test "$(cat "$d/.e2e-rollback-at")" = 2026-10-28T07:30:00Z
+    : > "$d/fixtures/deploys"
+}
+echo "# (l) W served during the post-rollback run: the evidence is no proof, the later round rolls back W and Z"
+round1 seq-l "$(y_at 2026-10-28T07:00:00Z)" "$w_line" "$z_line"
+run "$SINCE" --until 2026-10-28T08:30:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: exit 3" test "$rc" = 3
+check "later round: W and Z rolled back" test "$(deploys | cut -d' ' -f1 | sort | paste -sd' ' -)" = "klai-connector scribe-api"
+echo "# (l2) the same without W: the later round is blocked"
+round1 seq-l2 "$(y_at 2026-10-28T07:00:00Z)" "$z_line"
+run "$SINCE" --until 2026-10-28T08:30:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: blocked, exit 5" test "$rc" = 5
+check "later round: nothing rolled back" test ! -s "$d/fixtures/deploys"
+echo "# (l3) W's line comes after the later round's window (a slow rollout): the evidence is still no proof"
+round1 seq-l3 "$(y_at 2026-10-28T07:00:00Z)" "$z_line" \
+    "$(line 2026-10-28T08:40:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed 2026-10-28T07:40:00Z)"
+run "$SINCE" --until 2026-10-28T08:30:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: not blocked, Z rolled back, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 klai-connector"
+echo "# (l4) the same with a legacy W line (no serving time): ledger time minus the margin is before the evidence"
+z_early="$(line 2026-10-28T08:05:00Z image klai-connector kkkkkkkkkkk1 ghcr.io/getklai/klai-connector:s6 s6 deployed 2026-10-28T08:02:00Z)"
+round1 seq-l4 "$(y_at 2026-10-28T07:00:00Z)" "$z_early" \
+    "$(line 2026-10-28T08:14:59Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed)"
+run "$SINCE" --until 2026-10-28T08:10:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: not blocked, Z rolled back, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 klai-connector"
+echo "# (l5) one second later the legacy W line counts as serving after the evidence: blocked"
+round1 seq-l5 "$(y_at 2026-10-28T07:00:00Z)" "$z_early" \
+    "$(line 2026-10-28T08:15:01Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed)"
+run "$SINCE" --until 2026-10-28T08:10:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: exit 5" test "$rc" = 5
+echo "# (m) W lands and the post-rollback run is green (its job started 07:52): the next red round has nothing to do"
+round1 seq-m "$(y_at 2026-10-28T07:00:00Z)" "$w_line"
+run 2026-10-28T07:52:00Z --until 2026-10-28T08:30:00Z
+check "next round: exit 0, nothing rolled back" test "$rc $(wc -l < "$d/fixtures/deploys" | tr -d ' ')" = "0 0"
+echo "# (p) nothing in the window, only a deploy after it that served after the evidence: nothing to block or roll back"
+round1 seq-p "$(y_at 2026-10-28T07:00:00Z)" "$z_line"
+run "$SINCE" --until 2026-10-28T08:15:00Z --red-after 2026-10-28T08:00:00Z
+check "exit 0" test "$rc" = 0
+echo "# (o) two compose syncs, one before the red run and one during the confirmation: no rollback_failed"
+new_case seq-o "$(y_at 2026-10-28T07:00:00Z)" \
+    "$(line 2026-10-28T07:05:00Z compose compose aaa111 bbb222 bbb222 deployed 2026-10-28T07:02:00Z)" \
+    "$(line 2026-10-28T07:45:00Z compose compose bbb222 ccc333 ccc333 deployed 2026-10-28T07:40:00Z)"
 run "$SINCE" --until 2026-10-28T07:30:00Z
-check "round 1 rolls back Y, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 klai-mailer"
-check "replay mark is the window's end, not the replay's start" test "$(cat "$d/.e2e-rollback-at")" = 2026-10-28T07:30:00Z
-: > "$d/fixtures/deploys"
-# Round 1's post-rollback run went red at 07:58 with W serving since 07:35.
-run "$SINCE" --until 2026-10-28T08:30:00Z --red-after 2026-10-28T07:58:00Z
-check "round 2: W served during that run, so it is rolled back, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 scribe-api"
+check "exit 3, not 4" test "$rc" = 3
+check "Y rolled back; the first sync is skipped because the second one is live" \
+    test "$(deploys | cut -d' ' -f1) $(report skipped)" = "klai-mailer compose=e2e-newer-deploy-running"
+check "the files of the live sync stay" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
+check "outcome rolled_back_partial, so the post-rollback run is not named clean" test "$(report outcome)" = rolled_back_partial
+echo "# (o2) a window that also held the second sync would end rollback_failed (several syncs)"
+new_case seq-o2 "$(y_at 2026-10-28T07:00:00Z)" \
+    "$(line 2026-10-28T07:05:00Z compose compose aaa111 bbb222 bbb222 deployed 2026-10-28T07:02:00Z)" \
+    "$(line 2026-10-28T07:45:00Z compose compose bbb222 ccc333 ccc333 deployed 2026-10-28T07:40:00Z)"
+run "$SINCE" --until 2026-10-28T07:50:00Z
+check "exit 4" test "$rc" = 4
 
 # Rehearsal of the blocked path (rollback-rehearsal-assert.sh scenario 2): with
 # --rehearse the decision weighs the canary only, as the replay does.

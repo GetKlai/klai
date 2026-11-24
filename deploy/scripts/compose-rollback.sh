@@ -28,7 +28,9 @@
 # began its restore. A sync writes its ledger line after all of its gates,
 # which took up to 682 s on the last 40 green runs (2026-11-24) and longer with
 # a data store dump and restore, while the first recreated services served
-# from the start of that.
+# from the start of that. When no running container of the stack was replaced
+# by the time the line is written, the column stays empty: the sync started
+# no new version, and only its ledger time (the margin rule) is left.
 #
 # A rollback_failed run leaves $RB_DIR/.compose-rollback-failed (commit and
 # gate). While it exists the files on the host are a state nobody verified, so
@@ -82,12 +84,23 @@ RB_FROM="none"
 RB_TO=""
 RB_LOG=""
 RB_SERVING=""
+# The running containers of the stack when RB_SERVING was stamped.
+RB_RUNNING=""
+RB_DOCKER="${KLAI_DOCKER_BIN:-docker}"
 
 # shellcheck source=deploy/scripts/datastore-rollback.sh
 source "$(dirname "${BASH_SOURCE[0]}")/datastore-rollback.sh"
 
 rb_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 rb_json() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+
+# One container id per line, sorted; empty when they cannot be listed.
+rb_running() { "$RB_DOCKER" compose --project-directory "$RB_DIR" ps -q 2>/dev/null | sort; }
+rb_mark_serving() {
+  [[ -z "$RB_SERVING" ]] || return 0
+  RB_RUNNING="$(rb_running)"
+  RB_SERVING="$(rb_now)"
+}
 
 rb_init() {
   RB_TO="$1"
@@ -107,7 +120,7 @@ rb_init() {
 # that is still current.
 rb_keep() {
   local f
-  [[ -n "$RB_SERVING" ]] || RB_SERVING="$(rb_now)"
+  rb_mark_serving
   for f in "$@"; do
     # A path this run creates has nothing to copy; a restore removes it again.
     if [[ ! -e "$f" ]]; then RB_NEW+=("$f"); continue; fi
@@ -121,7 +134,7 @@ rb_touched() { RB_TOUCHED+=("$@"); }
 
 rb_restore() {
   local f rc=0
-  [[ -n "$RB_SERVING" ]] || RB_SERVING="$(rb_now)"
+  rb_mark_serving
   for f in "${RB_NEW[@]}"; do rm -rf "$f" || rc=1; done
   for f in "${RB_KEPT[@]}"; do
     if [[ -d "$f.prev" ]]; then
@@ -175,6 +188,11 @@ rb_recreate() {
 rb_finish() {
   local service="$1" gate="$2" outcome="$3" ts report event code=0
   ts="$(rb_now)"
+  # A run that replaced no running container started no new version: the
+  # same containers as at the stamp means no serving time (the margin rule
+  # applies to the line). A listing that failed or came back empty keeps the
+  # stamp, the earlier and so safer guess.
+  if [[ -n "$RB_RUNNING" && "$(rb_running)" == "$RB_RUNNING" ]]; then RB_SERVING=""; fi
   mkdir -p "$RB_REPORT_DIR"
   if [[ ! -e "$RB_LEDGER" ]]; then
     : >> "$RB_LEDGER" && chmod 0644 "$RB_LEDGER"

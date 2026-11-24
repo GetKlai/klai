@@ -45,17 +45,21 @@ In VictoriaLogs:
 ## E2E was already red, nothing rolled back
 
 Auto-rollback (`auto-rollback.yml`) undoes what was deployed between the last
-green E2E prod-tenant run and the moment its replay starts, once a red run is
+green E2E prod-tenant run and the creation of a red run, once that red run is
 confirmed by a second one. It then starts one more E2E run, named "after a
 clean rollback by auto-rollback run <id>" when every planned rollback
-succeeded and "after a failed rollback by ..." when one did not. When a run
-after a clean rollback is red too, E2E is red for a reason the rollback did
-not touch. Until a green run completes, a later round blocks itself when
-every deploy in its window began to serve after that red run completed. It
+succeeded and none was skipped, "after a partial rollback by ..." when a
+service was skipped because a newer version of it is live (outcome
+`rolled_back_partial`, issue label `auto-rollback`), and "after a failed
+rollback by ..." otherwise. When a run after a clean rollback is red too, E2E
+is red for a reason the rollback did not touch. Until a green run completes,
+a later round blocks itself when every deploy since the end of that round's
+window began to serve after that red run completed. It
 rolls nothing back and ends red with outcome `e2e_already_red`, and its issue
 (`CI failure: Auto-rollback`) gets the label `e2e-already-red` and names the
 red run. A deploy that was serving while that run ran, a post-rollback run
-that was cancelled or is missing, a run after a failed rollback, a red run
+that was cancelled or is missing, a newer one that has not completed yet, a
+run after a partial or failed rollback, a red run
 somebody started by hand, or a lookup that failed: the round rolls back as
 before. From 2026-11-19 to 2026-11-22 an identity-provider setting kept the
 login journey red, and without this every deploy in those days was rolled
@@ -68,26 +72,33 @@ restore). Since 2026-11-24 each line carries an eighth column with the moment
 the new version started: `deploy-with-rollback.sh` writes the time just before
 the recreate, `compose-rollback.sh` the time just before the sync replaces its
 first file on the host (before the compose files are swapped and before any
-data store cutover). The round compares the evidence with that column. A line
-written before the column existed has no serving time, and for it the old
-15-minute margin after the ledger time still decides; those lines age out of
-every window at the next green run.
+data store cutover). Both leave it empty when no running container was
+replaced (compose found nothing to change), because then no new version began
+to serve. The round compares the evidence with that column. A line without a
+serving time (written before the column existed, or a deploy that replaced
+nothing) counts as serving from its ledger time minus 15 minutes.
 
 Three rules close the gaps the first version left:
 
 - Serving time, as above: a slow rollout, such as a data store major, no
   longer escapes the decision because its ledger line came late.
-- Only a clean experiment is evidence. After a failed rollback the deploy that
-  broke E2E can still be live, so its red post-rollback run would otherwise
-  block every later round and leave that deploy in place. A person sees the
-  post-rollback run named "after a failed rollback", and the issue labelled
-  `rollback-failed`.
-- The window ends at the replay. A deploy that landed during the 25 minutes of
-  the confirmation run was tested by neither red run; it is now rolled back
-  with the rest instead of falling between this window and the next (the next
-  round's window starts exactly where this one ended). Such a deploy may have
-  been fine; rolling it back is the old behaviour's side, and its
-  next merge or redeploy brings it back.
+- Only a clean experiment is evidence. After a failed or partial rollback a
+  deploy that broke E2E can still be live, so its red post-rollback run would
+  otherwise block every later round and leave that deploy in place. A person
+  sees the post-rollback run named "after a failed rollback" or "after a
+  partial rollback", and the issue labelled `rollback-failed` or
+  `auto-rollback` with the skipped service listed.
+- A deploy that lands while the red run and its confirmation run is not rolled
+  back by that round: the red run was created before it, and the confirmation
+  may or may not have tested it. It falls in the next round's window, which
+  starts exactly where this one ended (the red run's creation), and a later
+  red run judges it. If it began to serve before the post-rollback run of this
+  round completed, it could be the reason that run is red, so that run is no
+  evidence for the later round, which then rolls back as before, this deploy
+  included. Rolling it back in this round instead would undo deploys no red
+  run had to test (13 of 41 confirmation runs from 10 to 24 November 2026 had
+  a deploy landing during them), and a second compose sync in the window
+  turns a clean rollback into `rollback_failed`.
 
 What to do:
 
@@ -106,7 +117,8 @@ What to do:
 
 The blocked path is rehearsed every week on the `rollback-canary` service
 (`rollback-rehearsal.yml`, scenario 2 in `rollback-rehearsal-assert.sh`): after
-its clean rollback the canary is deployed again, and `rollback-since.sh
+its clean rollback the canary is deployed again into a new container (forced
+recreate; the rehearsal checks that the container id changed), and `rollback-since.sh
 --rehearse` with that moment as evidence has to end `e2e_already_red` without
 touching the canary. A round that rolls the canary back instead turns the
 rehearsal red. It weighs the canary only and writes its report to a scratch
@@ -132,6 +144,10 @@ What stays uncovered:
   sync's data store change. Nor is anything deployed outside the ledger (by
   hand, from the private infra repository, or by a workflow that does not go
   through these two scripts).
+- A deploy that lands during a confirmation run and breaks something stays
+  live until a later red run starts a round with it in the window; the
+  post-rollback run of the first round is then red and named, but rolls
+  nothing back by itself.
 - Host and runner clocks are compared to the second (both follow NTP). A
   deploy that starts serving in the same second as the evidence completes
   counts as serving during it, which rolls back.
