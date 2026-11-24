@@ -732,8 +732,10 @@ class TestBootstrapLatency:
         m.taxonomy_consolidate_target_max = 9
         return m
 
-    async def _warm_cpu_seconds(self, llm, mock_settings, n_docs: int, repeats: int) -> float:
-        """Smallest CPU time of ``repeats`` bootstraps, after one untimed run.
+    async def _warm_cpu_seconds(
+        self, llm, mock_settings, n_docs: int, repeats: int
+    ) -> tuple[float, float]:
+        """(smallest CPU time of ``repeats`` bootstraps after one untimed run, elapsed time of all of them).
 
         The first bootstrap in a process compiles numba code (about 40 s on a
         fresh CI worker, 4 s with a disk cache), so it measures the compiler and
@@ -770,8 +772,10 @@ class TestBootstrapLatency:
                 )
             return time.process_time() - start
 
+        started = time.monotonic()
         await once()
-        return min([await once() for _ in range(repeats)])
+        cpu = min([await once() for _ in range(repeats)])
+        return cpu, time.monotonic() - started
 
     @pytest.mark.asyncio
     async def test_ac10_1000_docs_within_cpu_budget(self, instant_llm_mock, mock_settings):
@@ -782,9 +786,15 @@ class TestBootstrapLatency:
         slower than that machine (CI is about 1.7x). The earlier wall-clock budget
         of 60 s sat at the cost of compiling, not of the bootstrap.
         """
-        cpu = await self._warm_cpu_seconds(instant_llm_mock, mock_settings, 1000, repeats=3)
+        cpu, elapsed = await self._warm_cpu_seconds(
+            instant_llm_mock, mock_settings, 1000, repeats=3
+        )
 
         assert cpu < 2.0, f"1000-doc bootstrap took {cpu:.2f}s CPU warm, budget is 2.0s"
+        # CPU time cannot see time spent waiting (a blocking call, a retry sleep).
+        # Ceiling for the cold start plus all four runs: CI cold start measured
+        # 65 s on 2026-11-24, 38 s here, so 120 s leaves 1.8x over the worst.
+        assert elapsed < 120.0, f"1000-doc bootstrap took {elapsed:.0f}s elapsed, ceiling is 120s"
 
     @pytest.mark.asyncio
     async def test_ac11_7000_docs_within_cpu_budget(self, instant_llm_mock, mock_settings):
@@ -794,9 +804,14 @@ class TestBootstrapLatency:
         untimed first run is at this size because 7000 docs compile a further
         specialisation (12 s against 5 s for the next run).
         """
-        cpu = await self._warm_cpu_seconds(instant_llm_mock, mock_settings, 7000, repeats=2)
+        cpu, elapsed = await self._warm_cpu_seconds(
+            instant_llm_mock, mock_settings, 7000, repeats=2
+        )
 
         assert cpu < 13.0, f"7000-doc bootstrap took {cpu:.1f}s CPU warm, budget is 13s"
+        # Three runs: 12 s cold-start run + 2 x 5.3 s here, about 1.7x that on CI
+        # plus a 65 s compile; 240 s is 1.9x the worst of that (see AC-10).
+        assert elapsed < 240.0, f"7000-doc bootstrap took {elapsed:.0f}s elapsed, ceiling is 240s"
 
 
 # ---------------------------------------------------------------------------
