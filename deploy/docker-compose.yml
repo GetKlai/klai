@@ -543,7 +543,7 @@ services:
   # `SECRETS_MATRIX.md` entry.
   presidio-analyzer:
     # Digest published by presidio-analyzer-image-build.yml from 60c41ddae
-    # (tag 2.2.364-klai.1-60c41ddae0dd): upstream Presidio 2.2.364 under the
+    # (tag 2.2.366-klai.1-0bea1daa2415): upstream Presidio 2.2.366 under the
     # same pack as before (EU-wide VAT recogniser, Belgian enterprise number,
     # six-language registry).
     #
@@ -554,7 +554,7 @@ services:
     # This is where REQ-3's Dutch recognizers (BSN/KvK/BTW/postcode) and
     # REQ-4's SECRET recognizer actually enter the request path.
     logging: *log-rotation
-    image: ghcr.io/getklai/presidio-analyzer@sha256:0605d1e943598ef74927588cef43673c91cfddcb5367d1fa9dbde22a8a1d721c
+    image: ghcr.io/getklai/presidio-analyzer@sha256:53197d3e853e2fcd5dc43738a098106c69a55d855d0d0d2189a3a59a48c17d96
     restart: unless-stopped
     # klai_pii_enforce is fail-closed by contract (REQ-10): if this service does
     # not answer, the chat request is refused rather than forwarded unminimised,
