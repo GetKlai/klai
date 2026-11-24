@@ -1,0 +1,9 @@
+# Holds for scripts/check-version-drift.sh: updates that wait on someone else.
+# A hold is a decision with an end: until the review-by date the drift check
+# prints it as a NOTE (and treats a stuck pull request or dashboard entry that
+# matches it as held); after that date the check fails until somebody looks and
+# either lifts the hold or sets a new date. Renovate's own ceiling for the same
+# item lives in renovate.json5; both go when the hold lifts.
+#
+# id|repo|pattern (extended regex on the PR title or dashboard line)|review-by (YYYY-MM-DD)|lifts when|reason
+solid-js-2|GetKlai/klai|update dependency solid-js to v2|2026-12-15|klai-widget runs on @solidjs/vite-plugin 3, @solidjs/web and a solid-js 2 testing library (@solidjs/testing-library 1.0 is still rc), then remove the solid-js ceiling in renovate.json5|vite-plugin-solid 2.11 and @solidjs/testing-library 0.8 peer on solid-js 1, so v2 is a toolchain migration, not a version bump; Renovate holds solid-js below 2 meanwhile.

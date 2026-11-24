@@ -261,6 +261,9 @@ fi
 assert_line "$config" \
   "    npm: '^11'," \
   'lock files must be generated with the npm major that CI installs them with'
+assert_line "$config" \
+  "      allowedVersions: '<2.0.0'," \
+  'solid-js must stay below 2 while scripts/version-drift-holds.txt lists solid-js-2 (a major that cannot install must not sit as an automerge PR)'
 assert_contains "$config" \
   "internalChecksFilter: 'flexible'" \
   'a group must not wait for its most frequently released member to age'

@@ -17,9 +17,15 @@
 # merely pending for longer than the 7-day release age explains), an Errored or
 # Repository Problems section on the dashboard, and no successful Renovate run.
 #
+# Known waits on someone else (an upstream that has not released) are listed in
+# scripts/version-drift-holds.txt: a hold with its review-by date ahead is a
+# NOTE, and a stuck PR or dashboard entry it matches is a NOTE too; once the
+# date has passed the hold itself fails, so a hold is a decision that expires.
+#
 # Env: GH_TOKEN with read access to REPOS; MAX_PR_AGE_DAYS (default 14);
 # AUTOMERGE_MAX_AGE_DAYS (default 3) and AUTOMERGE_WAIT_MAX_DAYS (default 10,
-# for a PR that is only pending); RENOVATE_MAX_RUN_AGE_HOURS (default 6);
+# for a PR that is only pending); RENOVATE_MAX_RUN_AGE_HOURS (default 16);
+# HOLDS_FILE and TODAY (YYYY-MM-DD) to override the holds list and the clock;
 # E2E_ISSUE_MAX_AGE_HOURS (default 24) for the open E2E prod-tenant issue;
 # ACTIONS_TOKEN (optional) for reading workflow runs, which the Renovate app
 # token cannot do (the app has no actions permission); defaults to GH_TOKEN.
@@ -28,13 +34,45 @@ REPOS="${REPOS:-GetKlai/klai GetKlai/klai-website}"
 MAX_PR_AGE_DAYS="${MAX_PR_AGE_DAYS:-14}"
 AUTOMERGE_MAX_AGE_DAYS="${AUTOMERGE_MAX_AGE_DAYS:-3}"
 AUTOMERGE_WAIT_MAX_DAYS="${AUTOMERGE_WAIT_MAX_DAYS:-10}"
-RENOVATE_MAX_RUN_AGE_HOURS="${RENOVATE_MAX_RUN_AGE_HOURS:-6}"
+# 16, not 6: GitHub delays and drops scheduled runs under load (docs.github.com,
+# events-that-trigger-workflows#schedule), so the hourly cron of renovate.yml
+# fired two to four times a day. Over 2026-11-12..24 the longest gap between two
+# successful runs, merges and nudges included, was 12.0h; 16h is a day with a
+# missed run, not a normal gap.
+RENOVATE_MAX_RUN_AGE_HOURS="${RENOVATE_MAX_RUN_AGE_HOURS:-16}"
 E2E_ISSUE_MAX_AGE_HOURS="${E2E_ISSUE_MAX_AGE_HOURS:-24}"
 RENOVATE_REPO=GetKlai/klai
 FAIL=0
+HOLDS_FILE="${HOLDS_FILE:-$(dirname "$0")/version-drift-holds.txt}"
+TODAY="${TODAY:-$(date -u +%F)}"
 fail() { printf 'FAIL: %s\n' "$*"; FAIL=1; }
 ok()   { printf 'OK:   %s\n' "$*"; }
 note() { printf 'NOTE: %s\n' "$*"; }
+
+# Holds: id|repo|pattern|review-by|lifts when|reason, one per line. The pattern
+# is an extended regex over a PR title or a dashboard line of that repo.
+if [ ! -r "$HOLDS_FILE" ]; then
+  fail "holds list $HOLDS_FILE is missing"
+  HOLDS_FILE=/dev/null
+fi
+read_holds() { grep -vE '^[[:space:]]*(#|$)' "$HOLDS_FILE"; }
+# held_by <repo> <text>: print the id of a hold whose review-by date has not passed.
+held_by() {
+  local id hrepo pattern until lift reason
+  while IFS='|' read -r id hrepo pattern until lift reason; do
+    [ "$hrepo" = "$1" ] && [[ "$2" =~ $pattern ]] && [[ ! "$TODAY" > "$until" ]] && { printf '%s' "$id"; return 0; }
+  done < <(read_holds)
+  return 1
+}
+while IFS='|' read -r id hrepo pattern until lift reason; do
+  if [ -z "$reason" ] || [[ ! "$until" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    fail "hold '$id' in $HOLDS_FILE needs id|repo|pattern|review-by (YYYY-MM-DD)|lifts when|reason"
+  elif [[ "$TODAY" > "$until" ]]; then
+    fail "hold $id ($hrepo) expired on $until: look at it again (lifts when: $lift); reason was: $reason"
+  else
+    note "hold $id ($hrepo) until $until: $reason Lifts when: $lift"
+  fi
+done < <(read_holds)
 
 cutoff=$(date -u -d "-${MAX_PR_AGE_DAYS} days" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-"${MAX_PR_AGE_DAYS}"d +%Y-%m-%dT%H:%M:%SZ)
 for repo in $REPOS; do
@@ -79,6 +117,10 @@ for repo in $REPOS; do
         note "$repo: #$num open ${age}d, waiting: $(printf '%s' "$blocking" | tr '\n' ';')"
         continue
       fi
+      if by=$(held_by "$repo" "$title"); then
+        note "$repo: #$num open ${age}d is held by '$by': $title"
+        continue
+      fi
       stuck=1
       fail "$repo: automerge PR #$num open ${age}d is stuck: $title"
       printf '%s\n' "$reason" | sed 's/^/            /'
@@ -103,6 +145,12 @@ for repo in $REPOS; do
       lines=$(printf '%s\n' "$body" | awk -v h="## $heading" '/^## /{p=($0==h); next} p&&NF' \
         | grep -E '^[[:space:]]*- ' | grep -v 'minimumReleaseAgeBehaviour=timestamp-optional, proceeding' \
         | grep -v 'npm .--before. could not be enforced' | cut -c1-200)
+      open_lines=
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        if by=$(held_by "$repo" "$line"); then note "$repo: dashboard '$heading' entry is held by '$by'"; else open_lines+="$line"$'\n'; fi
+      done <<<"$lines"
+      lines=${open_lines%$'\n'}
       if [ -n "$lines" ]; then
         clean=0
         fail "$repo: Dependency Dashboard has a '$heading' section:"
