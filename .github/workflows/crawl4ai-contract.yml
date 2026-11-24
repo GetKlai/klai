@@ -1,14 +1,24 @@
 name: crawl4ai contract
 
-# Runs the crawl config knowledge-ingest sends against the crawl4ai image we
-# deploy. Bumping the crawl4ai pin or editing the config is the only way the two
-# drift apart, and on 2026-10-23 a bump to 0.9.5 made crawl4ai refuse our
-# JavaScript wait_for with HTTP 400: six nights of 0-page crawls behind a green
-# CI. The image is built from deploy/crawl4ai because the deployed tag is built
-# on core-01 and never pushed to a registry.
+# Runs the contracts between knowledge-ingest and the crawl4ai image we deploy.
+# Bumping the crawl4ai pin or editing the client is the only way the two drift
+# apart, and on 2026-10-23 a bump to 0.9.5 made crawl4ai refuse our JavaScript
+# wait_for with HTTP 400: six nights of 0-page crawls behind a green CI. The
+# image is built from deploy/crawl4ai because the deployed tag is built on
+# core-01 and never pushed to a registry.
 #
-# crawl4ai-config-contract.sh fails against 0.9.5 until the config is fixed;
-# that is the bug it was written for.
+# Two scripts run against that one image:
+#   - crawl4ai-config-contract.sh: the production crawl config is accepted.
+#     It fails against 0.9.5 until the config is fixed; that is the bug it was
+#     written for.
+#   - crawl4ai-cookie-contract.sh: the version pin (VERIFIED=), the
+#     body-visibility field, the user agent against the image's Chromium major,
+#     and cookie delivery and isolation. It was run by hand until the 0.9.6
+#     bump, when the manual run found knowledge-ingest announcing Chrome/156
+#     on an image that ships Chromium 159. It reads the echo service
+#     httpbin.org for the cookie checks; when that is unreachable the script
+#     exits 2 (SKIPPED), which this workflow reports in the job summary without
+#     failing the pull request.
 
 on:
   pull_request:
@@ -16,7 +26,9 @@ on:
       - 'deploy/crawl4ai/**'
       - 'deploy/docker-compose.yml'
       - 'deploy/tests/crawl4ai-config-contract.sh'
+      - 'deploy/tests/crawl4ai-cookie-contract.sh'
       - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py'
+      - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.py'
       - '.github/workflows/crawl4ai-contract.yml'
   push:
     branches: [main]
@@ -24,7 +36,9 @@ on:
       - 'deploy/crawl4ai/**'
       - 'deploy/docker-compose.yml'
       - 'deploy/tests/crawl4ai-config-contract.sh'
+      - 'deploy/tests/crawl4ai-cookie-contract.sh'
       - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py'
+      - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.py'
       - '.github/workflows/crawl4ai-contract.yml'
   workflow_dispatch:
 
@@ -52,3 +66,28 @@ jobs:
 
       - name: The production crawl config is accepted by crawl4ai
         run: sh deploy/tests/crawl4ai-config-contract.sh crawl4ai-contract:ci
+
+      # Exit 2 is the script's own SKIPPED: httpbin.org was unreachable, so cookie
+      # delivery and isolation went unchecked while the version, body-visibility
+      # and user-agent contracts (no network needed) had already passed. That is
+      # an outage elsewhere, not a broken contract, so it must not turn the pull
+      # request red; the summary and a warning keep it visible. Any other
+      # non-zero exit is a real break and fails the job.
+      - name: Cookie, isolation, body-visibility and user-agent contracts
+        run: |
+          code=0
+          sh deploy/tests/crawl4ai-cookie-contract.sh crawl4ai-contract:ci || code=$?
+          if [ "$code" -eq 0 ]; then
+            echo "### crawl4ai cookie contract: OK" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$code" -eq 2 ]; then
+            echo "::warning::crawl4ai cookie contract SKIPPED: httpbin.org was unreachable, so cookie delivery and isolation were not checked"
+            {
+              echo "### crawl4ai cookie contract: SKIPPED"
+              echo ""
+              echo "httpbin.org (the cookie echo service) was unreachable. The version, body-visibility and user-agent contracts passed; cookie delivery and isolation were **not** checked in this run. This is not a contract break."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          else
+            echo "### crawl4ai cookie contract: BROKEN (exit $code)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$code"

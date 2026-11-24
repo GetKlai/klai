@@ -34,6 +34,10 @@ jobs:
       connector: ${{ steps.filter.outputs.connector }}
       trivyignore: ${{ steps.filter.outputs.trivyignore }}
       graph_contract: ${{ steps.filter.outputs.graph_contract }}
+      caddy: ${{ steps.filter.outputs.caddy }}
+      whisper_server: ${{ steps.filter.outputs.whisper_server }}
+      bge_m3_sparse: ${{ steps.filter.outputs.bge_m3_sparse }}
+      dockerfiles_files: ${{ steps.filter.outputs.dockerfiles_files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -41,6 +45,9 @@ jobs:
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
         with:
+          # Lists the files matched by the `dockerfiles` filter for the image-scan
+          # check at the end of this workflow.
+          list-files: json
           filters: |
             portal_api:
               - 'klai-portal/backend/**'
@@ -118,6 +125,25 @@ jobs:
               - 'deploy/docker-compose.yml'
               - '.github/workflows/graph-contract.yml'
               - '.github/workflows/quality.yml'
+            # Image workflows that used to run on main only. Unlike the filters
+            # above they do not include quality.yml: each is a 5-15 minute image
+            # build that an edit to this file should not start.
+            caddy:
+              - 'deploy/caddy/Dockerfile'
+              - 'deploy/caddy/build.sh'
+              - 'deploy/caddy/.trivyignore.yaml'
+              - '.github/workflows/caddy.yml'
+            whisper_server:
+              - 'klai-scribe/whisper-server/**'
+              - '.github/workflows/whisper-server.yml'
+            bge_m3_sparse:
+              - 'deploy/bge-m3-sparse/**'
+              - '.github/workflows/bge-m3-sparse.yml'
+            # Every Dockerfile; scripts/require-image-scans.py checks that each
+            # changed one was scanned.
+            dockerfiles:
+              - '**/Dockerfile'
+              - '**/Dockerfile.*'
             trivyignore:
               - '**/.trivyignore.yaml'
               - '**/.trivyignore.yml'
@@ -204,6 +230,24 @@ jobs:
     uses: ./.github/workflows/graph-contract.yml
     secrets: inherit
 
+  caddy:
+    needs: changes
+    if: needs.changes.outputs.caddy == 'true'
+    uses: ./.github/workflows/caddy.yml
+    secrets: inherit
+
+  whisper-server:
+    needs: changes
+    if: needs.changes.outputs.whisper_server == 'true'
+    uses: ./.github/workflows/whisper-server.yml
+    secrets: inherit
+
+  bge-m3-sparse:
+    needs: changes
+    if: needs.changes.outputs.bge_m3_sparse == 'true'
+    uses: ./.github/workflows/bge-m3-sparse.yml
+    secrets: inherit
+
   quality:
     name: quality
     if: always()
@@ -222,6 +266,9 @@ jobs:
       - connector
       - trivyignore
       - graph-contract
+      - caddy
+      - whisper-server
+      - bge-m3-sparse
     runs-on: ubuntu-latest
     steps:
       - name: Require every affected workflow to pass
@@ -250,3 +297,18 @@ jobs:
                   print(f"::error::{name} finished with {result}")
               sys.exit(1)
           PY
+
+      # `skipped` passes above, which is right for a workflow no change selected.
+      # It is wrong for an image scan: a pull request that changes a Dockerfile
+      # must have run that image's Trivy scan, or the failure first shows on main
+      # and blocks the deploy. 2026-11-23: two scans skipped on a base-image
+      # change, both failed on main, neither service deployed for two days.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: always()
+
+      - name: Require an image scan for every changed Dockerfile
+        if: always()
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          CHANGED_DOCKERFILES: ${{ needs.changes.outputs.dockerfiles_files }}
+        run: python3 scripts/require-image-scans.py

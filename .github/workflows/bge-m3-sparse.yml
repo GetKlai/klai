@@ -1,0 +1,84 @@
+name: Build and scan bge-m3-sparse
+
+# deploy/bge-m3-sparse is built on gpu-01 and was never built or scanned in CI,
+# so a base-image or dependency change reached the server unchecked. This
+# workflow builds the image on a pull request that touches it and runs the same
+# STRICT-tier Trivy scan as the other service images.
+#
+# Nothing is pushed: the image is built into the runner's Docker daemon and
+# scanned there, because gpu-01 builds its own copy and nothing pulls this one.
+# The model weights are downloaded at run time (HF_HOME=/models), not at build
+# time, so the build only installs the CUDA PyTorch wheels (several GB).
+#
+# No layer cache: the image is too large for the 10 GB Actions cache, and
+# saving it would evict the caches of every other workflow.
+#
+# Called by quality.yml, which fails a pull request that changes the Dockerfile
+# unless `scanned` is "true".
+
+on:
+  workflow_call:
+    outputs:
+      scanned:
+        description: The Trivy image scan ran to success
+        value: ${{ jobs.scan.outputs.scanned }}
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    # The CUDA wheels make this the largest image in CI; a build that runs past
+    # this is a signal to switch to a Dockerfile-level scan, not to wait longer.
+    timeout-minutes: 25
+    outputs:
+      scanned: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # The runner has about 14 GB free; the image plus its build layers need
+      # more. These toolchains are preinstalled and unused here.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: Build bge-m3-sparse
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: deploy/bge-m3-sparse
+          load: true
+          tags: bge-m3-sparse:ci
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
+        with:
+          version: v0.76.2
+          cache: true
+
+      # Same flags as the service workflows (see retrieval-api.yml for why the
+      # CLI is called directly). This image has no .trivyignore.yaml.
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            bge-m3-sparse:ci
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

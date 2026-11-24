@@ -2,10 +2,14 @@
 # Do the cookies we send to crawl4ai reach the site -- and only that site's
 # own request?
 #
-# Run this before changing the crawl4ai pin, the cookie payload, or
-# CRAWL4AI_HOOKS_ENABLED. It is the executable form of the check that was
-# missing: the previous test asserted the SHAPE of the dict we build, which
-# stayed green for four weeks while crawl4ai silently dropped it.
+# CI runs this on every pull request and main change that touches the crawl4ai
+# image, the compose pin, crawl4ai_client.py or this file
+# (.github/workflows/crawl4ai-contract.yml, against the image it builds from
+# deploy/crawl4ai). You can also run it by hand before changing the crawl4ai
+# pin, the cookie payload, or CRAWL4AI_HOOKS_ENABLED. It is the executable form
+# of the check that was missing: the previous test asserted the SHAPE of the
+# dict we build, which stayed green for four weeks while crawl4ai silently
+# dropped it.
 #
 # Four contracts, because fixing the first exposed the others:
 #
@@ -41,6 +45,14 @@
 # removed on exit. Uses httpbin.org, which echoes back the cookies it
 # received; a failure there is reported as SKIPPED, separately from a real
 # contract break.
+#
+# Usage: crawl4ai-cookie-contract.sh [IMAGE]
+#   IMAGE defaults to the pin in deploy/docker-compose.yml; CI passes the image
+#   it just built.
+# Exit codes: 0 every contract holds; 1 a contract is broken (or the version
+#   pin is stale); 2 SKIPPED because httpbin.org was unreachable, which leaves
+#   DELIVERY and ISOLATION unchecked while VERSION, BODY-VISIBILITY and
+#   USER-AGENT (which run first and need no network) have passed.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)

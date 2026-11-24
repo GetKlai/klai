@@ -2,6 +2,13 @@ name: Build and push retrieval-api
 
 on:
   workflow_call:
+    outputs:
+      # quality.yml fails a pull request that changes this image's Dockerfile
+      # unless this is "true": a skipped scan job leaves it empty, and the
+      # workflow result alone would still read as success.
+      scanned:
+        description: The Trivy image scan ran to success
+        value: ${{ jobs.scan.outputs.scanned }}
   push:
     branches: [main]
     paths:
@@ -106,7 +113,10 @@ jobs:
           # source. Same pattern as klai-knowledge-mcp (Phase B).
           context: .
           file: klai-retrieval-api/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          # A pull request pushes only the commit-sha tag (never :latest), as
+          # klai-connector does, so the scan below pulls the image it just
+          # built. Fork pull requests get a read-only token and fail here.
+          push: true
           tags: |
             ghcr.io/getklai/retrieval-api:${{ github.sha }}
             ${{ github.ref == 'refs/heads/main' && 'ghcr.io/getklai/retrieval-api:latest' || '' }}
@@ -115,7 +125,8 @@ jobs:
 
   scan:
     needs: build-push
-    if: github.event_name != 'pull_request'
+    outputs:
+      scanned: "true"
     runs-on: ubuntu-latest
     permissions:
       security-events: write

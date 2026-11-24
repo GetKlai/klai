@@ -39,6 +39,8 @@ on:
       - 'scripts/tests/check-version-drift.test.sh'
       - 'scripts/check-expand-contract.py'
       - 'scripts/tests/test_check_expand_contract.py'
+      - 'scripts/require-image-scans.py'
+      - 'scripts/tests/test_require_image_scans.py'
       - 'scripts/renovate-revert-after-rollback.py'
       - 'scripts/tests/test_renovate_revert_after_rollback.py'
   push:
@@ -66,6 +68,8 @@ on:
       - 'scripts/tests/check-version-drift.test.sh'
       - 'scripts/check-expand-contract.py'
       - 'scripts/tests/test_check_expand_contract.py'
+      - 'scripts/require-image-scans.py'
+      - 'scripts/tests/test_require_image_scans.py'
       - 'scripts/renovate-revert-after-rollback.py'
       - 'scripts/tests/test_renovate_revert_after_rollback.py'
 
@@ -252,6 +256,12 @@ jobs:
       # The expand-then-contract check guards what that rollback relies on.
       - name: expand-then-contract check suite
         run: python3 -m unittest scripts/tests/test_check_expand_contract.py
+
+      # The aggregate check that turns a skipped image scan into a red pull
+      # request, plus a guard that every Dockerfile in the repo is mapped to a
+      # scan job: a new image cannot land without deciding how it is scanned.
+      - name: image-scan requirement suite
+        run: python3 -m unittest scripts/tests/test_require_image_scans.py
 
       - name: portal-api one-off clone suite
         run: bash deploy/tests/test-portal-api-oneoff.sh
