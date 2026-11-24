@@ -46,6 +46,9 @@ COPY --chown=app:app klai-knowledge-mcp/main.py main.py
 ENV PATH="/repo/klai-knowledge-mcp/.venv/bin:${PATH}" \
     VIRTUAL_ENV="/repo/klai-knowledge-mcp/.venv"
 
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER app
 
 EXPOSE 8080

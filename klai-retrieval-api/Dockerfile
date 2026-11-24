@@ -50,6 +50,9 @@ COPY --chown=app:app klai-retrieval-api/retrieval_api retrieval_api
 COPY --chown=app:app scripts/uvicorn-launch.sh /app/scripts/uvicorn-launch.sh
 RUN chmod +x /app/scripts/uvicorn-launch.sh
 
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
+
 USER app
 
 # SPEC-SEC-WEBHOOK-001 REQ-1.6 + REQ-6: shared launcher resolves Caddy IP at
