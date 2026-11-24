@@ -38,6 +38,9 @@ on:
       - Build and push klai-knowledge-mcp
       # Images that are not a Python service but still ship
       - Build Klai LibreChat image
+      # Its weekly rebuild goes red when it built OS fixes the pinned image
+      # lacks; this issue is what says the compose pin has to move.
+      - Build Klai presidio-analyzer image
       - Build and push caddy-hetzner
       - Build and push whisper-server
       - Build and push klai-docker-authz
