@@ -16,6 +16,7 @@ on:
       # Re-scan on any compose change so new pins get scanned immediately
       - 'deploy/docker-compose.yml'
       - 'docker-compose.dev.yml'
+      - 'deploy/crawl4ai/**'      # the crawl4ai target is built from here
       - '.github/workflows/scan-pinned-images.yml'
 
 permissions:
@@ -71,27 +72,27 @@ jobs:
           #                                      images do not exist on Docker Hub so a `docker
           #                                      manifest inspect` always 404s.
           # crawl4ai is built on core-01 and never pushed, so it cannot be
-          # pulled. Its Dockerfile adds one Python patch and no packages on
-          # top of the upstream image, so scanning that FROM image covers the
-          # same package set; without this its alerts were frozen at the
-          # 2026-08-03 scan of an image that no longer runs.
-          CRAWL4AI_BASE=$(sed -n 's/^FROM //p' deploy/crawl4ai/Dockerfile | head -1)
+          # pulled; the scan job builds deploy/crawl4ai and scans that. Until
+          # 2026-11 this scanned the upstream FROM image instead, which also
+          # counted the build checkout our Dockerfile deletes: 302 of its 308
+          # findings came from a stale SBOM inside it.
           TARGETS=$(
             {
               yq -o=json eval '.services | to_entries | map({"source": "deploy", "service": .key, "image": .value.image})' deploy/docker-compose.yml
               yq -o=json eval '.services | to_entries | map({"source": "dev", "service": .key, "image": .value.image})' docker-compose.dev.yml
             } \
-              | jq -sc --arg crawl4ai "$CRAWL4AI_BASE" '
+              | jq -sc '
                   add
                   | map(select(.image != null and .image != "~"))
-                  | map(if (.image | test("^ghcr\\.io/getklai/crawl4ai:")) then .image = $crawl4ai else . end)
+                  | map(if (.image | test("^ghcr\\.io/getklai/crawl4ai:")) then .image = "klai-scan/crawl4ai:build" | .build = "deploy/crawl4ai" else . end)
                   | map(select(.image | test("^(ghcr\\.io/getklai/[^@]+$|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)") | not))
                   | sort_by(.image)
                   | group_by(.image)
                   | map({
                       key: (map(.source + "_" + .service) | sort | join("__")),
                       services: (map(.source + "/" + .service) | sort),
-                      image: .[0].image
+                      image: .[0].image,
+                      build: (.[0].build // "")
                     })
                   | sort_by(.key)
                 '
@@ -139,7 +140,16 @@ jobs:
           version: v0.76.2
           cache: true
 
+      - name: Build the image we deploy
+        if: matrix.target.build != ''
+        env:
+          IMAGE: ${{ matrix.target.image }}
+          CONTEXT: ${{ matrix.target.build }}
+        run: docker build -t "$IMAGE" "$CONTEXT"
+
       - name: Trivy scan
+        env:
+          IMAGE_SRC: ${{ matrix.target.build != '' && 'docker' || 'remote' }}
         run: |
           for attempt in 1 2; do
             if trivy image \
@@ -148,7 +158,7 @@ jobs:
               --severity CRITICAL,HIGH \
               --ignore-unfixed \
               --scanners vuln \
-              --image-src remote \
+              --image-src "$IMAGE_SRC" \
               --timeout 6m \
               --skip-version-check \
               --exit-code 0 \

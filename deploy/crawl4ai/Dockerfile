@@ -32,4 +32,13 @@ FROM unclecode/crawl4ai:0.9.6
 USER root
 COPY apply_hook_isolation_patch.py /tmp/apply_hook_isolation_patch.py
 RUN python /tmp/apply_hook_isolation_patch.py && rm /tmp/apply_hook_isolation_patch.py
+# Upstream leaves its build context behind: the whole source checkout it
+# pip-installed from (/tmp/project, 42 MB with .git) and the install script.
+# The package is a regular, non-editable install in site-packages, and no
+# file under /app, site-packages or /etc names /tmp/project (checked on
+# 0.9.6; only a README line mentions it). The checkout carries a stale
+# CycloneDX SBOM (/tmp/project/sbom/sbom.cdx.json) listing old versions of
+# packages, and 302 of the image's 308 Trivy findings came from that file,
+# not from anything installed.
+RUN rm -rf /tmp/project /tmp/install.sh
 USER appuser
