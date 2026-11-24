@@ -301,7 +301,8 @@ def _stub_sparse_sidecar(request):
 
     Every point needs its sparse vector (qdrant_store refuses one without), so
     a test that writes points needs vectors; this gives each text a one-term
-    vector. Tests of the embedder's own HTTP handling opt out with the
+    vector, and reports both embedding services up to the enrichment
+    pre-flight check. Tests of the embedders' own HTTP handling opt out with the
     ``real_sparse_embedder`` marker; a test that patches the function itself
     overrides this patch for its own scope.
     """
@@ -313,7 +314,10 @@ def _stub_sparse_sidecar(request):
     async def _embed(texts: list[str]) -> list[SparseVector]:
         return [SparseVector(indices=[len(text)], values=[1.0]) for text in texts]
 
-    with patch("knowledge_ingest.sparse_embedder.embed_sparse_batch", _embed):
+    with (
+        patch("knowledge_ingest.sparse_embedder.embed_sparse_batch", _embed),
+        patch("knowledge_ingest.embedder.check_available", AsyncMock()),
+    ):
         yield
 
 

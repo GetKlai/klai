@@ -104,10 +104,10 @@ in the last 25 hours.
 event carries `points_without_sparse` above zero: points in `klai_knowledge`
 that hybrid search finds through the dense vector only.
 
-Ingest refuses to write such a point: an unavailable sparse sidecar fails the
-base ingest request before anything is written, and fails an enrichment job,
-which retries every 2 minutes for 16 minutes and then records the document
-`failed (sparse_unavailable)`. A count above zero is therefore a point written
+Ingest refuses to write such a point: an unavailable embedding service fails
+the base ingest request before anything is written, and sends an enrichment
+job back to the queue every 2 minutes for 16 minutes, after which the document
+records `failed (embedding_unavailable)`. A count above zero is therefore a point written
 before that guard, or a writer that bypasses `qdrant_store._replace_points`.
 
 1. Count per knowledge base, read-only (inside the knowledge-ingest container):

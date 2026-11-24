@@ -46,6 +46,11 @@ from knowledge_ingest.content_profiles import child_chunk_chars, get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 from knowledge_ingest.derived_state import DONE, FAILED, NOT_APPLICABLE
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
+from knowledge_ingest.embedder import (
+    EMBEDDING_OUTAGE_WINDOW_SECONDS,
+    EMBEDDING_RETRY_SECONDS,
+    EmbeddingUnavailable,
+)
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
     enrichment_batch_size,
@@ -61,7 +66,7 @@ from knowledge_ingest.llm_capacity import (
     deferral_window_spent,
     is_llm_capacity_error,
 )
-from knowledge_ingest.sparse_embedder import SparseEmbeddingUnavailable
+from knowledge_ingest.sparse_embedder import SparseEmbeddingRejected
 
 logger = structlog.get_logger()
 
@@ -84,17 +89,6 @@ _FALKORDB_DEATHS_BEFORE_QUARANTINE = 2
 # (waits 3, 9, 27 s), the bulk lane rides out a 429 burst (4, 16, 64, 256 s).
 _INTERACTIVE_MAX_ATTEMPTS = 4
 _BULK_MAX_ATTEMPTS = 5
-
-# An unavailable sparse sidecar: no point may be written without its sparse
-# vector, so the job waits for the GPU server to come back. Its restarts took
-# about six minutes (2026-11-22 from 07:50Z and 2026-11-23 from 11:45Z; the
-# dense service's health check failed for 2 and 4 of those minutes), so a retry
-# every 2 minutes, 8 times, spans 16 minutes, well over twice that, before the
-# document records failed (sparse_unavailable). Each retry redoes the LLM work
-# of the document: the sparse vectors embed the enriched text, so they cannot
-# be fetched before it.
-_SPARSE_RETRY_SECONDS = 120
-_SPARSE_MAX_ATTEMPTS = 8
 
 
 class GraphitiEpisodeQuarantined(RuntimeError):
@@ -479,12 +473,7 @@ async def _fail_if_last_attempt(
 
     if isinstance(exc, JobAborted | _DerivedWorkFailed | GraphitiEpisodeQuarantined):
         return
-    if context is None:
-        return
-    if isinstance(exc, SparseEmbeddingUnavailable):
-        if context.job.attempts >= _SPARSE_MAX_ATTEMPTS:
-            await _finish(product, artifact_id, FAILED, "sparse_unavailable")
-    elif context.job.attempts >= max_attempts:
+    if context is not None and context.job.attempts >= max_attempts:
         await _finish(product, artifact_id, FAILED, "retries_exhausted")
 
 
@@ -538,6 +527,50 @@ async def _defer_after_llm_capacity(
     )
 
 
+async def _defer_after_embedding_outage(
+    task: Any,
+    context: Any,
+    exc: EmbeddingUnavailable,
+    embedding_deferred_since: int | None,
+    **job_args: Any,
+) -> None:
+    """Queue an enrichment job again that found an embedding service down.
+
+    A fresh job instead of a procrastinate retry, so waiting out an outage does
+    not spend the attempts that protect against other failures; the start of
+    the outage travels in the job arguments. The document stays pending while
+    it waits, and records failed (embedding_unavailable) once the outage has
+    lasted ``EMBEDDING_OUTAGE_WINDOW_SECONDS``.
+    """
+    artifact_id = job_args["artifact_id"]
+    since = embedding_deferred_since or int(time.time())
+    if time.time() - since >= EMBEDDING_OUTAGE_WINDOW_SECONDS:
+        logger.error(
+            "enrichment_embedding_outage_exhausted",
+            artifact_id=artifact_id,
+            deferred_since=since,
+            error=str(exc),
+        )
+        await _give_up("enrichment", artifact_id, "embedding_unavailable")
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    try:
+        await task.configure(
+            queueing_lock=context.job.queueing_lock,
+            schedule_in={"seconds": EMBEDDING_RETRY_SECONDS},
+        ).defer_async(**job_args, embedding_deferred_since=since)
+    except AlreadyEnqueued:
+        # A job for this artifact is already waiting and covers this one.
+        pass
+    logger.warning(
+        "enrichment_deferred_embedding_unavailable",
+        artifact_id=artifact_id,
+        retry_in_seconds=EMBEDDING_RETRY_SECONDS,
+        deferred_since=since,
+        error=str(exc),
+    )
+
+
 def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
     import procrastinate
@@ -564,10 +597,6 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 return None
             if isinstance(exception, asyncio.CancelledError):
                 return procrastinate.RetryDecision(retry_in={"seconds": 0})
-            if isinstance(exception, SparseEmbeddingUnavailable):
-                if job.attempts >= _SPARSE_MAX_ATTEMPTS:
-                    return None
-                return procrastinate.RetryDecision(retry_in={"seconds": _SPARSE_RETRY_SECONDS})
             return self.inner.get_retry_decision(exception=exception, job=job)
 
     # Backoff rationale: enrichment failures in production are dominated by
@@ -588,7 +617,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
         pass_context=True,
     )
     async def enrich_document_interactive(
-        context: Any, artifact_id: str, llm_deferred_since: int | None = None
+        context: Any,
+        artifact_id: str,
+        llm_deferred_since: int | None = None,
+        embedding_deferred_since: int | None = None,
     ) -> None:
         """Enrich chunks for a single-doc upload (high priority).
 
@@ -605,6 +637,17 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 llm_deferred_since,
                 artifact_id=artifact_id,
             )
+        except EmbeddingUnavailable as exc:
+            await _defer_after_embedding_outage(
+                enrich_document_interactive,
+                context,
+                exc,
+                embedding_deferred_since,
+                artifact_id=artifact_id,
+                llm_deferred_since=llm_deferred_since,
+            )
+        except SparseEmbeddingRejected:
+            await _give_up("enrichment", artifact_id, "sparse_rejected")
         except Exception as exc:
             await _fail_if_last_attempt(
                 "enrichment", artifact_id, exc, context, _INTERACTIVE_MAX_ATTEMPTS
@@ -627,6 +670,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         resource_key: str | None = None,  # noqa: ARG001
         llm_deferred_since: int | None = None,
         batch_offset: int = 0,
+        embedding_deferred_since: int | None = None,
     ) -> None:
         """Enrich chunks for crawl/import jobs (lower priority), and every
         batch after the first of a large document.
@@ -645,6 +689,18 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 artifact_id=artifact_id,
                 batch_offset=batch_offset,
             )
+        except EmbeddingUnavailable as exc:
+            await _defer_after_embedding_outage(
+                enrich_document_bulk,
+                context,
+                exc,
+                embedding_deferred_since,
+                artifact_id=artifact_id,
+                batch_offset=batch_offset,
+                llm_deferred_since=llm_deferred_since,
+            )
+        except SparseEmbeddingRejected:
+            await _give_up("enrichment", artifact_id, "sparse_rejected")
         except Exception as exc:
             await _fail_if_last_attempt("enrichment", artifact_id, exc, context, _BULK_MAX_ATTEMPTS)
             raise
@@ -1059,6 +1115,9 @@ async def _enrich_document(
         type=content_type,
     )
     try:
+        # Before any model work: during an outage a retry then costs one
+        # health call per service instead of the document's LLM calls.
+        await embedder.check_available()
         profile = get_profile(content_type)
 
         # Build participant context string if available

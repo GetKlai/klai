@@ -396,3 +396,74 @@ groups:
 
             See docs/runbooks/connector-schedules.md for how the scheduler reads
             its schedules. Runbook: docs/runbooks/crawl-failures.md.
+
+      # The latest job of a source ended failed_partial because pages were still
+      # failing on the embedding services after the crawl waited 16 minutes for
+      # them (the GPU server down longer than a restart). Those pages are not in
+      # search and a one-off crawl never runs again by itself. 26h as above.
+      - uid: crawl-embedding-unavailable
+        title: crawl_embedding_unavailable
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: portal-postgres
+            queryType: ''
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                SELECT org_id, kb_slug,
+                       coalesce(connector_id, '') AS connector_id,
+                       1 AS value
+                  FROM (SELECT DISTINCT ON (org_id, kb_slug, coalesce(connector_id, '')) *
+                          FROM knowledge.crawl_job_health
+                         WHERE status IN ('completed', 'failed', 'failed_partial')
+                           AND updated_at >= date_part('epoch', now() - interval '26 hours')
+                         ORDER BY org_id, kb_slug, coalesce(connector_id, ''), updated_at DESC) latest
+                 WHERE status = 'failed_partial' AND reason = 'embedding_unavailable'
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: warning
+          component: crawl
+          service_group: knowledge
+        annotations:
+          summary: 'Knowledge base {{ $labels.kb_slug }} (org {{ $labels.org_id }}): crawl pages left out while the embedding services were down'
+          runbook_url: 'docs/runbooks/crawl-failures.md'
+          description: |
+            The latest crawl of this source ended failed_partial with reason
+            embedding_unavailable: pages still failed on the embedding services
+            after the crawl waited 16 minutes for them. Check the GPU server,
+            then run the crawl again.

@@ -219,3 +219,101 @@ class TestDecideIngestFailureTerminalStatus:
         status, summary = decide_ingest_failure_terminal_status(pages_done=4, pages_failed=0)
         assert status == ""
         assert summary is None
+
+
+# ---------------------------------------------------------------------------
+# Embedding outage during a crawl: waited out within the same crawl
+# ---------------------------------------------------------------------------
+
+
+async def _crawl_two_pages(ingest_side_effect) -> tuple[MagicMock, AsyncMock, AsyncMock]:
+    """Run a crawl of two fetched pages; return the conn, the ingest and the wait."""
+    from knowledge_ingest.adapters import crawler
+    from tests.conftest import make_pg_store_mock
+
+    mock_conn = _make_mock_conn()
+    mock_pg = make_pg_store_mock()
+    results = [_make_crawl_result(f"https://example.com/{p}") for p in ("a", "b")]
+    ingest = AsyncMock(side_effect=ingest_side_effect)
+    wait = AsyncMock()
+    with (
+        patch("knowledge_ingest.adapters.crawler.crawl_site", new_callable=AsyncMock) as mock_crawl,
+        patch("knowledge_ingest.adapters.crawler.pg_store", mock_pg),
+        patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0),
+        patch("knowledge_ingest.adapters.crawler._ingest_crawl_result", ingest),
+        patch.object(crawler.asyncio, "sleep", wait),
+    ):
+        mock_crawl.return_value = (
+            results,
+            [
+                {"url": r.url, "reason_code": "success", "status_code": 200, "content_length": 10}
+                for r in results
+            ],
+        )
+        mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
+        mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
+        await crawler.run_crawl_job(
+            connection_factory=connection_factory_for(mock_conn),
+            job_id="job-1",
+            org_id="org-1",
+            kb_slug="docs",
+            start_url="https://example.com/a",
+            max_depth=1,
+            rate_limit=100.0,
+        )
+    return mock_conn, ingest, wait
+
+
+def _ingested_urls(ingest: AsyncMock) -> list[str]:
+    return [c.args[2] for c in ingest.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_a_page_hit_by_an_embedding_outage_is_ingested_once_it_is_back() -> None:
+    from knowledge_ingest.embedder import EMBEDDING_RETRY_SECONDS, EmbeddingUnavailable
+
+    answers = iter([None, EmbeddingUnavailable("down"), None])
+
+    async def _ingest(*_args, **_kwargs):
+        if (answer := next(answers)) is not None:
+            raise answer
+        return False
+
+    mock_conn, ingest, wait = await _crawl_two_pages(_ingest)
+
+    assert _ingested_urls(ingest) == [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/b",
+    ]
+    wait.assert_awaited_once_with(EMBEDDING_RETRY_SECONDS)
+    assert _last_status_call(mock_conn) == "completed"
+
+
+@pytest.mark.asyncio
+async def test_pages_still_out_after_the_window_fail_the_crawl_partially() -> None:
+    from knowledge_ingest.embedder import (
+        EMBEDDING_OUTAGE_WINDOW_SECONDS,
+        EMBEDDING_RETRY_SECONDS,
+        EmbeddingUnavailable,
+    )
+
+    async def _ingest(_conn, _result, url, *_args, **_kwargs):
+        if url.endswith("/b"):
+            raise EmbeddingUnavailable("down")
+        return False
+
+    mock_conn, ingest, wait = await _crawl_two_pages(_ingest)
+
+    rounds = EMBEDDING_OUTAGE_WINDOW_SECONDS // EMBEDDING_RETRY_SECONDS
+    assert wait.await_count == rounds
+    assert _ingested_urls(ingest).count("https://example.com/b") == rounds + 1
+    assert _last_status_call(mock_conn) == "failed_partial"
+    status_writes = [
+        c.args for c in mock_conn.execute.call_args_list if "SET status=$1" in c.args[0]
+    ]
+    assert "embedding_unavailable" in str(status_writes[-1])

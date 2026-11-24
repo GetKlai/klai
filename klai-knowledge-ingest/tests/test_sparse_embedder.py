@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from knowledge_ingest.sparse_embedder import SparseEmbeddingUnavailable, embed_sparse_batch
+from knowledge_ingest.embedder import EmbeddingUnavailable
+from knowledge_ingest.sparse_embedder import SparseEmbeddingRejected, embed_sparse_batch
 
 
 def _client(post: AsyncMock) -> AsyncMock:
@@ -24,7 +25,7 @@ def _settings(mock_settings: MagicMock, batch_size: int = 64) -> None:
 
 @pytest.mark.asyncio
 async def test_embed_sparse_batch_success():
-    mock_response = MagicMock()
+    mock_response = MagicMock(status_code=200)
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {
         "results": [
@@ -50,7 +51,7 @@ async def test_embed_sparse_batch_success():
 @pytest.mark.asyncio
 async def test_embed_sparse_batch_splits_large_input():
     """Texts exceeding batch_size should be split into multiple sub-batches."""
-    first, second = MagicMock(), MagicMock()
+    first, second = MagicMock(status_code=200), MagicMock(status_code=200)
     first.json.return_value = {"results": [{"indices": [i], "values": [0.5]} for i in range(2)]}
     second.json.return_value = {"results": [{"indices": [99], "values": [0.1]}]}
     post = AsyncMock(side_effect=[first, second])
@@ -74,7 +75,7 @@ async def test_an_unreachable_sidecar_raises_after_its_retries_and_asks_no_furth
         patch("httpx.AsyncClient", return_value=_client(post)),
         patch("knowledge_ingest.sparse_embedder.settings") as mock_settings,
         patch("knowledge_ingest.sparse_embedder.asyncio.sleep", AsyncMock()),
-        pytest.raises(SparseEmbeddingUnavailable),
+        pytest.raises(EmbeddingUnavailable),
     ):
         _settings(mock_settings, batch_size=2)
         await embed_sparse_batch(["a", "b", "c", "d", "e"])
@@ -86,23 +87,38 @@ async def test_an_unreachable_sidecar_raises_after_its_retries_and_asks_no_furth
 async def test_an_unconfigured_sidecar_raises():
     with (
         patch("knowledge_ingest.sparse_embedder.settings") as mock_settings,
-        pytest.raises(SparseEmbeddingUnavailable),
+        pytest.raises(EmbeddingUnavailable),
     ):
         mock_settings.sparse_sidecar_url = ""
         await embed_sparse_batch(["a"])
 
 
+def _answer(status: int, results: list[dict]) -> MagicMock:
+    response = MagicMock(status_code=status)
+    response.json.return_value = {"results": results}
+    return response
+
+
 @pytest.mark.asyncio
-async def test_a_result_count_mismatch_raises_instead_of_shifting_vectors():
-    """Fewer results than texts must not shift vectors onto the wrong chunks."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"results": [{"indices": [1], "values": [0.5]}]}
+@pytest.mark.parametrize(
+    "response",
+    [
+        _answer(422, []),
+        # Fewer results than texts must not shift vectors onto the wrong chunks.
+        _answer(200, [{"indices": [1], "values": [0.5]}]),
+    ],
+    ids=["4xx", "count-mismatch"],
+)
+async def test_a_rejected_request_raises_at_once_and_is_not_an_outage(response):
+    post = AsyncMock(return_value=response)
 
     with (
-        patch("httpx.AsyncClient", return_value=_client(AsyncMock(return_value=mock_response))),
+        patch("httpx.AsyncClient", return_value=_client(post)),
         patch("knowledge_ingest.sparse_embedder.settings") as mock_settings,
         patch("knowledge_ingest.sparse_embedder.asyncio.sleep", AsyncMock()),
-        pytest.raises(SparseEmbeddingUnavailable),
+        pytest.raises(SparseEmbeddingRejected),
     ):
         _settings(mock_settings)
         await embed_sparse_batch(["a", "b"])
+
+    assert post.await_count == 1

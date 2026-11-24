@@ -1,22 +1,25 @@
-"""A chunk is never written without its sparse vector.
+"""A chunk is never written without its vectors, and an embedding outage is waited out.
 
-The sparse sidecar runs on the GPU server, which restarts for updates. While it
-was down, ingest wrote chunks with their dense vector only and carried on, so
-hybrid search found them through one leg for good: on 2026-10-29 one enrichment
-wrote ten such chunks. Now the write is refused, the job is retried for longer
-than a restart of that server takes, and then the document records failed.
+The dense and sparse embedding services run on the GPU server, which restarts
+for updates. While the sparse sidecar was down, ingest wrote chunks with their
+dense vector only and carried on, so hybrid search found them through one leg
+for good: on 2026-10-29 one enrichment wrote ten such chunks. Now the write is
+refused, the job is queued again for longer than a restart of that server
+takes, without spending its ordinary retries, and then the document records
+failed. A health call to both services before the model work keeps a retry
+during an outage from paying for that work again.
 
-The sidecar is a real HTTP exchange here (httpx MockTransport), not a stubbed
-function, so the tests cover the embedder's own failure handling too.
+Both services are a real HTTP exchange here (httpx MockTransport), so the
+tests cover the embedders' own failure handling too.
 """
 
 from __future__ import annotations
 
-import datetime
 import json
+import time
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -32,9 +35,13 @@ from qdrant_client.models import (
 )
 
 import knowledge_ingest.qdrant_store as qs
-from knowledge_ingest import enrichment_tasks, sparse_embedder
+from knowledge_ingest import embedder, enrichment_tasks, sparse_embedder
+from knowledge_ingest.embedder import (
+    EMBEDDING_OUTAGE_WINDOW_SECONDS,
+    EMBEDDING_RETRY_SECONDS,
+    EmbeddingUnavailable,
+)
 from knowledge_ingest.enrichment import EnrichedChunk
-from knowledge_ingest.sparse_embedder import SparseEmbeddingUnavailable
 
 pytestmark = pytest.mark.real_sparse_embedder
 
@@ -42,6 +49,7 @@ DIM = 4
 ORG, KB, PATH, ART = "org-test", "kb-test", "docs/a.md", "art-1"
 CHUNKS = ["alpha text", "beta"]
 _DOWN = 10**6  # down for the whole test
+_DENSE, _SPARSE = "dense.example.com", "sparse.example.com"
 
 
 @pytest.fixture
@@ -61,32 +69,62 @@ async def mem_client():
 
 
 @pytest.fixture
-def sidecar():
-    """The sidecar behind the embedder's HTTP client; it refuses the next ``down_for`` calls."""
-    state = SimpleNamespace(down_for=0, calls=0)
+def services():
+    """Both embedding services behind one HTTP transport.
+
+    ``down[host]`` refuses that many calls to its embed endpoint;
+    ``health_down`` lists the hosts whose health check fails too (a restart),
+    and ``sparse_status`` makes the sidecar answer with that status instead.
+    """
+    state = SimpleNamespace(
+        down={_DENSE: 0, _SPARSE: 0},
+        health_down=set(),
+        health_status={},
+        sparse_status=200,
+        sparse_calls=0,
+    )
 
     def _answer(request: httpx.Request) -> httpx.Response:
-        state.calls += 1
-        if state.down_for:
-            state.down_for -= 1
+        host = request.url.host
+        if request.url.path == "/health":
+            if host in state.health_down:
+                raise httpx.ConnectError("connection refused", request=request)
+            return httpx.Response(state.health_status.get(host, 200))
+        if host == _SPARSE:
+            state.sparse_calls += 1
+        if state.down[host]:
+            state.down[host] -= 1
             raise httpx.ConnectError("connection refused", request=request)
-        texts = json.loads(request.content)["texts"]
-        return httpx.Response(
-            200, json={"results": [{"indices": [len(t)], "values": [1.0]} for t in texts]}
-        )
+        body = json.loads(request.content)
+        if host == _DENSE:
+            data = [
+                {"index": i, "embedding": [0.0, 1.0, 0.0, 0.0]} for i in range(len(body["input"]))
+            ]
+            return httpx.Response(200, json={"data": data})
+        if state.sparse_status != 200:
+            return httpx.Response(state.sparse_status)
+        results = [{"indices": [len(t)], "values": [1.0]} for t in body["texts"]]
+        return httpx.Response(200, json={"results": results})
 
     transport = httpx.MockTransport(_answer)
     real_client = httpx.AsyncClient
+
     with (
         patch.object(
             sparse_embedder.httpx,
             "AsyncClient",
             lambda **kwargs: real_client(transport=transport, **kwargs),
         ),
-        patch.object(sparse_embedder.settings, "sparse_sidecar_url", "http://sparse.example.com"),
+        patch.object(embedder.settings, "tei_url", f"http://{_DENSE}"),
+        patch.object(sparse_embedder.settings, "sparse_sidecar_url", f"http://{_SPARSE}"),
         patch.object(sparse_embedder.asyncio, "sleep", AsyncMock()),
     ):
         yield state
+
+
+def _restart(state) -> None:
+    state.down = {_DENSE: _DOWN, _SPARSE: _DOWN}
+    state.health_down = {_DENSE, _SPARSE}
 
 
 async def _write_raw() -> None:
@@ -107,12 +145,15 @@ async def _points(client: AsyncQdrantClient) -> list:
 
 
 class _App:
+    """Registers the tasks; each keeps its retry strategy and a recorded re-queue."""
+
     def __init__(self) -> None:
         self.tasks: dict = {}
         self.retry: dict = {}
 
     def task(self, **kwargs):
         def _decorator(fn):
+            fn.configure = MagicMock(return_value=SimpleNamespace(defer_async=AsyncMock()))
             self.tasks[fn.__name__] = fn
             self.retry[fn.__name__] = kwargs.get("retry")
             return fn
@@ -135,25 +176,33 @@ async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
     )
 
 
-async def _run_enrichment(attempts: int, finish: AsyncMock) -> None:
-    """Run the bulk enrichment job as its ``attempts``-th retry; ``finish`` records the state."""
+def _jobs():
     app = _App()
     enrichment_tasks._register_tasks(app)
+    return app
+
+
+async def _run_enrichment(
+    app,
+    *,
+    attempts: int = 0,
+    embedding_deferred_since: int | None = None,
+    llm=None,
+    finish: AsyncMock | None = None,
+) -> SimpleNamespace:
+    """Run the bulk enrichment job; return the state writer and the LLM call."""
+    finish = finish or AsyncMock()
 
     async def _enrich(**kw):
         return [EnrichedChunk(c, f"ctx {c}", "ctx", []) for c in kw["chunks"]]
 
+    llm = llm or AsyncMock(side_effect=_enrich)
     with (
         patch.object(enrichment_tasks, "_load_and_enrich", _load_and_enrich),
         patch.object(enrichment_tasks, "_finish", finish),
         patch.object(enrichment_tasks, "_link_graph_fields", AsyncMock()),
         patch.object(enrichment_tasks, "_still_current_for_write", AsyncMock(return_value=True)),
-        patch.object(enrichment_tasks.enrichment, "enrich_chunks", _enrich),
-        patch.object(
-            enrichment_tasks.embedder,
-            "embed",
-            AsyncMock(side_effect=lambda t: [[0.0, 1.0, 0.0, 0.0]] * len(t)),
-        ),
+        patch.object(enrichment_tasks.enrichment, "enrich_chunks", llm),
         patch.object(enrichment_tasks.kb_config, "get_kb_aliases", AsyncMock(return_value=[])),
         patch.object(
             enrichment_tasks.kb_config, "get_kb_product_rules", AsyncMock(return_value=[])
@@ -163,88 +212,148 @@ async def _run_enrichment(attempts: int, finish: AsyncMock) -> None:
         ),
     ):
         context = SimpleNamespace(job=SimpleNamespace(attempts=attempts, queueing_lock="lock"))
-        await app.tasks["enrich_document_bulk"](context, artifact_id=ART)
+        await app.tasks["enrich_document_bulk"](
+            context, artifact_id=ART, embedding_deferred_since=embedding_deferred_since
+        )
+    return SimpleNamespace(finish=finish, llm=llm)
 
 
-def _retry_decision(exc: BaseException, attempts: int):
-    app = _App()
-    enrichment_tasks._register_tasks(app)
-    job = SimpleNamespace(attempts=attempts)
-    return app.retry["enrich_document_bulk"].get_retry_decision(exception=exc, job=job)
+def _requeued(app) -> dict | None:
+    task = app.tasks["enrich_document_bulk"]
+    if not task.configure.called:
+        return None
+    return {
+        **task.configure.call_args.kwargs,
+        **task.configure.return_value.defer_async.call_args.kwargs,
+    }
 
 
-async def test_sparse_outage_in_enrichment_writes_nothing_retries_then_fails(
-    mem_client, sidecar, real_procrastinate
+async def test_a_restart_defers_before_the_model_work_without_spending_attempts(
+    mem_client, services
 ):
     await _write_raw()
     before = await _points(mem_client)
-    sidecar.down_for = _DOWN
+    _restart(services)
+    app = _jobs()
 
-    # Attempts up to the sparse bound leave the document pending and are
-    # retried, including attempts past the ordinary bulk retry budget.
-    finish = AsyncMock()
-    for attempts in (0, enrichment_tasks._BULK_MAX_ATTEMPTS):
-        with pytest.raises(SparseEmbeddingUnavailable) as raised:
-            await _run_enrichment(attempts, finish)
-        finish.assert_not_awaited()
-        decision = _retry_decision(raised.value, attempts)
-        assert decision is not None
-        wait = decision.retry_at - datetime.datetime.now(datetime.UTC)
-        assert wait.total_seconds() == pytest.approx(enrichment_tasks._SPARSE_RETRY_SECONDS, abs=5)
+    run = await _run_enrichment(app)  # returns: the job succeeds as a deferral
 
-    # The raw points are exactly as they were: no dense-only enriched write.
+    run.llm.assert_not_awaited()  # the health check came first
+    run.finish.assert_not_awaited()
+    requeued = _requeued(app)
+    assert requeued["schedule_in"] == {"seconds": EMBEDDING_RETRY_SECONDS}
+    assert requeued["queueing_lock"] == "lock"
+    assert abs(requeued["embedding_deferred_since"] - time.time()) < 5
+    assert [p.vector for p in await _points(mem_client)] == [p.vector for p in before]
+
+
+@pytest.mark.parametrize("host", [_DENSE, _SPARSE])
+async def test_a_service_still_loading_its_model_counts_as_down(services, host):
+    """A restarting service answers its health check with 503 before it serves."""
+    services.health_status[host] = 503
+
+    with pytest.raises(EmbeddingUnavailable):
+        await embedder.check_available()
+
+
+@pytest.mark.parametrize("host", [_DENSE, _SPARSE])
+async def test_an_outage_that_begins_mid_job_is_deferred_and_writes_nothing(
+    mem_client, services, host
+):
+    """Dense down during enrichment is the same condition as sparse down."""
+    await _write_raw()
+    before = await _points(mem_client)
+    services.down[host] = _DOWN  # health still answers: the outage starts after the check
+    app = _jobs()
+
+    run = await _run_enrichment(app)
+
+    run.llm.assert_awaited_once()
+    run.finish.assert_not_awaited()
+    assert _requeued(app)["embedding_deferred_since"] is not None
     after = await _points(mem_client)
-    assert [p.vector["vector_sparse"] for p in after] == [p.vector["vector_sparse"] for p in before]
+    assert [p.vector for p in after] == [p.vector for p in before]
     assert all("context_prefix" not in p.payload for p in after)
 
-    # The retries span comfortably more than the longest measured restart (6 min).
-    span = enrichment_tasks._SPARSE_RETRY_SECONDS * enrichment_tasks._SPARSE_MAX_ATTEMPTS
-    assert span >= 15 * 60
 
-    last = enrichment_tasks._SPARSE_MAX_ATTEMPTS
-    with pytest.raises(SparseEmbeddingUnavailable) as raised:
-        await _run_enrichment(last, finish)
-    finish.assert_awaited_once_with("enrichment", ART, "failed", "sparse_unavailable")
-    assert _retry_decision(raised.value, last) is None
-
-
-async def test_sparse_back_within_the_bound_writes_both_vectors(mem_client, sidecar):
-    await _write_raw()
-    sidecar.down_for = _DOWN
+async def test_an_outage_longer_than_the_window_fails_the_document(mem_client, services):
+    _restart(services)
+    app = _jobs()
     finish = AsyncMock()
-    with pytest.raises(SparseEmbeddingUnavailable):
-        await _run_enrichment(0, finish)
+    since = int(time.time()) - EMBEDDING_OUTAGE_WINDOW_SECONDS
 
-    sidecar.down_for = 0
-    await _run_enrichment(1, finish)
+    with pytest.raises(enrichment_tasks._DerivedWorkFailed) as ended:
+        await _run_enrichment(app, embedding_deferred_since=since, finish=finish)
 
-    finish.assert_awaited_once_with("enrichment", ART, "done")
+    finish.assert_awaited_once_with("enrichment", ART, "failed", "embedding_unavailable")
+    retry = app.retry["enrich_document_bulk"]
+    assert retry.get_retry_decision(exception=ended.value, job=SimpleNamespace(attempts=0)) is None
+    assert _requeued(app) is None
+
+
+async def test_back_within_the_window_writes_both_vectors(mem_client, services):
+    await _write_raw()
+    app = _jobs()
+
+    run = await _run_enrichment(app, embedding_deferred_since=int(time.time()) - 300)
+
+    run.finish.assert_awaited_once_with("enrichment", ART, "done")
     points = await _points(mem_client)
     assert [p.payload["context_prefix"] for p in points] == ["ctx", "ctx"]
     assert [p.vector["vector_sparse"].indices for p in points] == [
         [len("ctx alpha text")],
         [len("ctx beta")],
     ]
-    assert all(p.vector["vector_chunk"] for p in points)
 
 
-async def test_a_short_sidecar_blip_is_ridden_out_inside_one_call(sidecar):
-    sidecar.down_for = 1
+async def test_an_unrelated_error_after_the_ride_out_keeps_its_normal_attempts(
+    mem_client, services
+):
+    """The re-queued job is a fresh job: its first ordinary failure is retried
+    and does not fail the document."""
+    app = _jobs()
+    llm = AsyncMock(side_effect=RuntimeError("unrelated"))
+
+    with pytest.raises(RuntimeError) as raised:
+        await _run_enrichment(app, embedding_deferred_since=int(time.time()) - 600, llm=llm)
+
+    retry = app.retry["enrich_document_bulk"]
+    assert retry.get_retry_decision(exception=raised.value, job=SimpleNamespace(attempts=0))
+
+
+@pytest.mark.parametrize("status", [422, 413])
+async def test_a_request_the_sidecar_rejects_fails_the_document_at_once(
+    mem_client, services, status
+):
+    services.sparse_status = status
+    app = _jobs()
+    finish = AsyncMock()
+
+    with pytest.raises(enrichment_tasks._DerivedWorkFailed):
+        await _run_enrichment(app, finish=finish)
+
+    finish.assert_awaited_once_with("enrichment", ART, "failed", "sparse_rejected")
+    assert _requeued(app) is None
+    assert services.sparse_calls == 1
+
+
+async def test_a_short_sidecar_blip_is_ridden_out_inside_one_call(services):
+    services.down[_SPARSE] = 1
 
     vectors = await sparse_embedder.embed_sparse_batch(["abc"])
 
     assert [v.indices for v in vectors] == [[3]]
-    assert sidecar.calls == 2
+    assert services.sparse_calls == 2
 
 
-async def test_base_ingest_with_the_sidecar_down_creates_no_version(sidecar):
+async def test_base_ingest_with_the_sidecar_down_creates_no_version(services):
     """The base ingest embeds sparse before it records a version, like dense, so
     an outage fails the request with nothing written and a retry ingests again."""
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
     from tests.test_enrichment_dedup import _base_patches, _make_mock_app, _make_mock_conn
 
-    sidecar.down_for = _DOWN
+    services.down[_SPARSE] = _DOWN
     mock_app, _, _ = _make_mock_app()
     req = IngestRequest(
         org_id="org-1",
@@ -258,7 +367,7 @@ async def test_base_ingest_with_the_sidecar_down_creates_no_version(sidecar):
         with (
             patch("knowledge_ingest.routes.ingest.pg_store.create_artifact", AsyncMock()) as create,
             patch("knowledge_ingest.routes.ingest.qdrant_store.upsert_chunks", AsyncMock()) as up,
-            pytest.raises(SparseEmbeddingUnavailable),
+            pytest.raises(EmbeddingUnavailable),
         ):
             await ingest_document(_make_mock_conn(), req)
 
@@ -266,7 +375,7 @@ async def test_base_ingest_with_the_sidecar_down_creates_no_version(sidecar):
     up.assert_not_awaited()
 
 
-async def test_storage_refuses_a_point_without_its_sparse_vector(mem_client, sidecar):
+async def test_storage_refuses_a_point_without_its_sparse_vector(mem_client, services):
     """The one function that writes points checks it, so no caller can skip it."""
     await _write_raw()
     before = await _points(mem_client)

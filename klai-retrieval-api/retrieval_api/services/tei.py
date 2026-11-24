@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
 from qdrant_client.models import SparseVector
@@ -20,12 +21,16 @@ logger = logging.getLogger(__name__)
 # "Server disconnected" as it came back) or answers 5xx. A search cannot wait
 # out a whole restart (its health check failed for 2 and 4 minutes on
 # 2026-11-22 and 2026-11-23): the widget gives /retrieve 10 s and retrieval_ms
-# p95 was 4.6 s over the 7 days to 2026-11-24, so the retries wait at most
-# 2.75 s in total and then the search answers 503 embedding_unavailable.
-_RETRY_DELAYS_S = (0.25, 0.5, 1.0, 1.0)
-# A connect that hangs (the tunnel endpoint gone) fails fast and is retried;
-# reading the vector keeps the long timeout.
-_TIMEOUT = httpx.Timeout(120.0, connect=1.0)
+# p95 was 4.6 s over the 7 days to 2026-11-24. So the attempts that fail to
+# connect and the waits between them share one 3 s deadline; when it has
+# passed the search answers 503 embedding_unavailable. Once connected, reading
+# the vector keeps the long timeout, as before: that is a slow service, not a
+# missing one.
+_RETRY_BUDGET_S = 3.0
+_FIRST_DELAY_S = 0.25
+_MAX_DELAY_S = 1.0
+_READ_TIMEOUT_S = 120.0
+_MAX_CONNECT_TIMEOUT_S = 1.0
 
 
 class EmbeddingUnavailable(RuntimeError):
@@ -49,27 +54,29 @@ async def embed_single(text: str) -> list[float]:
     """Embed a single text string via the Infinity /v1/embeddings endpoint.
 
     Returns a dense float vector. A dropped connection or a 5xx is retried
-    after each of ``_RETRY_DELAYS_S``; after the last one it raises
-    :class:`EmbeddingUnavailable`.
+    with growing waits until ``_RETRY_BUDGET_S`` has passed in total, connect
+    timeouts included; then it raises :class:`EmbeddingUnavailable`. A read
+    timeout and a 4xx are not retried.
     """
-    for delay in _RETRY_DELAYS_S:
+    deadline = time.monotonic() + _RETRY_BUDGET_S
+    delay = _FIRST_DELAY_S
+    while True:
+        connect = min(_MAX_CONNECT_TIMEOUT_S, max(deadline - time.monotonic(), 0.05))
         try:
-            return await _embed_once(text)
+            return await _embed_once(text, connect)
         except httpx.HTTPError as exc:
             if not _transient(exc):
                 raise
+            if time.monotonic() + delay >= deadline:
+                logger.warning("dense_embedding_unavailable", exc_info=True)
+                raise EmbeddingUnavailable(type(exc).__name__) from exc
             await asyncio.sleep(delay)
-    try:
-        return await _embed_once(text)
-    except httpx.HTTPError as exc:
-        if not _transient(exc):
-            raise
-        logger.warning("dense_embedding_unavailable", exc_info=True)
-        raise EmbeddingUnavailable(type(exc).__name__) from exc
+            delay = min(delay * 2, _MAX_DELAY_S)
 
 
-async def _embed_once(text: str) -> list[float]:
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+async def _embed_once(text: str, connect_timeout: float) -> list[float]:
+    timeout = httpx.Timeout(_READ_TIMEOUT_S, connect=connect_timeout)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             f"{settings.tei_url}/v1/embeddings",
             json=_embedding_payload(text),

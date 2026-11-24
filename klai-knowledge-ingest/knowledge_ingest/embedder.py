@@ -33,6 +33,39 @@ _BATCH_SIZE = 32
 _MAX_ATTEMPTS = 5
 _MAX_BACKOFF_SECONDS = 30
 
+# A restart of the whole GPU server takes both embedding services away for
+# about six minutes (2026-11-22 from 07:50Z, 2026-11-23 from 11:45Z), longer
+# than any call can wait. The jobs that write points wait it out instead: they
+# are queued again every 2 minutes for 16 minutes, well over twice the
+# measured restart, before the document records failed (embedding_unavailable).
+EMBEDDING_RETRY_SECONDS = 120
+EMBEDDING_OUTAGE_WINDOW_SECONDS = 16 * 60
+
+
+class EmbeddingUnavailable(RuntimeError):
+    """The dense or the sparse embedding service did not answer: an outage.
+
+    Nothing is written for the texts it was asked for; the caller waits for the
+    services to come back (``EMBEDDING_RETRY_SECONDS``) and gives up after
+    ``EMBEDDING_OUTAGE_WINDOW_SECONDS``.
+    """
+
+
+async def check_available() -> None:
+    """One health call to each embedding service, before any model work.
+
+    A job that would only find the outage after its LLM calls pays for that
+    work on every retry; this costs one request each.
+    """
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for name, url in (("dense", settings.tei_url), ("sparse", settings.sparse_sidecar_url)):
+            try:
+                resp = await client.get(f"{url}/health")
+            except httpx.HTTPError as exc:
+                raise EmbeddingUnavailable(f"{name} service: {type(exc).__name__}") from exc
+            if resp.status_code != 200:
+                raise EmbeddingUnavailable(f"{name} service health: HTTP {resp.status_code}")
+
 
 def _jitter_backoff(attempt: int) -> float:
     """Full-jitter backoff: ``random.uniform(0, min(2**attempt, _MAX_BACKOFF_SECONDS))``.
@@ -47,9 +80,10 @@ def _jitter_backoff(attempt: int) -> float:
 async def _embed_batch(client: httpx.AsyncClient, texts: list[str]) -> list[list[float]]:
     """Embed a single batch with retry on transient errors.
 
-    Retries on httpx.ReadTimeout, httpx.ConnectTimeout, and HTTP 5xx.
-    Final exhaustion logs at error level so the existing
-    obs-001-ingest-error-rate-elevated Grafana alert (level:error) fires.
+    Retries a refused, dropped or timed-out connection and HTTP 5xx; a 4xx is
+    the request's own fault and raises at once. Final exhaustion logs at error
+    level, so the obs-001-ingest-error-rate-elevated alert fires, and raises
+    :class:`EmbeddingUnavailable`.
     """
     last_exc: Exception | None = None
     last_status: int | None = None
@@ -63,14 +97,17 @@ async def _embed_batch(client: httpx.AsyncClient, texts: list[str]) -> list[list
             data = resp.json()["data"]
             data.sort(key=lambda x: x["index"])
             return [item["embedding"] for item in data]
-        except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+        except httpx.TransportError as exc:
             last_exc = exc
             wait = _jitter_backoff(attempt)
             logger.warning(
-                "tei_embed_timeout",
+                "tei_embed_timeout"
+                if isinstance(exc, httpx.TimeoutException)
+                else "tei_embed_unreachable",
                 attempt=attempt + 1,
                 max_attempts=_MAX_ATTEMPTS,
                 texts=len(texts),
+                error_type=type(exc).__name__,
                 wait_s=wait,
             )
             await asyncio.sleep(wait)
@@ -90,10 +127,6 @@ async def _embed_batch(client: httpx.AsyncClient, texts: list[str]) -> list[list
             else:
                 raise
 
-    # All retries exhausted. Promote to error so the existing
-    # ingest-error-rate Grafana alert fires; bulk-sync callers
-    # currently swallow embed exceptions and skip the page silently
-    # (see audit finding 6 — combines with finding 5 silent-degrade).
     assert last_exc is not None
     logger.error(
         "tei_embed_failed_max_attempts",
@@ -103,7 +136,7 @@ async def _embed_batch(client: httpx.AsyncClient, texts: list[str]) -> list[list
         error_type=type(last_exc).__name__,
         error_message=str(last_exc),
     )
-    raise last_exc
+    raise EmbeddingUnavailable(f"dense service: {type(last_exc).__name__}") from last_exc
 
 
 async def embed(texts: list[str]) -> list[list[float]]:
