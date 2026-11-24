@@ -90,6 +90,17 @@ async def _record_lost_work(job: Any) -> None:
         await record_outcome(conn, artifact_id, product, FAILED, "stuck_job_not_covered")
 
 
+async def _closed_by_waiting_twin(proc_app: Any, job_id: int) -> bool:
+    """Whether the retry ended the zombie failed because a job waits on its queueing lock.
+
+    procrastinate 3.12's retry_job_v2 ends a doing job failed in two cases: a
+    todo job holds its queueing lock, or its abort was requested. Only the
+    first is a twin; a cancelled job keeps its old outcome.
+    """
+    [job] = await proc_app.job_manager.list_jobs_async(id=job_id)
+    return job.status == "failed" and not job.abort_requested
+
+
 async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
     """Reset jobs orphaned by dead workers back to ``todo``.
 
@@ -114,14 +125,20 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
     retried = 0
     for job in jobs:
         job_id = job.id
+        closed_by_retry = False
         try:
             twins = await _twins(proc_app, job)
             # Only a todo job holds the queueing lock (its unique index covers
             # todo rows), so without one the zombie can go back to todo.
             if not any(twin.status == "todo" for twin in twins):
                 await proc_app.job_manager.retry_job_by_id_async(job_id=job_id, retry_at=retry_at)
-                retried += 1
-                continue
+                if not await _closed_by_waiting_twin(proc_app, job_id):
+                    retried += 1
+                    continue
+                # A job deferred under the lock since the check above made the
+                # retry close the zombie failed; see whether that job covers it.
+                closed_by_retry = True
+                twins = await _twins(proc_app, job)
         except Exception:
             logger.exception(
                 "procrastinate_zombie_retry_failed",
@@ -135,11 +152,12 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
         # job does its work, so decide here which of the two it is.
         covered = _twins_cover(job, twins)
         try:
-            await proc_app.job_manager.finish_job_by_id_async(
-                job_id=job_id,
-                status=Status.ABORTED if covered else Status.FAILED,
-                delete_job=False,
-            )
+            if not closed_by_retry:
+                await proc_app.job_manager.finish_job_by_id_async(
+                    job_id=job_id,
+                    status=Status.ABORTED if covered else Status.FAILED,
+                    delete_job=False,
+                )
             if not covered:
                 await _record_lost_work(job)
         except Exception:
