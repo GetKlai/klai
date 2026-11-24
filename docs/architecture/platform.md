@@ -81,7 +81,7 @@ Every gpu-01 service binds to loopback and is reached from core-01 over a tunnel
 | Identity | zitadel (321) | Identity provider; own host through Caddy over h2c (`deploy/caddy/Caddyfile:121-134`) |
 | Meeting capture | vexa12-admin-api (1949), vexa12-runtime (1990), vexa12-meeting-api (2025), vexa12-redis (1899), vexa12-transcription-proxy (1923) | The Vexa stack. The meeting API listens only on the network shared with portal-api; the proxy forwards the bots' transcription calls to gpu-01 (`deploy/docker-compose.yml:1932-1934`) |
 | Docker access | docker-socket-proxy (719), docker-socket-proxy-ro (748), runtime-api-socket-proxy (1838) | The write proxy allows only containers and networks with create and delete, behind klai-docker-authz; the read-only proxy serves Alloy (`deploy/docker-compose.yml:709-718`, `deploy/alloy/config.alloy:15-27`) |
-| Observability | alloy (1463), grafana (1494), cadvisor (1436), glitchtip-web, glitchtip-worker, glitchtip-migrate (1247, 1281, 1306) | See section 9 |
+| Observability | alloy (1463), grafana (1494), cadvisor (1436), glitchtip-web, glitchtip-migrate | See section 9 |
 | Third-party applications | crm and crm-worker, umami, fider, listmonk, vaultwarden, calnode | CRM, web analytics, feedback board, newsletter, password manager, scheduling. Each has its own host in Caddy (`deploy/caddy/Caddyfile:207-216,568-649`) |
 | Supporting | rollback-canary (901) | Behind the profile `rollback-rehearsal`; used only by the rehearsal workflows (`deploy/docker-compose.yml:901-902`) |
 
