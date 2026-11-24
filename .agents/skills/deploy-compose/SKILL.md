@@ -1,6 +1,6 @@
 ---
 name: deploy-compose
-description: Explain and verify Klai Compose deployment boundaries (automatic core-01 config sync, validation-only gpu-01 Compose CI, and manual SOPS secret delivery). Use when changing deploy/docker-compose*.yml, Caddyfile, alloy/searxng/vexa configs, Grafana provisioning, or when a deploy did not land.
+description: Explain and verify Klai Compose deployment boundaries (automatic core-01 config sync, gpu-01 deployed from the private infrastructure repository, and manual SOPS secret delivery). Use when changing deploy/docker-compose*.yml, Caddyfile, alloy/searxng/vexa configs, Grafana provisioning, or when a deploy did not land.
 ---
 
 # Deploy flow (compose → core-01)
@@ -16,9 +16,9 @@ Two separate halves. Config is CI-synced; secrets are pushed manually.
 
 For those exact core-01 paths, merging to `main` is the config deploy. Other code changes use their own service workflows.
 
-## GPU Compose — validation only
+## GPU host — not in this repository
 
-`.github/workflows/validate-gpu-compose.yml` validates `deploy/docker-compose.gpu.yml` on pull requests and pushes to `main`. It checks Compose syntax, pinned Vexa tags, and anonymous image pullability. It performs no SSH, sync, or deploy to gpu-01. Follow the relevant runbook and obtain explicit approval before any gpu-01 mutation.
+gpu-01's compose file, image pins and deploy live only in `GetKlai/klai-infra` (`gpu-01/`), which applies them on the host itself. This repository has no GPU compose file since 2026-11-24: the copy that was here was never applied and had drifted from production. A change to a GPU service is a klai-infra change; obtain explicit approval before any gpu-01 mutation.
 
 ## Half 2 — secrets (manual, deploy.sh)
 

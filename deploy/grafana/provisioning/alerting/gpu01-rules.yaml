@@ -1,0 +1,161 @@
+# gpu-01 deploy alerts, the counterpart of the two infra-deploy rules in
+# public01-rules.yaml.
+#
+# The GPU host applies its own compose file (it lives in the private
+# infrastructure repository) and writes one JSON line per run. That host runs
+# no log shipper, so core-01 copies the new lines to
+# /opt/klai/logs/gpu-deploy.log, which deploy/alloy/config.alloy ships as
+# service:gpu-deploy. Events: auto_rollback (outcome rolled_back |
+# rollback_failed, gate = the step that failed, e.g. probe:infinity) and
+# gpu_deploy (deployed | up_to_date | skipped_bad_rev, the healthy heartbeat,
+# or failed | validation_failed | pull_failed | disabled, which are not; the
+# heartbeat query lists the healthy outcomes instead of excluding the others,
+# so an outcome added later cannot pass as healthy). Same shape, labels and
+# routing as the public-01 rules: severity=critical, no component label, so
+# policies.yaml sends them to klai-ops-alerts-email.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: gpu-01
+    folder: Klai
+    interval: 1m
+    rules:
+      - uid: gpu01-deploy-rollback
+        title: gpu01_deploy_rollback
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:15m service:gpu-deploy event:auto_rollback
+                  | stats by (outcome, gate, rev) count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-AUTO-ROLLBACK-001
+          service_group: gpu-01
+          alert_type: auto_rollback
+        annotations:
+          summary: '{{ if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: gpu-01 revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ else }}Rolled back automatically: gpu-01 revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ end }}'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/gpu-01-setup.md#automatische-deploy-sinds-2026-11-24'
+          description: |
+            Revision: {{ $labels.rev }}
+            Failed gate: {{ $labels.gate }}
+            Outcome: {{ $labels.outcome }}
+
+            {{ if eq $labels.outcome "rollback_failed" }}The previous images did not pass their health check or probe either, so
+            embeddings, the reranker, sparse vectors or transcription may be down
+            right now. This is the one outcome that needs a human immediately.{{ else }}A klai-infra revision failed its health check or probe on gpu-01 and the
+            previous images run again and passed. Nothing is broken now; the
+            gpu-01 tree is skipped until it changes. Fix forward in klai-infra.{{ end }}
+
+            In VictoriaLogs:
+              _time:1h service:gpu-deploy | sort by (_time) desc | limit 10
+
+      - uid: gpu01-deploy-silent
+        title: gpu01_deploy_silent
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:2h service:gpu-deploy event:gpu_deploy outcome:in(deployed, up_to_date, skipped_bad_rev)
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: Alerting
+        execErrState: Error
+        for: 10m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-AUTO-ROLLBACK-001
+          service_group: gpu-01
+          alert_type: silent
+        annotations:
+          summary: 'No healthy gpu-01 deploy heartbeat for 2 hours: the cron, the log copy, the kill switch, or every run is failing'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/gpu-01-setup.md#automatische-deploy-sinds-2026-11-24'
+          description: |
+            deploy-gpu.sh runs every 10 minutes on gpu-01 and writes one line per
+            run; core-01 copies new lines every 5 minutes and its Alloy ships
+            them. No line with outcome deployed, up_to_date or skipped_bad_rev
+            arrived in 2 hours. Either the cron stopped, the copy on core-01
+            stopped, the kill switch is on (outcome disabled), or every run
+            fails (outcome failed, validation_failed or pull_failed: read gate).
+
+            Check, in order:
+              1. In VictoriaLogs: _time:3h service:gpu-deploy | sort by (_time) desc | limit 10
+              2. On core-01: tail -n 3 /opt/klai/logs/gpu-deploy.log
+              3. On gpu-01: tail -n 3 /opt/klai/logs/gpu-deploy.log, crontab -l

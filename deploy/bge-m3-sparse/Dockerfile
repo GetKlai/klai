@@ -1,7 +1,9 @@
 FROM python:3.13-slim
 
-# Apply security patches to base image OS packages. Built on gpu-01 rather
-# than in CI, so nothing else would ever catch a stale OS package here.
+# Apply security patches to base image OS packages. CI builds and scans this
+# image (.github/workflows/bge-m3-sparse.yml) but publishes nothing; the GPU
+# host does not run this build yet, and its own image is managed in the
+# private infrastructure repository.
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

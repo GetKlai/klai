@@ -22,7 +22,7 @@ CHANGED=$(git diff --cached --name-only --diff-filter=ACM)
 
 # ---- Trigger 1: deploy/ image-tag validators ----
 
-if echo "$CHANGED" | grep -qE '^(deploy/(docker-compose(\.override|\.gpu)?\.ya?ml|check-image-.*\.sh|check-versions-doc\.py|VERSIONS\.md)|docker-compose\.dev\.yml)$'; then
+if echo "$CHANGED" | grep -qE '^(deploy/(docker-compose(\.override)?\.ya?ml|check-image-.*\.sh|check-versions-doc\.py|VERSIONS\.md)|docker-compose\.dev\.yml)$'; then
     echo "[pre-commit] deploy/ change detected — validating image tags..."
 
     if [ -f deploy/check-image-tags.sh ]; then
@@ -47,11 +47,7 @@ fi
 
 if echo "$CHANGED" | grep -qE '^deploy/(docker-compose.*\.ya?ml|check-env-file-scope\.py)$'; then
     echo "[pre-commit] deploy Compose change detected — validating env_file scope..."
-    ENV_SCOPE_FILES="deploy/docker-compose.yml"
-    [ -f deploy/docker-compose.gpu.yml ] && ENV_SCOPE_FILES="$ENV_SCOPE_FILES deploy/docker-compose.gpu.yml"
-    # Intentional word splitting: each existing Compose file is one argument.
-    # shellcheck disable=SC2086
-    python3 -B deploy/check-env-file-scope.py $ENV_SCOPE_FILES
+    python3 -B deploy/check-env-file-scope.py deploy/docker-compose.yml
 fi
 
 # ---- Trigger 3: .trivyignore.yaml validator ----

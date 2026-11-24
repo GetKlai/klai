@@ -5,7 +5,6 @@ on:
     paths:
       - 'deploy/docker-compose.yml'
       - 'deploy/docker-compose.override.yml'
-      - 'deploy/docker-compose.gpu.yml'
       - 'docker-compose.dev.yml'
       - 'deploy/VERSIONS.md'
       - 'deploy/check-versions-doc.py'
@@ -29,7 +28,6 @@ on:
     paths:
       - 'deploy/docker-compose.yml'
       - 'deploy/docker-compose.override.yml'
-      - 'deploy/docker-compose.gpu.yml'
       - 'docker-compose.dev.yml'
       - 'deploy/VERSIONS.md'
       - 'deploy/check-versions-doc.py'

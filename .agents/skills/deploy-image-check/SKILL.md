@@ -5,14 +5,14 @@ description: Validate vexaai/* image tags in deploy compose files before committ
 
 # Deploy image check (pinned + pullable)
 
-Two scripts guard every `vexaai/<svc>:<tag>` reference in `deploy/docker-compose.yml` and `deploy/docker-compose.gpu.yml`. Run both before committing compose changes:
+Two scripts guard every `vexaai/<svc>:<tag>` reference in `deploy/docker-compose.yml`. Run both before committing compose changes:
 
 ```sh
 sh deploy/check-image-tags.sh        # tag FORM: pinned only
 sh deploy/check-image-pullable.sh    # tag EXISTENCE: manifest on registry
 ```
 
-They are wired into `.githooks/pre-commit`. CI runs them in `deploy-compose.yml` before a core-01 sync and in `validate-gpu-compose.yml` for gpu-01 Compose changes. The GPU workflow validates only; it does not deploy.
+They are wired into `.githooks/pre-commit`. CI runs them in `deploy-compose.yml` before a core-01 sync and in `validate-image-checks.yml` on a pull request that changes them.
 
 ## Rules the scripts enforce
 

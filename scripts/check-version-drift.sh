@@ -178,8 +178,4 @@ if [ -z "$theirs" ]; then fail "librechat: could not read the upstream tags"
 elif newer "$ours" "$theirs"; then fail "librechat: we build on $ours, upstream released $theirs (DEFAULT_LIBRECHAT_TAG)"
 else ok "librechat: $ours is the latest stable upstream release"; fi
 
-ours=$(grep -oE 'vexaai/transcription-service:[0-9.]+' deploy/docker-compose.gpu.yml | head -1 | sed 's/.*://')
-theirs=$(upstream_latest Vexa-ai/vexa)
-note "transcription-service: we build $ours, Vexa released ${theirs:-?}; bumped only for transcription fixes (docs/runbooks/transcription-service-bump.md)"
-
 exit "$FAIL"

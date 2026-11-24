@@ -1,6 +1,6 @@
 # Explicit Version Pins
 
-This file documents why an image is held where it is and what to check before a bump. **It never states a version.** The compose files (`deploy/docker-compose.yml`, `deploy/docker-compose.override.yml`, `deploy/docker-compose.gpu.yml`, `docker-compose.dev.yml`) are the only place an image tag or digest lives, because Renovate bumps them and never edits this file; a version written here is wrong at the next bump. To see what is pinned, read the compose file or run `rg -n 'image:' deploy/docker-compose.yml`.
+This file documents why an image is held where it is and what to check before a bump. **It never states a version.** The compose files (`deploy/docker-compose.yml`, `deploy/docker-compose.override.yml`, `docker-compose.dev.yml`) are the only place an image tag or digest lives, because Renovate bumps them and never edits this file; a version written here is wrong at the next bump. To see what is pinned, read the compose file or run `rg -n 'image:' deploy/docker-compose.yml`.
 
 Every external image in `docker-compose.yml` and `docker-compose.dev.yml` is pinned to an explicit version tag (`deploy/check-image-tags.sh`). No `:latest` on external services.
 

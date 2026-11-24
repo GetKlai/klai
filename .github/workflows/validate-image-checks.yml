@@ -1,30 +1,35 @@
-name: Validate gpu-01 compose
+name: Validate image checks
+
+# Runs the image-reference guards and the test of the pullability check on a
+# pull request that changes them. This was validate-gpu-compose.yml until
+# 2026-11-24; the GPU compose file it also validated was a copy nobody applied
+# (the GPU host deploys from the private infrastructure repository) and was
+# removed. The test of the anonymous pullability check ran only here, so it
+# stays.
 
 on:
   pull_request:
     paths:
-      - 'deploy/docker-compose.gpu.yml'
       - 'deploy/check-image-tags.sh'
       - 'deploy/check-image-pullable.sh'
       - 'deploy/tests/test-check-image-pullable-anonymous.sh'
       - 'deploy/tests/fixtures/fake-docker-anonymous-check'
-      - '.github/workflows/validate-gpu-compose.yml'
+      - '.github/workflows/validate-image-checks.yml'
   push:
     branches: [main]
     paths:
-      - 'deploy/docker-compose.gpu.yml'
       - 'deploy/check-image-tags.sh'
       - 'deploy/check-image-pullable.sh'
       - 'deploy/tests/test-check-image-pullable-anonymous.sh'
       - 'deploy/tests/fixtures/fake-docker-anonymous-check'
-      - '.github/workflows/validate-gpu-compose.yml'
+      - '.github/workflows/validate-image-checks.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  validate-gpu-compose:
+  validate-image-checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -36,14 +41,3 @@ jobs:
         run: |
           sh deploy/check-image-tags.sh
           sh deploy/check-image-pullable.sh
-
-      - name: Validate gpu-01 compose syntax
-        run: |
-          if [[ -f deploy/docker-compose.gpu.yml ]]; then
-            docker compose -f deploy/docker-compose.gpu.yml config --quiet
-          else
-            echo "GPU Compose is not present on this branch yet; validation activates when it lands."
-          fi
-
-      - name: Explain deployment boundary
-        run: echo "Validation only; this workflow does not sync or deploy gpu-01."
