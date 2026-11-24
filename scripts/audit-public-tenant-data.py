@@ -23,8 +23,7 @@ What it looks for:
    (``provisioning_names.py``), so nothing in the shape tells a tenant from a
    code name. The one thing that does is the repository itself: a token that
    ends a file or directory name tracked in this checkout or added by the diff
-   (``deploy/scripts/librechat-foo-bar.sh``, ``librechat-foo-bar.test.sh``, a
-   workflow, a test file) names that file, and a commit message or pull-request
+   (a script, its test, a workflow or a test file named ``librechat-<words>``) names that file, and a commit message or pull-request
    text citing it is not naming a customer. Ceiling: a new tenant whose slug
    equals the tail of an existing file name passes this rule; rule 4 still
    catches it whenever the name list is available.
@@ -362,8 +361,8 @@ def _known_librechat_names() -> set[str]:
 def _path_names(paths: list[str]) -> set[str]:
     """Every ``<slug>`` such that ``librechat-<slug>`` ends a path segment's stem.
 
-    The stem is the segment up to its first dot, so ``a/deploy-librechat-x.test.sh``
-    yields ``x``. The match must start the stem or follow a ``-`` or ``_``.
+    The stem is the segment up to its first dot, so a path ending in
+    ``deploy-librechat-<words>.test.sh`` yields ``<words>``. The match must start the stem or follow a ``-`` or ``_``.
     """
     names: set[str] = set()
     for path in paths:
