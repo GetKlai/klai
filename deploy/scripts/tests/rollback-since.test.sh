@@ -213,12 +213,65 @@ check "exit 4" test "$rc" = 4
 check "Caddyfile not restored" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
 check "reported" grep -q '"gate":"e2e-several-syncs"' "$d/logs/auto-rollback.log"
 
+# --red-since: E2E already red before the deploys in the window. Last green run
+# at SINCE (04:00) in every case below.
+x_line="$(line 2026-10-28T05:00:00Z image retrieval-api aaaaaaaaaaa1 ghcr.io/getklai/retrieval-api:s1 s1 deployed)"
+
+echo "# (a) green, deploy X, red: X is rolled back, as without --red-since"
+new_case seq-a "$x_line"
+run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T05:46:00Z
+check "exit 3" test "$rc" = 3
+check "X back to the image of the last green run" test "$(deploys)" = "retrieval-api aaaaaaaaaaa1 --rollback e2e sha=s1 profiles="
+check "report outcome rolled_back" test "$(report outcome)" = rolled_back
+
+echo "# (b) red already, deploy Y, red: nothing rolled back"
+new_case seq-b \
+    "$(line 2026-10-28T05:00:00Z image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed)" \
+    "$(line 2026-10-28T05:10:00Z compose compose bbb222 ccc333 ccc333 deployed)"
+run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T04:30:00Z
+check "exit 5" test "$rc" = 5
+check "nothing rolled back" test ! -s "$d/fixtures/deploys"
+check "compose untouched" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
+check "report outcome e2e_already_red, gate e2e-already-red" test "$(report outcome) $(report gate)" = "e2e_already_red e2e-already-red"
+check "report names the deploys it does not blame" test "$(report service)" = "klai-mailer compose"
+check "report says since when E2E is red" test "$(report red_since)" = 2026-10-28T04:30:00Z
+check "said in the run log" grep -q '::error::E2E prod-tenant has been red since 2026-10-28T04:30:00Z, before the first deploy' <<< "$out"
+check "no replay time recorded, so the next red run decides the same way" test ! -e "$d/.e2e-rollback-at"
+
+echo "# (c) X broke E2E and was rolled back, red again for another reason, deploy Y: Y stays"
+new_case seq-c \
+    "$x_line" \
+    "$(line 2026-10-28T06:00:00Z image retrieval-api ghcr.io/getklai/retrieval-api:s1 aaaaaaaaaaa1 s1 rolled_back)" \
+    "$(line 2026-10-28T07:00:00Z image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed)"
+echo 2026-10-28T06:00:00Z > "$d/.e2e-rollback-at"
+# The oldest failure after the green run is the one that caught X (05:20).
+run "$SINCE" --until 2026-10-28T08:00:00Z --red-since 2026-10-28T05:20:00Z
+check "exit 5" test "$rc" = 5
+check "Y not rolled back" test ! -s "$d/fixtures/deploys"
+check "report names only Y" test "$(report service)" = klai-mailer
+
+echo "# (d) green, X and Y close together, one red run covers both: both rolled back"
+new_case seq-d "$x_line" \
+    "$(line 2026-10-28T05:05:00Z image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed)"
+run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T05:46:00Z
+check "exit 3" test "$rc" = 3
+check "both rolled back" test "$(deploys | cut -d' ' -f1 | paste -sd' ' -)" = "klai-mailer retrieval-api"
+
+echo "# (e) a fix turned E2E green, then a new deploy broke it: the old red period does not count"
+new_case seq-e "$x_line"
+# SINCE is the green run after the fix; 03:30 was the old red period.
+run "$SINCE" --until 2026-10-28T05:45:00Z --red-since 2026-10-28T03:30:00Z
+check "exit 3" test "$rc" = 3
+check "X rolled back" test "$(deploys | cut -d' ' -f1)" = retrieval-api
+
 echo "# bad arguments"
 new_case args
 run "yesterday" --until "$UNTIL"
 check "a since that is not the ledger format -> exit 1" test "$rc" = 1
 run "$SINCE"
 check "no --until -> exit 1" test "$rc" = 1
+run "$SINCE" --until "$UNTIL" --red-since "last night"
+check "a --red-since that is not the ledger format -> exit 1" test "$rc" = 1
 
 if (( failures > 0 )); then
     echo "$failures check(s) failed"

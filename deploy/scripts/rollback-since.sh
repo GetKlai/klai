@@ -6,11 +6,15 @@
 # over ssh after a red E2E run on main has been confirmed by a second red run.
 #
 # Usage:
-#   rollback-since.sh <since-ts> --until <until-ts> [--rehearse]
+#   rollback-since.sh <since-ts> --until <until-ts> [--red-since <ts>] [--rehearse]
 #
 #   <since-ts>   start of the last green run's job
 #   --until      creation time of the red run; a deploy after it was not what
 #                that run saw, so it is left alone
+#   --red-since  job start of the oldest failed E2E run after the last green
+#                one. When it lies before the first deploy this run would undo,
+#                E2E was already red before that deploy, so nothing in the
+#                window is blamed (outcome e2e_already_red, below)
 #   --rehearse   handle the rollback-canary service only, so the whole chain can
 #                be exercised on production without touching a real service
 #   Times are UTC in the ledger's own format (2026-10-28T04:00:00Z) and are
@@ -41,11 +45,22 @@
 # later runs only read ledger lines after the later of <since-ts> and that time,
 # so a deploy is undone once even when E2E stays red.
 #
+# Already red: from 2026-11-19 to 2026-11-22 the login journey failed because of
+# a setting in the identity provider. With no green run after it, every later
+# deploy fell inside the window, was confirmed red and rolled back, CRM database
+# restores included. So when an E2E run failed after the last green one and
+# before the first deploy in (since, until] (the window as R6 below narrows
+# it), that deploy cannot be what turned E2E red: nothing changes and the run
+# ends with its own outcome. The first red run after a breaking deploy started
+# after that deploy, so it still rolls back.
+#
 # Exit codes
 #   0  nothing to roll back; nothing changed
 #   3  every service found was rolled back                     (rolled_back)
 #   4  at least one rollback failed or could not be attempted,
 #      or the ledger is missing                                (rollback_failed)
+#   5  E2E was already red before the first deploy in the
+#      window; nothing changed                                 (e2e_already_red)
 #   1  bad arguments, or the scripts could not be copied
 #
 # Report: <reports>/e2e-rollback.json, one object in the shape
@@ -71,16 +86,18 @@ PREV_STATE="$KLAI_DIR/.compose-prev-state"
 CANARY="rollback-canary"
 TS_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 
-usage() { echo "usage: ${0##*/} <since-ts> --until <until-ts> [--rehearse]   (times YYYY-MM-DDTHH:MM:SSZ)" >&2; exit 1; }
+usage() { echo "usage: ${0##*/} <since-ts> --until <until-ts> [--red-since <ts>] [--rehearse]   (times YYYY-MM-DDTHH:MM:SSZ)" >&2; exit 1; }
 
 (( $# >= 1 )) || usage
 SINCE="$1"
 shift
 UNTIL=""
+RED_SINCE=""
 REHEARSE=0
 while (( $# > 0 )); do
     case "$1" in
         --until) (( $# >= 2 )) || usage; UNTIL="$2"; shift 2 ;;
+        --red-since) (( $# >= 2 )) || usage; RED_SINCE="$2"; [[ "$RED_SINCE" =~ $TS_RE ]] || usage; shift 2 ;;
         --rehearse) REHEARSE=1; shift ;;
         *) usage ;;
     esac
@@ -143,9 +160,9 @@ fail_event() {
 # finish <outcome> <gate> <code>
 finish() {
     local report
-    report="$(printf '{"service":"%s","kind":"e2e","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","since":"%s","until":"%s","skipped":"%s","log":"%s"}' \
+    report="$(printf '{"service":"%s","kind":"e2e","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","since":"%s","until":"%s","red_since":"%s","skipped":"%s","log":"%s"}' \
         "$(json_str "${SERVICES% }")" "$(json_str "${FROMS% }")" "$(json_str "${TOS% }")" "$(json_str "${COMMITS% }")" \
-        "$2" "$1" "$(now)" "$AFTER" "$UNTIL" "$(json_str "${SKIPPED% }")" "$(json_str "$LOG")")"
+        "$2" "$1" "$(now)" "$AFTER" "$UNTIL" "$RED_SINCE" "$(json_str "${SKIPPED% }")" "$(json_str "$LOG")")"
     printf '%s\n' "$report" > "$REPORT_DIR/e2e-rollback.json"
     echo "ROLLBACK_REPORT $report"
     exit "$3"
@@ -168,6 +185,21 @@ PLAN="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" '
     }
     END { for (k in from) print ts[k] "\t" k "\t" from[k] "\t" to[k] "\t" commit[k] "\t" n[k] }
 ' "$LEDGER" | sort -t "$(printf '\t')" -k2,2r -k1,1r)"
+
+# The oldest deploy this run would undo; the canary never counts.
+FIRST="$(awk -F'\t' -v after="$AFTER" -v until="$UNTIL" -v canary="$CANARY" '
+    $1 > after && $1 <= until && $7 == "deployed" && ($2 == "image" || $2 == "compose") && $3 != canary { print $1; exit }
+' "$LEDGER")"
+if [[ -n "$FIRST" && "$RED_SINCE" > "$SINCE" && "$RED_SINCE" < "$FIRST" ]]; then
+    while IFS=$'\t' read -r _ts _kind svc _from to commit _n; do
+        [[ -n "$svc" && "$svc" != "$CANARY" ]] || continue
+        SERVICES+="$svc "
+        TOS+="$svc=$to "
+        COMMITS+="$commit "
+    done <<< "$PLAN"
+    echo "::error::E2E prod-tenant has been red since $RED_SINCE, before the first deploy in ($AFTER, $UNTIL] at $FIRST; nothing rolled back, the deploys in the window (${SERVICES% }) are not blamed"
+    finish e2e_already_red e2e-already-red 5
+fi
 
 # skip_newer <service> <why>: a later deploy is live; leave it, say so.
 skip_newer() {

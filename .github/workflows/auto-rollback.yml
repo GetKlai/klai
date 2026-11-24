@@ -5,7 +5,8 @@ name: Auto-rollback
 # Gate 3 of a deploy is the E2E prod-tenant run after it. That workflow holds no
 # deploy key and should not get one, so the rollback lives here. When E2E
 # prod-tenant ends red on main:
-#   1. read the last green E2E run from the GitHub API;
+#   1. read the last green E2E run from the GitHub API, and the oldest red run
+#      after it (any trigger, cancelled and skipped runs do not count);
 #   2. start one confirmation run of E2E (run name "...: confirm for
 #      auto-rollback run <id>") and wait up to 25 minutes. The suite failed 7 of
 #      60 runs on 2026-10-22/23 for reasons outside the code, so one red run is
@@ -17,6 +18,20 @@ name: Auto-rollback
 #   4. upload the report, start E2E once more ("...: after rollback by
 #      auto-rollback run <id>") and end red, so ci-failure-notice.yml opens its
 #      issue with the auto-rollback or rollback-failed label.
+#
+# Already red: when that oldest red run's job started before the first deploy
+# step 3 would undo, E2E was red before any deploy in the window, so none of
+# them is blamed. rollback-since.sh then changes nothing and exits 5 (outcome
+# e2e_already_red); this run ends red with label e2e-already-red, the issue
+# names the red run, and no E2E run follows. From 2026-11-19 to 2026-11-22 an
+# identity-provider setting kept E2E red, there was no green run to start the
+# window at, and every later deploy was confirmed red and rolled back, CRM
+# database restores included. The first red run after a breaking deploy started
+# after that deploy, so it still rolls back. What a person does with
+# e2e-already-red: docs/runbooks/auto-rollback.md. A deploy that breaks
+# something while E2E is already red is caught only by its own deploy gates
+# (probe and error watch in deploy-with-rollback.sh, the sync gates in
+# compose-rollback.sh), not here.
 #
 # Which red runs count: workflow_run (after a deploy) and schedule (04:00). E2E
 # runs after a deploy are often cancelled by the next one in their concurrency
@@ -96,6 +111,21 @@ jobs:
           echo "last green E2E run: $id, job started $since; window ends $until"
           echo "since=$since" >> "$GITHUB_OUTPUT"
           echo "until=$until" >> "$GITHUB_OUTPUT"
+          [[ -n "$FAILED_CREATED" ]] || exit 0
+          # The oldest red run since the green one; rollback-since.sh compares
+          # its job start with the first deploy it would undo (e2e_already_red).
+          # The red run that started this one is in the list, so there is one.
+          red_id="$(gh api -X GET --paginate "repos/$REPO/actions/workflows/e2e-prod-tenant.yml/runs" \
+            -f branch=main -f status=failure -f created=">=$created" -f per_page=100 \
+            --jq '.workflow_runs[] | "\(.created_at) \(.id)"' | sort | awk 'NR == 1 { print $2 }')"
+          red_since="$(gh api "repos/$REPO/actions/runs/$red_id/jobs" --jq '[.jobs[].started_at | select(.)] | min // empty')"
+          if [[ ! "$red_since" =~ $re ]]; then
+            echo "::error::job start '$red_since' of the oldest red E2E run '$red_id' is not YYYY-MM-DDTHH:MM:SSZ"
+            exit 1
+          fi
+          echo "oldest red E2E run since the green one: $red_id, job started $red_since"
+          echo "red_since=$red_since" >> "$GITHUB_OUTPUT"
+          echo "red_run=$red_id" >> "$GITHUB_OUTPUT"
 
       - name: Confirm with a second E2E run
         id: confirm
@@ -138,7 +168,9 @@ jobs:
         run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       # Exit 0: nothing to roll back. 3: rolled back. 4: a rollback failed or
-      # could not be attempted (needs a human). 3 and 4 fail this step and run.
+      # could not be attempted (needs a human). 5: E2E was already red before
+      # the first deploy in the window, nothing rolled back. 3, 4 and 5 fail
+      # this step and run.
       - name: Roll back on core-01
         id: replay
         if: steps.replay-start.outcome == 'success'
@@ -153,7 +185,7 @@ jobs:
             source /opt/klai/.env
             test -x /opt/klai/scripts/rollback-since.sh
             rc=0
-            /opt/klai/scripts/rollback-since.sh ${{ steps.green.outputs.since }} --until ${{ steps.green.outputs.until }} ${{ github.event_name == 'workflow_dispatch' && '--rehearse' || '' }} || rc=$?
+            /opt/klai/scripts/rollback-since.sh ${{ steps.green.outputs.since }} --until ${{ steps.green.outputs.until }} ${{ steps.green.outputs.red_since && format('--red-since {0}', steps.green.outputs.red_since) || '' }} ${{ github.event_name == 'workflow_dispatch' && '--rehearse' || '' }} || rc=$?
             # A rehearsal that rolled the canary back is the expected outcome and
             # ends green, so it opens no ci-failure issue (the 2026-10-28 proof
             # run opened #2111 that way); any other result is red.
@@ -184,11 +216,14 @@ jobs:
         env:
           REPORT: ${{ steps.rollback-report.outputs.stdout }}
           STARTED: ${{ steps.replay-start.outputs.at }}
+          RED_RUN: ${{ steps.green.outputs.red_run }}
         run: |
           report="$(printf '%s\n' "$REPORT" | grep -m1 '^{' || true)"
           if printf '%s' "$report" | jq -e --arg since "$STARTED" '.kind == "e2e" and .ts >= $since and .outcome != "deployed"' >/dev/null 2>&1; then
-            printf '%s\n' "$report" > rollback-report.json
+            # The host does not know run ids; the issue names the red run.
+            printf '%s\n' "$report" | jq -c --arg run "$RED_RUN" '. + {red_run: $run}' > rollback-report.json
             echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "outcome=$(jq -r .outcome rollback-report.json)" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload rollback report
@@ -201,9 +236,10 @@ jobs:
           retention-days: 30
 
       # Proof that the restored state is good. A workflow_dispatch run, which
-      # this workflow ignores, so a red one cannot start a second round.
+      # this workflow ignores, so a red one cannot start a second round. After
+      # e2e_already_red nothing was restored, so there is nothing to prove.
       - name: Run E2E prod-tenant after the rollback
-        if: always() && steps.keep.outputs.found == 'true' && github.event_name != 'workflow_dispatch'
+        if: always() && steps.keep.outputs.found == 'true' && steps.keep.outputs.outcome != 'e2e_already_red' && github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run e2e-prod-tenant.yml --repo "$GITHUB_REPOSITORY" --ref main -f reason="after rollback by auto-rollback run $GITHUB_RUN_ID"

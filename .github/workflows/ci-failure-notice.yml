@@ -16,7 +16,9 @@ name: CI failure notice
 # One issue per workflow, reopened and re-commented rather than duplicated, so
 # a flapping deploy does not bury the tab. Auto-closes when the same workflow
 # goes green again, so the open-issue list IS the list of things that are
-# currently broken.
+# currently broken. The newest closed issue with the same title is reopened
+# before a new one is made: from 2026-11-19 to 2026-11-21 Auto-rollback opened
+# nine separate issues, most of them closed again within minutes.
 
 on:
   workflow_run:
@@ -103,14 +105,16 @@ jobs:
             const failed = run.conclusion === 'failure';
             const title = `CI failure: ${run.name}`;
 
-            const { data: open } = await github.rest.issues.listForRepo({
+            // Newest first, so a closed match is the issue this workflow used last.
+            const { data: listed } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              state: 'open',
+              state: 'all',
               labels: 'ci-failure',
               per_page: 100,
             });
-            const existing = open.find((i) => i.title === title);
+            const last = listed.find((i) => i.title === title && !i.pull_request);
+            const existing = last && last.state === 'open' ? last : undefined;
 
             if (!failed) {
               // Green again — close the issue so the open list stays honest.
@@ -140,6 +144,7 @@ jobs:
             const ROLLBACK_LABELS = {
               rolled_back: { name: 'auto-rollback', color: 'fbca04', description: 'Deploy failed and the previous version was put back automatically' },
               rollback_failed: { name: 'rollback-failed', color: 'b60205', description: 'Deploy failed and the automatic rollback failed too: a human is needed now' },
+              e2e_already_red: { name: 'e2e-already-red', color: 'e99695', description: 'E2E prod-tenant was already red before the deploys after it, so Auto-rollback rolled nothing back' },
               not_started: { name: 'deploy-not-started', color: 'c5def5', description: 'The sync refused before any file changed (disk headroom or a snapshot that failed); nothing to roll back' },
               shadow_failed: { name: 'shadow-failed', color: 'd4c5f9', description: 'A data store image failed on a copy of its data before anything changed; a revert PR follows' },
             };
@@ -187,6 +192,8 @@ jobs:
                 '',
                 report.outcome === 'rollback_failed'
                   ? '**Automatic rollback failed. Production may be broken: a human is needed now.**'
+                  : report.outcome === 'e2e_already_red'
+                    ? '**E2E was already red, nothing rolled back.** E2E prod-tenant failed before the first deploy in the window, so those deploys are not blamed. Fix what keeps E2E red (open the red run below); until it is green again, a deploy that breaks a customer path is caught only by its own deploy gates.'
                   : report.outcome === 'not_started'
                     ? '**Not started.** The sync refused before it replaced a single file; the host runs what it ran and the next sync tries again.'
                     : report.outcome === 'shadow_failed'
@@ -200,6 +207,9 @@ jobs:
                 `- To: \`${flat(report.to)}\``,
                 `- Commit: \`${flat(report.commit)}\``,
                 `- Time: \`${flat(report.ts)}\``,
+                ...(report.outcome === 'e2e_already_red'
+                  ? [`- E2E red since: \`${flat(report.red_since)}\` (run ${flat(report.red_run)}: ${run.repository.html_url}/actions/runs/${flat(report.red_run)})`]
+                  : []),
                 `- Log on core-01: \`${flat(report.log)}\``,
               );
             }
@@ -207,8 +217,9 @@ jobs:
 
             const base = { owner: context.repo.owner, repo: context.repo.repo };
             let number;
-            if (existing) {
-              number = existing.number;
+            if (last) {
+              number = last.number;
+              if (!existing) await github.rest.issues.update({ ...base, issue_number: number, state: 'open' });
               await github.rest.issues.createComment({ ...base, issue_number: number, body });
             } else {
               ({ data: { number } } = await github.rest.issues.create({ ...base, title, body, labels: ['ci-failure'] }));
@@ -224,7 +235,7 @@ jobs:
               }
             };
             if (!report) {
-              if (existing) for (const l of Object.values(ROLLBACK_LABELS)) await dropLabel(l.name);
+              if (last) for (const l of Object.values(ROLLBACK_LABELS)) await dropLabel(l.name);
             } else {
               // Swap, do not accumulate.
               const want = ROLLBACK_LABELS[report.outcome];

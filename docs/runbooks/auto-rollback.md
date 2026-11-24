@@ -42,6 +42,35 @@ The mail names the service, the failed gate and the outcome.
 In VictoriaLogs:
 `_time:30m service:auto-rollback event:auto_rollback | sort by (_time) desc | limit 10`.
 
+## E2E was already red, nothing rolled back
+
+Auto-rollback (`auto-rollback.yml`) undoes what was deployed between the last
+green E2E prod-tenant run and a confirmed red one. Before it does, it looks up
+the oldest red E2E run after that green one. When that run's job started
+before the first deploy it would undo, E2E was red before any of those
+deploys, so none of them is blamed: nothing is rolled back, the run ends red
+with outcome `e2e_already_red`, and its issue (`CI failure: Auto-rollback`)
+gets the label `e2e-already-red` and names the red run under `E2E red since`.
+From 2026-11-19 to 2026-11-22 an identity-provider setting kept the login
+journey red; without this, every deploy in those days was rolled back,
+CRM database restores included.
+
+What to do:
+
+- Open the red run named in the issue and fix what keeps E2E red; that is
+  the incident, not the deploys. The open `CI failure: E2E prod-tenant` issue
+  tracks it, and the daily Version drift run fails while that issue has been
+  open for more than 24 hours.
+- Until E2E is green again, Auto-rollback protects nothing. A deploy that
+  breaks something meanwhile is caught only by its own gates: the probe and
+  error watch of `deploy-with-rollback.sh`, and the sync gates of
+  `compose-rollback.sh`. A break those gates do not see (a customer path only
+  E2E walks) stays live until someone notices. The deploys of the red period
+  are listed in the issue (`Service`, `To`, `Commit`) if one of them needs to
+  be undone by hand (`rollback-since.sh` on core-01, see its header).
+- The first green E2E run starts a new window, and the next red run after a
+  deploy rolls back as before.
+
 ## The weekly rehearsal is missing
 
 No `rollback_rehearsal` event with outcome `ok` reached VictoriaLogs for 8
