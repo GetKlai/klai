@@ -1,10 +1,10 @@
 diff --git a/src/messages/format.ts b/src/messages/format.ts
-index 75f2f70a..297a109e 100644
+index df39a34a..50483259 100644
 --- a/src/messages/format.ts
 +++ b/src/messages/format.ts
-@@ -88,6 +88,30 @@ import {
-   recordToolHistoryCallMirror,
- } from './toolHistoryProjection';
+@@ -88,6 +88,30 @@ import { HARD_MAX_TOOL_RESULT_CHARS } from '@/utils/truncation';
+ import { isReasoningContentBlock } from './reasoningTypes';
+ import { emitAgentLog } from '@/utils/events';
  
 +/**
 + * Klai patch — defensive guards against malformed message payloads.
@@ -67,7 +67,7 @@ index 75f2f70a..297a109e 100644
      const formatted = formatMessage({
        ...formatOptions,
        message: msg,
-@@ -2583,6 +2625,14 @@ function scanSummaryBlocks(payload: TPayload): SummaryScan {
+@@ -2595,6 +2637,14 @@ function scanSummaryBlocks(payload: TPayload): SummaryScan {
  
    for (let i = 0; i < payload.length; i++) {
      const message = payload[i];
@@ -82,7 +82,7 @@ index 75f2f70a..297a109e 100644
      const sourceMessageId = getSourceMessageId(message);
      if (sourceMessageId != null) {
        indexBySourceId.set(sourceMessageId, i);
-@@ -2674,8 +2724,16 @@ function applySummaryBoundary(
+@@ -2686,8 +2736,16 @@ function applySummaryBoundary(
  
    if (
      messageIndex !== summaryBoundary.messageIndex ||
@@ -99,7 +99,7 @@ index 75f2f70a..297a109e 100644
      return message;
    }
  
-@@ -2906,6 +2964,16 @@ export const formatAgentMessages = (
+@@ -2918,6 +2976,16 @@ export const formatAgentMessages = (
    // Process messages with tool conversion if tools set is provided
    for (let i = 0; i < payload.length; i++) {
      const rawMessage = payload[i];
@@ -116,7 +116,7 @@ index 75f2f70a..297a109e 100644
      const sourceMessageId = getSourceMessageId(rawMessage);
      let message = applySummaryBoundary(rawMessage, i, summaryBoundary);
      if (!message) {
-@@ -4165,7 +4233,7 @@ function appendToolCalls(
+@@ -4178,7 +4246,7 @@ function appendToolCalls(
    let complete = true;
    const aiMsg = msg as AIMessage;
    if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
@@ -125,7 +125,7 @@ index 75f2f70a..297a109e 100644
      if (Array.isArray(rawToolCalls)) {
        if (rawToolCalls.length !== aiMsg.tool_calls.length) {
          complete = false;
-@@ -4214,7 +4282,7 @@ function appendToolCalls(
+@@ -4227,7 +4295,7 @@ function appendToolCalls(
      };
    }
    // Fall back to raw provider tool calls kept only in additional_kwargs.
@@ -134,7 +134,7 @@ index 75f2f70a..297a109e 100644
    if (!Array.isArray(rawToolCalls)) {
      return { contributed: false, complete: true };
    }
-@@ -4284,6 +4352,12 @@ export function ensureThinkingBlockInMessages(
+@@ -4297,6 +4365,12 @@ export function ensureThinkingBlockInMessages(
    let lastHumanIndex = -1;
    for (let k = messages.length - 1; k >= 0; k--) {
      const m = messages[k];
@@ -147,7 +147,7 @@ index 75f2f70a..297a109e 100644
      if (
        m instanceof HumanMessage ||
        ('role' in m && (m as any).role === 'user')
-@@ -4304,6 +4378,15 @@ export function ensureThinkingBlockInMessages(
+@@ -4317,6 +4391,15 @@ export function ensureThinkingBlockInMessages(
  
    while (i < messages.length) {
      const msg = messages[i];
@@ -163,7 +163,7 @@ index 75f2f70a..297a109e 100644
      /** Detect AI messages by instanceof OR by role, in case cache-control cloning
       produced a plain object that lost the LangChain prototype. */
      const isAI =
-@@ -4345,7 +4428,7 @@ export function ensureThinkingBlockInMessages(
+@@ -4358,7 +4441,7 @@ export function ensureThinkingBlockInMessages(
      // Bedrock also stores reasoning in additional_kwargs (may not be in content array)
      if (
        !hasThinkingBlock &&
@@ -172,7 +172,7 @@ index 75f2f70a..297a109e 100644
      ) {
        hasThinkingBlock = true;
      }
-@@ -4467,7 +4550,7 @@ function messageHasToolContent(
+@@ -4480,7 +4563,7 @@ function messageHasToolContent(
    if (aiMsg.tool_calls != null && aiMsg.tool_calls.length > 0) {
      return true;
    }
@@ -181,7 +181,7 @@ index 75f2f70a..297a109e 100644
    if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
      return true;
    }
-@@ -4681,7 +4764,7 @@ function chainHasThinkingBlock(
+@@ -4694,7 +4777,7 @@ function chainHasThinkingBlock(
        }
  
        // Bedrock also stores reasoning in additional_kwargs

@@ -1,10 +1,10 @@
 diff --git a/api/server/routes/messages.js b/api/server/routes/messages.js
-index 6ac391c18..c74cb8bad 100644
+index 24430c390..fe29517ad 100644
 --- a/api/server/routes/messages.js
 +++ b/api/server/routes/messages.js
-@@ -738,6 +738,54 @@ router.put(
-         }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
-       }
+@@ -821,6 +821,54 @@ router.put(
+         messageId,
+       });
  
 +      // SPEC-KB-015: Forward feedback to portal-api for KB quality scoring.
 +      // Fire-and-forget (REQ-KB-015-06) -- response is sent immediately below.

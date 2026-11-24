@@ -71,7 +71,8 @@ function makeRequire() {
       id === './tools/intentArg.cjs' ||
       id === './graphs/acceptedModelResponse.cjs' ||
       id === './tools/preparedSubagents.cjs' ||
-      id === './tools/toolErrorContent.cjs'
+      id === './tools/toolErrorContent.cjs' ||
+      id === './protection/providerText.cjs'
     ) {
       return {};
     }

@@ -1,8 +1,8 @@
 diff --git a/src/stream.ts b/src/stream.ts
-index 8f36612c..3104003b 100644
+index 3e5ae6bf..e06aa5c4 100644
 --- a/src/stream.ts
 +++ b/src/stream.ts
-@@ -66,6 +66,177 @@ import { composeAbortSignals } from '@/utils/misc';
+@@ -70,6 +70,177 @@ import { composeAbortSignals } from '@/utils/misc';
  import { isGoogleLike } from '@/utils/llm';
  import { getMessageId } from '@/messages';
  
@@ -180,7 +180,7 @@ index 8f36612c..3104003b 100644
  const LOCAL_CODING_BUNDLE_NAME_SET: ReadonlySet<string> = new Set(
    LOCAL_CODING_BUNDLE_NAMES
  );
-@@ -2061,6 +2232,14 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -2108,6 +2279,14 @@ hasToolCallChunks: ${hasToolCallChunks}
      ) {
        return;
      } else if (typeof content === 'string') {
@@ -195,7 +195,7 @@ index 8f36612c..3104003b 100644
        if (agentContext.currentTokenType === ContentTypes.TEXT) {
          await graph.dispatchMessageDelta(
            stepId,
-@@ -2068,14 +2247,15 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -2115,14 +2294,15 @@ hasToolCallChunks: ${hasToolCallChunks}
              content: [
                {
                  type: ContentTypes.TEXT,
@@ -213,7 +213,7 @@ index 8f36612c..3104003b 100644
          if (thinking) {
            await graph.dispatchReasoningDelta(
              stepId,
-@@ -2115,6 +2295,7 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -2162,6 +2342,7 @@ hasToolCallChunks: ${hasToolCallChunks}
                  {
                    type: ContentTypes.TEXT,
                    text: text,
@@ -221,7 +221,7 @@ index 8f36612c..3104003b 100644
                  },
                ],
              },
-@@ -2457,9 +2638,20 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+@@ -2504,9 +2685,20 @@ export function createContentAggregator(): t.ContentAggregatorResult {
      ) {
        // TODO: update this!!
        const currentContent = contentParts[index] as t.MessageDeltaUpdate;
@@ -243,7 +243,7 @@ index 8f36612c..3104003b 100644
        };
  
        if (contentPart.tool_call_ids) {
-@@ -2468,6 +2660,27 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+@@ -2515,6 +2707,27 @@ export function createContentAggregator(): t.ContentAggregatorResult {
          /** A citations-only delta must not drop ids already accumulated */
          update.tool_call_ids = currentContent.tool_call_ids;
        }
