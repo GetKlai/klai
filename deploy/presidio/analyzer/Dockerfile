@@ -9,6 +9,22 @@
 # and never mcr.microsoft.com/presidio-analyzer, which is frozen post-transition).
 FROM ghcr.io/data-privacy-stack/presidio-analyzer:2.2.366@sha256:036d2f9b3c274fb36497383acef8f2d5aea528a014801c2c3040fb067990c79c
 
+# Debian security updates for the base OS. Upstream does not rebuild a
+# published tag (2.2.366 still had its release digest on 2026-11-24), so
+# Renovate following the digest never picks up a Debian fix: the 2.2.364
+# build shipped libbrotli1 1.1.0-2+b7 a month after CVE-2026-111497 entered
+# the CISA KEV catalog with 1.1.0-2+deb13u1 published, and 142 of its 161
+# HIGH/CRITICAL findings were Debian packages. On 2.2.366 the same scan
+# found 3 (apt, libapt-pkg7.0, zlib1g) and 0 after this upgrade. It touches
+# only dpkg packages within the same Debian release; the Python stack
+# upstream pins lives in /usr/local and is not managed by apt. The weekly
+# rebuild in presidio-analyzer-image-build.yml keeps it current between
+# upstream releases. Upstream runs as uid 1001, so switch back after.
+USER root
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+USER 1001
+
 # The stock image's WORKDIR is /app, where its vendored presidio_analyzer
 # package lives (not pip-installed — see sitecustomize.py's module docstring).
 WORKDIR /app

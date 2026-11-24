@@ -38,18 +38,6 @@ is_allowlisted() {
             # Same reasoning, plus the image is digest-pinned downstream, so an
             # upgrade here would move a digest a canary can be rolled back to.
             return 0 ;;
-        deploy/presidio/analyzer/Dockerfile)
-            # Recognizer pack layered on ghcr.io/data-privacy-stack/presidio-
-            # analyzer (SPEC-PRIVACY-MISTRAL-PII-001 REQ-3). Upstream owns the
-            # OS layer and pins the spaCy/transformers stack the analyzer boots
-            # against; an apt upgrade here patches somebody else's dependency
-            # set. The image also runs as the non-root `presidio` user, so an
-            # apt-get in the final stage cannot work without re-rooting it.
-            # Exposure is bounded: internal network only, no Caddy route, no
-            # published port, and no secret in the container. Base moves are
-            # picked up by re-pinning the upstream digest, which is an explicit
-            # commit rather than a silent rebuild.
-            return 0 ;;
         *)
             return 1 ;;
     esac
@@ -119,6 +107,13 @@ for file in "${files[@]}"; do
             want='apk upgrade'
             ;;
         *slim*|*debian*|*ubuntu*|*bookworm*|*trixie*|*bullseye*)
+            want='apt-get upgrade'
+            ;;
+        # The Presidio analyzer base is python:3.12-slim underneath. It was
+        # allow-listed here until 2026-11 on the grounds that re-pinning the
+        # upstream digest picks up base fixes; upstream never rebuilds a tag,
+        # so it did not, and a KEV-listed libbrotli1 shipped for a month.
+        ghcr.io/data-privacy-stack/presidio-analyzer:*)
             want='apt-get upgrade'
             ;;
         node:*|*/node:*|python:*|*/python:*|postgres:*|*/postgres:*|golang:*|*/golang:*)
