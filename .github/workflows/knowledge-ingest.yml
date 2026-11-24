@@ -2,6 +2,13 @@ name: Build and push knowledge-ingest
 
 on:
   workflow_call:
+    outputs:
+      # quality.yml fails a pull request that changes this image's Dockerfile
+      # unless this is "true": a skipped scan job leaves it empty, and the
+      # workflow result alone would still read as success.
+      scanned:
+        description: The Trivy image scan ran to success
+        value: ${{ jobs.scan.outputs.scanned }}
   push:
     branches: [main]
     paths:
@@ -236,6 +243,8 @@ jobs:
 
   scan:
     needs: build-push
+    outputs:
+      scanned: "true"
     runs-on: ubuntu-latest
     permissions:
       security-events: write

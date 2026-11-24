@@ -1,0 +1,38 @@
+# Per-service Trivy ignore-list for bge-m3-sparse.
+# Schema: SPEC-CI-TRIVY-POLICY-001 REQ-5 (id + >=40-char statement + expired_at).
+#
+# transformers is pinned below 4.52 because this image produces the sparse
+# vectors stored for every document; a bump needs a retrieval measurement first
+# (fixed versions: 5.3.0, 5.5.0, 5.10.0). Re-evaluate on the bump or at expiry.
+vulnerabilities:
+  - id: CVE-2026-4372
+    statement: |
+      Remote code execution through an attacker-controlled config.json that
+      sets _attn_implementation_internal when a model is loaded. This service
+      loads one fixed model (BAAI/bge-m3, set by ENV MODEL_NAME in the
+      Dockerfile) and no request field selects a model or config; request
+      text only reaches the tokenizer and the forward pass. Reachable only if
+      that Hub repository itself were compromised, not through user input.
+    expired_at: 2027-01-23
+    purls:
+      - "pkg:pypi/transformers@4.51.3"
+  - id: CVE-2026-5241
+    statement: |
+      Arbitrary code execution during initialisation of the LightGlue model
+      class, where nested config loading overrides trust_remote_code. This
+      service never loads a LightGlue model: it loads BAAI/bge-m3 (an XLM-R
+      encoder) only, from a name fixed in the Dockerfile, and no request
+      field can choose the model or its config.
+    expired_at: 2027-01-23
+    purls:
+      - "pkg:pypi/transformers@4.51.3"
+  - id: CVE-2026-9856
+    statement: |
+      Path traversal in save_pretrained() through chat template names in a
+      malicious tokenizer_config.json. This service only loads the tokenizer
+      for BAAI/bge-m3 and never calls save_pretrained() or saves a tokenizer
+      or processor, so the vulnerable code path is not executed and request
+      text cannot reach it.
+    expired_at: 2027-01-23
+    purls:
+      - "pkg:pypi/transformers@4.51.3"

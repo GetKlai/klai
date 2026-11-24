@@ -1,4 +1,4 @@
-"""Source contracts for the pull-request docs image build gate."""
+"""Source contracts for the docs image build and scan on pull requests."""
 
 from pathlib import Path
 
@@ -22,26 +22,24 @@ def _build_step(job: dict[str, object]) -> dict[str, object]:
     )
 
 
-def test_pull_requests_build_the_docs_image_without_push_permissions() -> None:
-    verify = _jobs()["verify-image"]
+def test_pull_requests_build_push_the_sha_tag_and_scan_the_docs_image() -> None:
+    jobs = _jobs()
+    publish = jobs["build-and-push"]
 
-    assert verify["needs"] == "quality-docs"
-    assert verify["if"] == "github.event_name == 'pull_request'"
-    assert verify["permissions"] == {"contents": "read"}
-    assert not any(
-        str(step.get("uses", "")).startswith("docker/login-action@") for step in verify["steps"]
-    )
+    assert "verify-image" not in jobs
+    assert "if" not in publish
+    assert publish["needs"] == "quality-docs"
+    assert "if" not in jobs["scan"]
+    assert jobs["scan"]["needs"] == "build-and-push"
 
-    build = _build_step(verify)
-    assert build["with"]["context"] == "./klai-docs"
-    assert build["with"]["push"] is False
+    tags = _build_step(publish)["with"]["tags"]
+    assert "github.sha" in tags
+    assert "github.ref == 'refs/heads/main'" in tags
 
 
 def test_production_docs_image_and_deploy_contract_is_unchanged() -> None:
     jobs = _jobs()
-    publish = jobs["build-and-push"]
 
-    assert publish["if"] == "github.event_name != 'pull_request'"
-    assert _build_step(publish)["with"]["push"] is True
-    assert jobs["scan"]["needs"] == "build-and-push"
+    assert _build_step(jobs["build-and-push"])["with"]["push"] is True
+    assert jobs["deploy"]["if"] == "github.ref == 'refs/heads/main'"
     assert jobs["deploy"]["needs"] == ["build-and-push", "scan"]

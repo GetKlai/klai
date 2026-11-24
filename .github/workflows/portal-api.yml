@@ -2,6 +2,13 @@ name: Build and push portal-api
 
 on:
   workflow_call:
+    outputs:
+      # quality.yml fails a pull request that changes this image's Dockerfile
+      # unless this is "true": a skipped scan job leaves it empty, and the
+      # workflow result alone would still read as success.
+      scanned:
+        description: The Trivy image scan ran to success
+        value: ${{ jobs.scan.outputs.scanned }}
   push:
     branches: [main]
     paths:
@@ -453,7 +460,8 @@ jobs:
     # Builds in parallel with the gate jobs instead of waiting for them. The
     # image is only ROLLED OUT by `deploy`, which still gates on every check —
     # a failing gate never deploys; we just discard the built image. ~1 min faster.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Pull requests build and scan too (commit-sha tag only, as klai-connector
+    # does): a base-image change used to surface for the first time on main.
     runs-on: ubuntu-latest
 
     steps:
@@ -488,6 +496,8 @@ jobs:
 
   scan:
     needs: build-push
+    outputs:
+      scanned: "true"
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -600,10 +610,10 @@ jobs:
           fi
 
       # Audit 2026-05-05: defence-in-depth gate. The deploy job is gated
-      # via `needs: build-push` (build-push is itself gated), but the
-      # Pre-deploy env check step has no `if:` — if a future change
-      # loosens the build-push gate, this step would SSH into prod from
-      # PR context. Match the Deploy step's gate explicitly.
+      # by this job's `if: github.ref == 'refs/heads/main'`, since build-push now
+      # also runs on pull requests. Every step that reaches prod repeats the
+      # push-to-main gate explicitly, so loosening the job gate cannot SSH
+      # into prod from PR context.
       - name: Pre-deploy env check
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.freshness.outputs.current == 'true'
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
