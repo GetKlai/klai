@@ -1,0 +1,68 @@
+{
+  "_about": [
+    "Read by scripts/triage-image-findings.py to decide how exposed each scanned image is.",
+    "Exposed is DERIVED, not listed: every reverse_proxy upstream in route_sources and every port published on all host interfaces.",
+    "content_consumers and internal are the services the proxy configuration cannot tell apart; each needs a reason.",
+    "A scanned service in none of these is treated as exposed and named in the scan summary.",
+    "A tracked file that mentions reverse_proxy must be in route_sources or not_route_sources, or the scan stops.",
+    "Runbook: docs/runbooks/trivy-policy.md, section 'The code-scanning tab for third-party images'."
+  ],
+  "route_sources": {
+    "deploy/caddy/Caddyfile": "the static reverse-proxy configuration",
+    "klai-portal/backend/app/services/provisioning/infrastructure.py": "writes one site block per tenant chat at provisioning time",
+    "klai-docs/lib/caddy.ts": "writes one site block per docs organisation and custom domain"
+  },
+  "not_route_sources": {
+    "scripts/audit-compose-orphans.sh": "reads the Caddyfile to find upstreams without a compose service; writes no route",
+    "deploy/scripts/docker-orphan-audit.sh": "the same audit on the host; writes no route",
+    "deploy/grafana/provisioning/alerting/orphan-audit-rules.yaml": "alert text about that audit; writes no route"
+  },
+  "runtime_upstreams": {
+    "{names.librechat_container}": {
+      "service": "portal-api",
+      "env": "LIBRECHAT_IMAGE",
+      "reason": "per-tenant chat route that portal-api writes at provisioning, served from the image in LIBRECHAT_IMAGE"
+    }
+  },
+  "content_consumers": {
+    "crawl4ai": "renders arbitrary web pages in a headless browser for knowledge-base crawls",
+    "firecrawl-api": "scraper API that fetches and parses arbitrary URLs",
+    "docling-serve": "converts uploaded and crawled documents (PDF, Office, HTML) from outside",
+    "searxng": "fetches and parses result pages from public search engines",
+    "glitchtip-worker": "processes the error events that browsers submit through glitchtip-web",
+    "crm-worker": "runs the CRM's background jobs, including mail and calendar sync that parse external messages"
+  },
+  "internal": {
+    "alloy": "collects logs and metrics on the monitoring network; no route from the proxy",
+    "cadvisor": "exports container metrics on the monitoring network only",
+    "victoriametrics": "metrics store on the monitoring network only",
+    "victorialogs-content": "second log store for message content; not behind the proxy",
+    "postgres": "database on net-postgres; no route from the proxy",
+    "crm-postgres": "CRM database on net-crm only",
+    "fider-postgres": "feedback-board database on net-fider only",
+    "firecrawl-postgres": "scraper job database; reached by firecrawl-api only",
+    "listmonk-db": "mailing database on net-listmonk only",
+    "umami-postgres": "analytics database on net-umami only",
+    "redis": "cache on net-redis; no route from the proxy",
+    "crm-redis": "CRM queue on net-crm only",
+    "vexa12-redis": "meeting-bot queue on vexa12-bots only",
+    "mongodb": "chat database on net-mongodb only",
+    "meilisearch": "chat search index on net-meilisearch only",
+    "qdrant": "vector store reached by the retrieval and ingest services",
+    "falkordb": "graph store; its port is bound to 127.0.0.1",
+    "garage": "object storage for recordings and images; not behind the proxy",
+    "gitea": "stores docs repositories for docs-app; not behind the proxy",
+    "firecrawl-rabbitmq": "scraper job queue; reached by firecrawl-api only",
+    "glitchtip-migrate": "runs database migrations once and exits",
+    "ollama": "runs local models for litellm on the inference network",
+    "presidio-analyzer": "detects personal data in text that portal services send; inference network only",
+    "presidio-anonymizer": "masks personal data in text that portal services send; inference network only",
+    "docker-socket-proxy": "filtered Docker API for the authz plugin on socket-proxy only",
+    "docker-socket-proxy-ro": "read-only Docker API for alloy on socket-proxy-ro only",
+    "runtime-api-socket-proxy": "socat bridge to the Docker socket for the meeting runtime",
+    "vexa12-transcription-proxy": "socat bridge from the bot network to the transcription service",
+    "vexa12-admin-api": "meeting-bot admin API on vexa12-internal only",
+    "vexa12-meeting-api": "meeting-bot API that portal-api calls over vexa12-portal",
+    "vexa12-runtime": "starts meeting-bot containers through the Docker socket bridge"
+  }
+}

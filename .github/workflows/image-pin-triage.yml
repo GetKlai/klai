@@ -1,0 +1,110 @@
+name: Image pin triage
+
+# A pull request that changes an external image pin in compose (Renovate's
+# included) must not add a finding that is in the CISA KEV catalog on an image
+# that is exposed, consumes untrusted web content, or cannot be classified.
+# It scans only the changed pins, with the same Trivy flags and the same triage
+# as the weekly scan-pinned-images.yml, and compares each with the image it
+# replaces, so a KEV finding the old pin already had does not block the bump
+# that keeps everything else moving.
+#
+# Reached through the unfiltered quality.yml (workflow_call, path filter
+# `image_pins`), which aggregates it into the one required `quality` check.
+# `checked` is exported only at the end of a complete run; quality.yml fails
+# when the filter selected this workflow and it did not export it, so a
+# skipped job cannot pass for a checked one. A change that touches the
+# selected paths but no pin runs only the validator and the tests.
+
+on:
+  workflow_call:
+    outputs:
+      checked:
+        description: '"true" when the validator, the tests and every changed pin were checked'
+        value: ${{ jobs.triage.outputs.checked }}
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      checked: ${{ steps.done.outputs.checked }}
+    steps:
+      # The default checkout of a pull request is the merge of its head into
+      # the base, which is what main will contain once it lands.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Tests and validator
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts/tests/test_triage_image_findings.py
+          ./scripts/validate-vex.sh
+
+      - name: Find changed pins
+        id: plan
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          mkdir -p base head
+          for side in base head; do
+            if [ "$side" = base ]; then
+              git show FETCH_HEAD:deploy/docker-compose.yml > base/deploy.yml
+              git show FETCH_HEAD:docker-compose.dev.yml > base/dev.yml
+              git show FETCH_HEAD:deploy/crawl4ai/Dockerfile > base/crawl4ai.Dockerfile
+            else
+              cp deploy/docker-compose.yml head/deploy.yml
+              cp docker-compose.dev.yml head/dev.yml
+              cp deploy/crawl4ai/Dockerfile head/crawl4ai.Dockerfile
+            fi
+            yq -o=json "$side/deploy.yml" > "$side/deploy.json"
+            yq -o=json "$side/dev.yml" > "$side/dev.json"
+            python3 scripts/triage-image-findings.py targets --deploy "$side/deploy.json" \
+              --dev "$side/dev.json" --crawl4ai-dockerfile "$side/crawl4ai.Dockerfile" > "$side/targets.json"
+          done
+          python3 scripts/triage-image-findings.py changed --base base/targets.json --head head/targets.json > changed.json
+          echo "Changed pins (head) and the pins they replace (base):"
+          jq -r '.head[] | "  head \(.key): \(.image)"' changed.json
+          jq -r '.base[] | "  base \(.key): \(.image)"' changed.json
+          echo "count=$(jq '.head | length' changed.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Trivy
+        if: steps.plan.outputs.count != '0'
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
+        with:
+          version: v0.76.2
+          cache: true
+
+      - name: Scan and triage the changed pins
+        if: steps.plan.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          for side in head base; do
+            mkdir -p "scans/$side" "out-$side"
+            for key in $(jq -r --arg s "$side" '.[$s][].key' changed.json); do
+              image=$(jq -r --arg s "$side" --arg k "$key" '.[$s][] | select(.key == $k) | .image' changed.json)
+              sh scripts/trivy-scan-image.sh "$image" "scans/$side/$key.json"
+            done
+          done
+          python3 scripts/triage-image-findings.py feeds --scans scans --out feeds.json
+          for side in head base; do
+            for key in $(jq -r --arg s "$side" '.[$s][].key' changed.json); do
+              python3 scripts/triage-image-findings.py triage --scan "scans/$side/$key.json" \
+                --targets "$side/targets.json" --key "$key" --feeds feeds.json \
+                --deploy "$side/deploy.json" --dev "$side/dev.json" --out-dir "out-$side"
+            done
+          done
+          python3 scripts/triage-image-findings.py summary --summaries out-head
+          echo "Scan and triage took $(( $(date +%s) - start ))s for $(jq '(.head + .base) | length' changed.json) images."
+          python3 scripts/triage-image-findings.py gate --base out-base --head out-head
+
+      - name: Mark as checked
+        id: done
+        run: echo "checked=true" >> "$GITHUB_OUTPUT"

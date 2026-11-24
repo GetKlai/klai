@@ -214,9 +214,45 @@ If the new image has open HIGH/CRITICAL findings on first scan: do not weaken th
 
 ---
 
+## The code-scanning tab for third-party images
+
+The Trivy alerts from `scan-pinned-images.yml` are an action list: every open one is something a person should do something about this week. On 2026-11-24 the tab held 1,275 alerts and nobody acted on any; the weekly run now triages each image's result with `scripts/triage-image-findings.py` before it uploads, and keeps the full Trivy result as the `trivy-*` artifacts.
+
+### How a finding gets onto the tab
+
+It is uploaded when at least one of these holds (the reason is in the run summary per image, and in the `triage-*` artifact per finding):
+
+| Reason | Rule | Source of the number |
+|---|---|---|
+| `kev` | in the CISA Known Exploited Vulnerabilities catalog | CISA KEV feed, downloaded once per run |
+| `epss` | EPSS score at least 0.1 | FIRST EPSS API; 0.1 is well above FIRST's "every CVSS critical" effort level of 0.04 |
+| `critical-exposed` | CRITICAL on an image that is exposed, consumes untrusted content, or cannot be classified | exposure, below |
+| `critical-overdue` | CRITICAL, fixable, published more than 90 days ago, on an internal image | FedRAMP 90-day tier, one step below exposed |
+
+A kept finding is marked `overdue` when it is past its limit: 14 days after CISA added it to KEV (BOD 26-04's standard KEV tier), 30 days after publication for critical on an exposed image (FedRAMP). The numbers live in one block at the top of the script.
+
+Exposure is derived from the repository, never typed in: an image is **exposed** when a service running it is a `reverse_proxy` upstream in `deploy/caddy/Caddyfile` or in the code that writes tenant routes at runtime (portal-api's tenant chat routes, the docs-app routes), or publishes a port on every host interface. `deploy/image-exposure.json` names the services that **consume untrusted content** (crawler, scraper, document converter, search, the workers that parse incoming events or mail) and the **internal** ones, each with a reason. A scanned service in none of these is treated as exposed and named in the summary. A tracked file that mentions `reverse_proxy` and is not listed in that file stops the scan, so a new route writer cannot leave an exposed image classified as internal.
+
+### How a finding leaves the tab
+
+- **Fixed**: the next scan no longer finds it (usually a Renovate bump), and GitHub closes it.
+- **Below the rule**: it no longer meets any clause; the next upload omits it and GitHub closes it as fixed. It is still in the `trivy-*` artifact.
+- **Stale SBOM**: Trivy reads every `*.spdx`, `*.spdx.json`, `*.cdx`, `*.cdx.json` in an image. A layer whose SBOM lists packages at other versions than the ones the image installed, and which installed nothing itself, describes another tree (a copied project directory) and is dropped. A vendor SBOM written with the software it describes (Bitnami's under `opt/bitnami/`, pip's vendored-library list) is kept.
+- **VEX**: `.vex/unused-components.json` declares a component that is in the image but never executed by that service (a bundled `kubectl`, `litestream`, `gosu`, a database client the service does not use). Each statement has an OpenVEX justification, a reason, its evidence, an expiry within 365 days and the compose conditions it rests on; the run emits a standard OpenVEX document per image in the `triage-*` artifact. `scripts/validate-vex.sh` fails when a statement has expired or a condition no longer holds, and the weekly run stops applying such a statement, so its findings come back.
+- **Stale category**: a category the scan job no longer produces (a renamed key, a removed service) gets an empty upload, which is how GitHub closes the alerts of a configuration that stopped reporting.
+
+### What to do with one
+
+1. `kev` on a running image: the run is red and the `CI failure: Scan pinned external images` issue lists the identifier and the image. Bump the pin today if a fixed upstream release exists; otherwise follow Recipe 6, step 3.
+2. `critical-exposed`, `epss`, `critical-overdue`: bump the pin (or merge the Renovate pull request) within the limit.
+3. The finding is real but the code never runs here: add a statement to `.vex/unused-components.json` with the evidence from compose and from the image, run `./scripts/validate-vex.sh`, and open a pull request. Do not dismiss the alert: a dismissal survives the next scan and hides the next real finding in the same place.
+4. A pull request that changes a pin runs `image-pin-triage.yml` through the required `quality` check and fails if the new pin adds a KEV finding on an exposed or content-consuming image that the old pin did not have.
+
+---
+
 ## Recipe 6 — A pinned external image (compose) introduces HIGH/CRITICAL
 
-External images go through `scan-pinned-images.yml` (WARN-tier — never blocks CI). Surfaced via Security tab.
+External images go through `scan-pinned-images.yml` (never blocks a push; triaged as described above) and, for a pull request that changes a pin, through `image-pin-triage.yml`. Surfaced via Security tab.
 
 1. Wait for next Renovate Monday cycle — most external base-images are auto-bumped
 2. If urgent (active exploit in the wild): manual bump in `deploy/docker-compose*.yml`, then `gh workflow run scan-pinned-images.yml --ref main` to re-scan
