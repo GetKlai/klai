@@ -195,8 +195,10 @@ async def test_connector_delete_cancels_every_job_of_its_documents_and_nothing_e
 # -- a stuck job whose queueing lock another job holds ------------------------
 
 
-async def _stuck_job_and_twin(app, pool, task: str, lock: str, stuck: dict, twin: dict) -> int:
-    """A job left ``doing`` by a dead worker, and a later job holding its lock."""
+async def _stuck_job_and_twin(
+    app, pool, task: str, lock: str, stuck: dict, twin: dict | None
+) -> int:
+    """A job left ``doing`` by a dead worker, and a later job holding its lock (unless None)."""
     queue_name = f"zombie-{uuid.uuid4().hex[:8]}"
     stuck_id = await app.configure_task(task, queue=queue_name, queueing_lock=lock).defer_async(
         **stuck
@@ -209,9 +211,10 @@ async def _stuck_job_and_twin(app, pool, task: str, lock: str, stuck: dict, twin
             "WHERE id = $1",
             worker_id,
         )
-    await app.configure_task(
-        twin.pop("task", task), queue=queue_name, queueing_lock=lock
-    ).defer_async(**twin)
+    if twin is not None:
+        await app.configure_task(
+            twin.pop("task", task), queue=queue_name, queueing_lock=lock
+        ).defer_async(**twin)
     return stuck_id
 
 
@@ -317,4 +320,94 @@ async def test_a_stuck_job_whose_lock_holder_builds_something_else_fails_the_doc
     assert [e["event"] for e in logs if e["log_level"] == "error"] == [
         "derived_product_failed",
         "zombie_work_not_covered",
+    ]
+
+
+async def test_a_job_deferred_on_the_lock_while_the_stuck_job_is_retried_still_fails_the_document(
+    queue, monkeypatch
+) -> None:
+    """Between the twin check and the retry a job for other work takes the lock:
+    procrastinate's retry then ends the stuck job failed, and the document must say so."""
+    import structlog
+
+    from knowledge_ingest import db
+    from knowledge_ingest.zombie_recovery import recover_zombie_jobs
+
+    app, pool, conn, org_id = queue
+    artifact = await _current_version(conn, org_id)
+
+    @asynccontextmanager
+    async def _admin():
+        yield conn
+
+    monkeypatch.setattr(db, "cross_org_admin_connection", _admin)
+    lock = f"shared-{artifact}"
+    stuck = await _stuck_job_and_twin(
+        app, pool, "enrich_document_bulk", lock, {"artifact_id": artifact}, None
+    )
+    retry = app.job_manager.retry_job_by_id_async
+
+    async def _twin_deferred_first(**kwargs) -> None:
+        await app.configure_task("enrich_document_bulk", queueing_lock=lock).defer_async(
+            artifact_id=str(uuid.uuid4())
+        )
+        await retry(**kwargs)
+
+    monkeypatch.setattr(app.job_manager, "retry_job_by_id_async", _twin_deferred_first)
+
+    with structlog.testing.capture_logs() as logs:
+        await recover_zombie_jobs(app)
+
+    assert await _status(pool, stuck) == "failed"
+    assert await _enrichment_state(conn, artifact) == ("failed", "stuck_job_not_covered")
+    assert [e["event"] for e in logs if e["log_level"] == "error"] == [
+        "derived_product_failed",
+        "zombie_work_not_covered",
+    ]
+
+
+async def test_a_twin_that_finished_the_work_before_recovery_decides_keeps_the_document_done(
+    queue, monkeypatch
+) -> None:
+    """The twin that made the retry close the stuck job ran and finished before
+    the second listing, so recovery no longer sees it and records the work lost:
+    the state write refuses done -> failed, and the document stays done."""
+    import structlog
+
+    from knowledge_ingest import db
+    from knowledge_ingest.derived_state import DONE, set_product_state
+    from knowledge_ingest.zombie_recovery import recover_zombie_jobs
+
+    app, pool, conn, org_id = queue
+    artifact = await _current_version(conn, org_id)
+
+    @asynccontextmanager
+    async def _admin():
+        yield conn
+
+    monkeypatch.setattr(db, "cross_org_admin_connection", _admin)
+    lock = f"{org_id}:docs:page:{artifact}"
+    stuck = await _stuck_job_and_twin(
+        app, pool, "enrich_document_bulk", lock, {"artifact_id": artifact}, None
+    )
+    retry = app.job_manager.retry_job_by_id_async
+
+    async def _twin_runs_and_finishes(**kwargs) -> None:
+        twin = await app.configure_task("enrich_document_bulk", queueing_lock=lock).defer_async(
+            artifact_id=artifact
+        )
+        await retry(**kwargs)
+        await set_product_state(conn, artifact, "enrichment", DONE)
+        await conn.execute("UPDATE procrastinate_jobs SET status = 'succeeded' WHERE id = $1", twin)
+
+    monkeypatch.setattr(app.job_manager, "retry_job_by_id_async", _twin_runs_and_finishes)
+
+    with structlog.testing.capture_logs() as logs:
+        await recover_zombie_jobs(app)
+
+    assert await _status(pool, stuck) == "failed"
+    assert await _enrichment_state(conn, artifact) == ("done", None)
+    assert "derived_product_failed" not in [e["event"] for e in logs]
+    assert [e["event"] for e in logs if e["log_level"] == "warning"] == [
+        "derived_state_transition_refused"
     ]
