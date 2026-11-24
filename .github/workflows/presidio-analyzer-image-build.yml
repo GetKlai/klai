@@ -15,8 +15,20 @@ name: Build Klai presidio-analyzer image
 #
 # On pull_request the image is built (and its unit tests run against it) but
 # never pushed.
+#
+# Every build runs a Trivy gate on the OS packages, and the image is rebuilt
+# every week. Upstream never rebuilds a published tag, so the Debian fixes
+# reach this image only through the apt-get upgrade in its Dockerfile, and
+# that only runs on a build: the 2.2.364 build that production ran until
+# 2026-11 carried a KEV-listed libbrotli1 a month after Debian had fixed it.
+# The weekly run pushes only when its package set differs from the image
+# deploy/docker-compose.yml pins, and then goes red with the digest to pin,
+# so the CI failure notice keeps an issue open until the pin moves. The pin
+# stays a separate commit, as for every other build of this image.
 
 on:
+  schedule:
+    - cron: '30 5 * * 1'  # Monday 05:30 UTC, before the pinned-image scan
   push:
     branches: [main]
     paths:
@@ -58,7 +70,11 @@ jobs:
           echo "patch_revision=$rev" >> "$GITHUB_OUTPUT"
           base="$(sed -n 's#^FROM ghcr.io/data-privacy-stack/presidio-analyzer:\([0-9][0-9.]*\)@sha256:.*#\1#p' deploy/presidio/analyzer/Dockerfile)"
           [ -n "$base" ] || { echo "::error::the Dockerfile FROM line must read presidio-analyzer:<version>@sha256:<digest>"; exit 1; }
-          echo "image=ghcr.io/getklai/presidio-analyzer:${base}-klai.${rev}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          # A scheduled rebuild has the same commit as the push build before
+          # it, and tags here are never overwritten, so it carries its date.
+          suffix=""
+          [ "$GITHUB_EVENT_NAME" != schedule ] || suffix="-r$(date -u +%y%m%d)"
+          echo "image=ghcr.io/getklai/presidio-analyzer:${base}-klai.${rev}-${GITHUB_SHA::12}${suffix}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550  # v4.8.0
         if: github.event_name != 'pull_request'
@@ -99,11 +115,51 @@ jobs:
           python3 -m pip install --quiet pytest
           python3 -m pytest deploy/presidio/tests/test_deployment_constraints.py -q --tb=short
 
+      # The repository's scan flags, gated on the OS packages: those are what
+      # the Dockerfile's apt-get upgrade owns, so a finding here means the
+      # upgrade did not run or Debian's fix is not installed. The Python
+      # stack is upstream's pin and stays in the weekly WARN-tier scan of
+      # the pinned image (scan-pinned-images.yml).
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
+        with:
+          version: v0.76.2
+          cache: true
+
+      - name: Scan OS packages
+        run: |
+          set -euo pipefail
+          trivy image --config .trivy.yaml --pkg-types os --exit-code 1 \
+            --timeout 6m --skip-version-check '${{ steps.params.outputs.image }}'
+
+      # The weekly rebuild only matters when it installs something the pinned
+      # image does not have; otherwise it would push a new digest every week
+      # with nothing in it to pin.
+      - name: Compare with the pinned image
+        id: changed
+        if: github.event_name == 'schedule'
+        run: |
+          set -euo pipefail
+          pinned=$(sed -n 's#^ *image: \(ghcr.io/getklai/presidio-analyzer@sha256:[0-9a-f]\{64\}\).*#\1#p' deploy/docker-compose.yml)
+          [ -n "$pinned" ] || { echo "::error::no digest-pinned presidio-analyzer image in deploy/docker-compose.yml"; exit 1; }
+          # The container's shell expands this, not the runner's.
+          # shellcheck disable=SC2016
+          list='dpkg-query -W -f "\${Package} \${Version}\n" | sort; python3 -m pip freeze | sort'
+          docker run --rm --entrypoint sh "$pinned" -c "$list" > pinned.txt
+          docker run --rm --entrypoint sh '${{ steps.params.outputs.image }}' -c "$list" > built.txt
+          if cmp -s pinned.txt built.txt; then
+            echo "Same packages as the pinned $pinned; nothing to push."
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          else
+            diff pinned.txt built.txt || true
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # A tag that can be overwritten cannot be rolled back to. Refuse to
       # replace an existing tag with different content rather than silently
       # moving it (same defect class as the 2026-08-14 LibreChat incident).
       - name: Refuse to overwrite an existing tag
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.changed.outputs.push != 'false'
         run: |
           set -euo pipefail
           image='${{ steps.params.outputs.image }}'
@@ -115,7 +171,7 @@ jobs:
           echo "$image is free."
 
       - name: Push
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.changed.outputs.push != 'false'
         run: |
           set -euo pipefail
           image='${{ steps.params.outputs.image }}'
@@ -131,3 +187,7 @@ jobs:
             echo ""
             echo "Pin deploy/docker-compose.yml's presidio-analyzer service to this digest."
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            echo "::error::The weekly rebuild installed packages the pinned image lacks. Pin $digest in deploy/docker-compose.yml (presidio-analyzer image line)."
+            exit 1
+          fi
