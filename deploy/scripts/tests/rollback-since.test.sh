@@ -183,7 +183,8 @@ check "Caddyfile restored" grep -qx "old caddyfile" "$d/caddy/Caddyfile"
 check "the touched service recreated, then the sweep" test "$(paste -sd'|' - < "$d/fixtures/calls")" = "compose-up --no-pull --force-recreate caddy|sweep"
 check "marker back on the restored commit" grep -qx bbb222 "$d/.compose-commit"
 check "state removed, so the sync is never undone twice" test ! -e "$d/.compose-prev-state"
-check "ledger line rolled_back with gate in the report" grep -q "${T}compose${T}compose${T}bbb222${T}ccc333${T}ccc333${T}rolled_back$" "$d/deploy-ledger.log"
+check "ledger line rolled_back with gate in the report" grep -q "${T}compose${T}compose${T}bbb222${T}ccc333${T}ccc333${T}rolled_back${T}" "$d/deploy-ledger.log"
+check "and the moment the restore began as its serving time" grep -qE "${T}rolled_back${T}[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$" "$d/deploy-ledger.log"
 check "compose report gate e2e" grep -q '"gate":"e2e","outcome":"rolled_back"' "$d/deploy-reports/compose.json"
 
 echo "# image entries before compose, even when compose is newer"
@@ -296,6 +297,136 @@ for until in 2026-11-19T21:05:00Z 2026-11-20T11:45:00Z 2026-11-20T20:05:00Z 2026
 done
 check "nothing after round 1 rolled back" test ! -s "$d/fixtures/deploys"
 check "compose (the CRM restore) untouched" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
+
+# The fallback margin, for ledger lines without a serving time: X's evidence
+# completed 06:10:00, so the margin ends at 06:25:00.
+echo "# fallback margin boundary: a legacy line at exactly evidence + 900 s is a possible cause"
+after_x seq-m0 "$(y_at 2026-10-28T06:25:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 3" test "$rc" = 3
+echo "# fallback margin boundary: one second past it is not"
+after_x seq-m1 "$(y_at 2026-10-28T06:25:01Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 5" test "$rc" = 5
+
+# Serving time (column 8). y_srv <ledger time> <serving time>
+y_srv() { line "$1" image klai-mailer mmmmmmmmmmm1 ghcr.io/getklai/klai-mailer:s2 s2 deployed "$2"; }
+echo "# (h) Y served from 06:09:59, before X's evidence completed at 06:10, its line at 06:40 is past the margin: rolled back"
+after_x seq-h "$(y_srv 2026-10-28T06:40:00Z 2026-10-28T06:09:59Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 3" test "$rc" = 3
+check "Y rolled back" test "$(deploys | cut -d' ' -f1)" = klai-mailer
+echo "# (h=) Y served from 06:10:00, the second the evidence completed: rolled back"
+after_x seq-h0 "$(y_srv 2026-10-28T06:40:00Z 2026-10-28T06:10:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 3" test "$rc" = 3
+echo "# (i) Y served from 06:10:01, its line at 06:12 is inside the old margin: blocked"
+after_x seq-i "$(y_srv 2026-10-28T06:12:00Z 2026-10-28T06:10:01Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 5" test "$rc" = 5
+check "nothing rolled back" test ! -s "$d/fixtures/deploys"
+echo "# (j) a slow sync served from 06:05 and finished at 06:50, after Y (06:30, served 06:20): every line is weighed, rolled back"
+after_x seq-j "$(y_srv 2026-10-28T06:30:00Z 2026-10-28T06:20:00Z)" \
+    "$(line 2026-10-28T06:50:00Z compose compose bbb222 ccc333 ccc333 deployed 2026-10-28T06:05:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 3" test "$rc" = 3
+check "Y rolled back and the sync undone" test "$(deploys | cut -d' ' -f1)" = klai-mailer -a "$(cat "$d/caddy/Caddyfile")" = "old caddyfile"
+echo "# (k) Y with a serving time after the evidence, Z a legacy line inside the margin: rolled back"
+after_x seq-k "$(y_srv 2026-10-28T06:30:00Z 2026-10-28T06:20:00Z)" \
+    "$(line 2026-10-28T06:20:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 3" test "$rc" = 3
+echo "# (k') a serving column that is not a timestamp falls back to the margin: line 06:20 is inside it, rolled back"
+after_x seq-k2 "$(y_srv 2026-10-28T06:20:00Z soon)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 3" test "$rc" = 3
+echo "# (k'') a real run never weighs the canary: it served before the evidence, Y after it, blocked"
+after_x seq-k3 "$(line 2026-10-28T06:05:00Z image rollback-canary ccccccccccc1 busybox:1.37.0 none deployed 2026-10-28T06:04:00Z)" \
+    "$(y_srv 2026-10-28T06:30:00Z 2026-10-28T06:20:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:00Z
+check "exit 5" test "$rc" = 5
+check "report names Y, not the canary" test "$(report service)" = klai-mailer
+
+# Confirmation window. Y deployed 07:00; the red run is created at 07:30 and
+# the window ends there; W begins to serve at 07:40 while the confirmation
+# runs (ledger line 07:45); the replay starts at 07:50; its post-rollback run
+# completes red at 08:00. Z deploys after that (serving 08:10, line 08:20) and
+# a later red run is created at 08:30.
+w_line="$(line 2026-10-28T07:45:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed 2026-10-28T07:40:00Z)"
+z_line="$(line 2026-10-28T08:20:00Z image klai-connector kkkkkkkkkkk1 ghcr.io/getklai/klai-connector:s6 s6 deployed 2026-10-28T08:10:00Z)"
+# round1 <case> <lines...>: the first round, which ends its window at the red run.
+round1() {
+    new_case "$@"
+    run "$SINCE" --until 2026-10-28T07:30:00Z
+    check "round 1: Y rolled back, W left for the next window, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 klai-mailer"
+    check "round 1: replay mark is the window's end" test "$(cat "$d/.e2e-rollback-at")" = 2026-10-28T07:30:00Z
+    : > "$d/fixtures/deploys"
+}
+echo "# (l) W served during the post-rollback run: the evidence is no proof, the later round rolls back W and Z"
+round1 seq-l "$(y_at 2026-10-28T07:00:00Z)" "$w_line" "$z_line"
+run "$SINCE" --until 2026-10-28T08:30:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: exit 3" test "$rc" = 3
+check "later round: W and Z rolled back" test "$(deploys | cut -d' ' -f1 | sort | paste -sd' ' -)" = "klai-connector scribe-api"
+echo "# (l2) the same without W: the later round is blocked"
+round1 seq-l2 "$(y_at 2026-10-28T07:00:00Z)" "$z_line"
+run "$SINCE" --until 2026-10-28T08:30:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: blocked, exit 5" test "$rc" = 5
+check "later round: nothing rolled back" test ! -s "$d/fixtures/deploys"
+echo "# (l3) W's line comes after the later round's window (a slow rollout): the evidence is still no proof"
+round1 seq-l3 "$(y_at 2026-10-28T07:00:00Z)" "$z_line" \
+    "$(line 2026-10-28T08:40:00Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed 2026-10-28T07:40:00Z)"
+run "$SINCE" --until 2026-10-28T08:30:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: not blocked, Z rolled back, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 klai-connector"
+echo "# (l4) the same with a legacy W line (no serving time): ledger time minus the margin is before the evidence"
+z_early="$(line 2026-10-28T08:05:00Z image klai-connector kkkkkkkkkkk1 ghcr.io/getklai/klai-connector:s6 s6 deployed 2026-10-28T08:02:00Z)"
+round1 seq-l4 "$(y_at 2026-10-28T07:00:00Z)" "$z_early" \
+    "$(line 2026-10-28T08:14:59Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed)"
+run "$SINCE" --until 2026-10-28T08:10:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: not blocked, Z rolled back, exit 3" test "$rc $(deploys | cut -d' ' -f1)" = "3 klai-connector"
+echo "# (l5) one second later the legacy W line counts as serving after the evidence: blocked"
+round1 seq-l5 "$(y_at 2026-10-28T07:00:00Z)" "$z_early" \
+    "$(line 2026-10-28T08:15:01Z image scribe-api sssssssssss1 ghcr.io/getklai/scribe-api:s5 s5 deployed)"
+run "$SINCE" --until 2026-10-28T08:10:00Z --red-after 2026-10-28T08:00:00Z
+check "later round: exit 5" test "$rc" = 5
+echo "# (m) W lands and the post-rollback run is green (its job started 07:52): the next red round has nothing to do"
+round1 seq-m "$(y_at 2026-10-28T07:00:00Z)" "$w_line"
+run 2026-10-28T07:52:00Z --until 2026-10-28T08:30:00Z
+check "next round: exit 0, nothing rolled back" test "$rc $(wc -l < "$d/fixtures/deploys" | tr -d ' ')" = "0 0"
+echo "# (p) nothing in the window, only a deploy after it that served after the evidence: nothing to block or roll back"
+round1 seq-p "$(y_at 2026-10-28T07:00:00Z)" "$z_line"
+run "$SINCE" --until 2026-10-28T08:15:00Z --red-after 2026-10-28T08:00:00Z
+check "exit 0" test "$rc" = 0
+echo "# (o) two compose syncs, one before the red run and one during the confirmation: no rollback_failed"
+new_case seq-o "$(y_at 2026-10-28T07:00:00Z)" \
+    "$(line 2026-10-28T07:05:00Z compose compose aaa111 bbb222 bbb222 deployed 2026-10-28T07:02:00Z)" \
+    "$(line 2026-10-28T07:45:00Z compose compose bbb222 ccc333 ccc333 deployed 2026-10-28T07:40:00Z)"
+run "$SINCE" --until 2026-10-28T07:30:00Z
+check "exit 3, not 4" test "$rc" = 3
+check "Y rolled back; the first sync is skipped because the second one is live" \
+    test "$(deploys | cut -d' ' -f1) $(report skipped)" = "klai-mailer compose=e2e-newer-deploy-running"
+check "the files of the live sync stay" grep -qx "new caddyfile" "$d/caddy/Caddyfile"
+check "outcome rolled_back_partial, so the post-rollback run is not named clean" test "$(report outcome)" = rolled_back_partial
+echo "# (o2) a window that also held the second sync would end rollback_failed (several syncs)"
+new_case seq-o2 "$(y_at 2026-10-28T07:00:00Z)" \
+    "$(line 2026-10-28T07:05:00Z compose compose aaa111 bbb222 bbb222 deployed 2026-10-28T07:02:00Z)" \
+    "$(line 2026-10-28T07:45:00Z compose compose bbb222 ccc333 ccc333 deployed 2026-10-28T07:40:00Z)"
+run "$SINCE" --until 2026-10-28T07:50:00Z
+check "exit 4" test "$rc" = 4
+
+# Rehearsal of the blocked path (rollback-rehearsal-assert.sh scenario 2): with
+# --rehearse the decision weighs the canary only, as the replay does.
+c_at() { line "$1" image rollback-canary ccccccccccc1 busybox:1.37.0 none deployed "$2"; }
+echo "# (n) --rehearse: the canary served after the evidence, a real deploy inside the margin: blocked, nothing touched"
+new_case seq-n "$(y_at 2026-10-28T06:15:00Z)" "$(c_at 2026-10-28T06:20:00Z 2026-10-28T06:19:00Z)"
+run 2026-10-28T06:10:00Z --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:30Z --rehearse
+check "exit 5" test "$rc" = 5
+check "nothing rolled back" test ! -s "$d/fixtures/deploys"
+check "report names the canary only" test "$(report service) $(report outcome)" = "rollback-canary e2e_already_red"
+echo "# (n') --rehearse: the canary served before the evidence: rolled back, so the block is not unconditional"
+new_case seq-n2 "$(c_at 2026-10-28T06:20:00Z 2026-10-28T06:10:00Z)"
+run 2026-10-28T06:00:00Z --until 2026-10-28T07:30:00Z --red-after 2026-10-28T06:10:30Z --rehearse
+check "exit 3" test "$rc" = 3
+check "the canary rolled back" test "$(deploys | cut -d' ' -f1)" = rollback-canary
 
 echo "# bad arguments"
 new_case args

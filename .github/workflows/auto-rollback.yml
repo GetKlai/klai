@@ -14,30 +14,43 @@ name: Auto-rollback
 #   3. red again: look up the evidence below, then
 #      deploy/scripts/rollback-since.sh on core-01 puts back every
 #      service deployed between the last green run and the creation of the red
-#      one (ledger replay, one pass, never twice for the same deploys);
-#   4. upload the report, start E2E once more ("...: after rollback by
-#      auto-rollback run <id>") and end red, so ci-failure-notice.yml opens its
-#      issue with the auto-rollback or rollback-failed label.
+#      one (ledger replay, one pass, never twice for the same deploys). A
+#      deploy that landed after the red run was created is left for the next
+#      round's window, which starts exactly where this one ended;
+#   4. upload the report, start E2E once more ("...: after a clean rollback by
+#      auto-rollback run <id>" when every planned rollback succeeded and none
+#      was skipped, "after a partial rollback" or "after a failed rollback"
+#      otherwise) and end red, so ci-failure-notice.yml opens its issue with
+#      the auto-rollback or rollback-failed label.
 #
 # Already red. From 2026-11-19 to 2026-11-22 an identity-provider setting kept
 # E2E red, there was no green run to start the window at, and every later
 # deploy was confirmed red and rolled back, CRM database restores included. The
 # one proof that E2E is red for a reason outside the deploys is this workflow's
-# own experiment: an earlier round rolled back and the E2E run it started after
-# that (step 4) ended red, with no green run since
-# (deploy/scripts/e2e-rollback-evidence.sh; manual, cancelled and skipped runs
-# are no proof). When every deploy left in the window wrote its ledger line more
-# than 15 minutes after that run completed (SERVING_MARGIN in rollback-since.sh:
-# a deploy serves for minutes before its ledger line), rollback-since.sh
-# changes nothing and exits 5 (outcome e2e_already_red); this run ends red with
-# label e2e-already-red, the issue names the red run, and no E2E run follows.
-# A deploy inside the margin, or no evidence, rolls back as before; so does a
-# failed lookup, because blocking wrongly leaves a breaking deploy live while
-# rolling back wrongly is the old behaviour. What a person does with
-# e2e-already-red: docs/runbooks/auto-rollback.md. Until the next green run, a
-# deploy that breaks something is caught only by its own deploy gates (probe
-# and error watch in deploy-with-rollback.sh, the sync gates in
-# compose-rollback.sh), not here.
+# own experiment: an earlier round rolled back cleanly and the E2E run it
+# started after that (step 4, "after a clean rollback") ended red, with no
+# green run since (deploy/scripts/e2e-rollback-evidence.sh; manual, cancelled
+# and skipped runs, runs after a partial or failed rollback, and a newer
+# post-rollback run that has not completed yet, are no proof). When every
+# deploy since the end of that round's window, in this window or after it,
+# began to serve after that run completed (the
+# serving time in the eighth ledger column, written by deploy-with-rollback.sh
+# just before the recreate and by compose-rollback.sh just before the sync
+# replaces its first file; for a ledger line written before that column
+# existed, a ledger time more than 15 minutes after the run, SERVING_MARGIN in
+# rollback-since.sh), rollback-since.sh changes nothing and exits 5 (outcome
+# e2e_already_red); this run ends red with label e2e-already-red, the issue
+# names the red run, and no E2E run follows. A deploy that was serving while
+# that run ran (one that landed during the confirmation of that round
+# included: its red run may be its own doing), or no evidence, rolls back as
+# before; so does a failed lookup,
+# because blocking wrongly leaves a breaking deploy live while rolling back
+# wrongly is the old behaviour. What a person does with e2e-already-red:
+# docs/runbooks/auto-rollback.md. Until the next green run, a deploy that
+# breaks something is caught only by its own deploy gates (probe and error
+# watch in deploy-with-rollback.sh, the sync gates in compose-rollback.sh), not
+# here, and one flaky red post-rollback run blocks the same way a real one
+# does. rollback-rehearsal.yml proves the blocked path on the canary weekly.
 #
 # Which red runs count: workflow_run (after a deploy) and schedule (04:00). E2E
 # runs after a deploy are often cancelled by the next one in their concurrency
@@ -84,9 +97,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
+      # The window and the post-rollback run name come from
+      # deploy/scripts/auto-rollback-round.sh, the evidence from
+      # e2e-rollback-evidence.sh.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
       # since: the time the last green run's job started; a deploy that landed
       # while it ran counts as untested. until: the creation of the red run; a
-      # deploy after it is not what that run saw. A rehearsal uses now.
+      # deploy after it is not what that run saw and falls in the next round's
+      # window. A rehearsal uses now.
       - name: Find the last green E2E run
         id: green
         env:
@@ -108,12 +127,12 @@ jobs:
             exit 0
           fi
           since="$(gh api "repos/$REPO/actions/runs/$id/jobs" --jq '[.jobs[].started_at | select(.)] | min // empty')"
-          until="${FAILED_CREATED:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
           re='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
-          if [[ ! "$since" =~ $re || ! "$until" =~ $re ]]; then
-            echo "::error::window '$since'..'$until' is not YYYY-MM-DDTHH:MM:SSZ"
+          if [[ ! "$since" =~ $re ]]; then
+            echo "::error::window start '$since' is not YYYY-MM-DDTHH:MM:SSZ"
             exit 1
           fi
+          until="$(bash deploy/scripts/auto-rollback-round.sh until "$FAILED_CREATED")"
           echo "last green E2E run: $id, job started $since; window ends $until"
           printf 'since=%s\nuntil=%s\ncreated=%s\n' "$since" "$until" "$created" >> "$GITHUB_OUTPUT"
 
@@ -149,10 +168,6 @@ jobs:
             echo "::notice::confirmation run $id ended $conclusion, so the red run is not confirmed; nothing rolled back"
           fi
           echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
-
-      - name: Check out the evidence lookup
-        if: steps.confirm.outputs.conclusion == 'failure'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # Looked up after the confirmation, so a post-rollback run of the round
       # before that finished meanwhile counts. The lookup fails open: no
@@ -252,8 +267,17 @@ jobs:
       # Proof that the restored state is good. A workflow_dispatch run, which
       # this workflow ignores, so a red one cannot start a second round. After
       # e2e_already_red nothing was restored, so there is nothing to prove.
+      # The name says whether every planned rollback succeeded with none
+      # skipped (auto-rollback-round.sh reason): only a red run "after a clean
+      # rollback" is evidence for a later round (e2e-rollback-evidence.sh).
+      # After a failed or partial one a breaking deploy can still be live, and
+      # the run still tells a person where things stand.
       - name: Run E2E prod-tenant after the rollback
         if: always() && steps.keep.outputs.found == 'true' && steps.keep.outputs.outcome != 'e2e_already_red' && github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run e2e-prod-tenant.yml --repo "$GITHUB_REPOSITORY" --ref main -f reason="after rollback by auto-rollback run $GITHUB_RUN_ID"
+          OUTCOME: ${{ steps.keep.outputs.outcome }}
+        run: |
+          set -euo pipefail
+          reason="$(bash deploy/scripts/auto-rollback-round.sh reason "$OUTCOME" "$GITHUB_RUN_ID")"
+          gh workflow run e2e-prod-tenant.yml --repo "$GITHUB_REPOSITORY" --ref main -f reason="$reason"
