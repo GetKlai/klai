@@ -205,11 +205,11 @@ JSON
 run_case main-red live-and-proven 0 "failing since 2026-01-09T04:00:00Z (2 runs), open ci-failure issue #9001" "$SHA"
 
 # 8. Only the config sync ran: no E2E run follows from it.
-newcase librechat-only
-fx librechat-only runs_commit <<'JSON'
+newcase configsync-only
+fx configsync-only runs_commit <<'JSON'
 [{"databaseId":104,"workflowName":"Sync LibreChat base config to core-01","status":"completed","conclusion":"success","createdAt":"2026-01-10T10:00:05Z","updatedAt":"2026-01-10T10:02:00Z"}]
 JSON
-run_case librechat-only deployed-no-e2e 3 "nightly" "$SHA"
+run_case configsync-only deployed-no-e2e 3 "nightly" "$SHA"
 
 # 9. A deploy that never finishes ends in a timeout; --no-wait reports the state instead.
 newcase running
