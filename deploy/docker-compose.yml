@@ -1594,7 +1594,7 @@ services:
 
   searxng:
     logging: *log-rotation
-    image: searxng/searxng:2026.8.12-cdfdaa5a8
+    image: searxng/searxng:2026.11.23-a7163d091
     restart: unless-stopped
     environment:
       SEARXNG_SECRET: "${SEARXNG_SECRET}"
