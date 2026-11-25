@@ -220,7 +220,7 @@ The Trivy alerts from `scan-pinned-images.yml` are an action list: every open on
 
 ### What is scanned, and how often
 
-Every image the stack can start, whatever the syntax of its pin: `image:` keys in `deploy/docker-compose.yml`, `docker-compose.dev.yml` and `deploy/docker-compose.gpu.yml`; images in environment values named `*_IMAGE` (the meeting bot's `BROWSER_IMAGE`, the tenant chat's `LIBRECHAT_IMAGE`) and the `slug=image` lists in `*_IMAGE_OVERRIDES`; and image defaults in the portal's settings that compose does not override. On 2026-11-25 that is 41 targets. `scripts/validate-vex.sh` fails when one of Renovate's custom regex managers treats a line in those files as an image pin that this derivation does not produce, so a new pin syntax cannot slip past the scan.
+Every image the stack can start, whatever the syntax of its pin: `image:` keys in `deploy/docker-compose.yml` and `docker-compose.dev.yml`; images in environment values named `*_IMAGE` (the meeting bot's `BROWSER_IMAGE`, the tenant chat's `LIBRECHAT_IMAGE`) and the `slug=image` lists in `*_IMAGE_OVERRIDES`; and image defaults in the portal's settings that compose does not override. On 2026-11-25 that is 38 targets. The GPU server's images are scanned from the private infrastructure repository, which holds its compose file and runs this triage on it daily. `scripts/validate-vex.sh` fails when one of Renovate's custom regex managers treats a line in those files as an image pin that this derivation does not produce, so a new pin syntax cannot slip past the scan.
 
 The scan runs daily (07:00 UTC) and on every push that changes a pin. A full run took 18 runner minutes on 2026-11-24. It rescans rather than re-joining stored results, because nothing is stored outside the runner. The remaining blind window after CISA adds a vulnerability to KEV is up to one day plus CISA's own delay from exploitation to listing. EPSS does not close that window: scores can sit near zero until the day a CVE is listed.
 
@@ -245,7 +245,7 @@ Exposure classes, most exposed first, all derived from the repository except whe
 - **content** (listed in `deploy/image-exposure.json`, each with a reason): parses untrusted input. These are the crawler, the scraper, the document converter and search; the meeting bot and the meeting API that receives its callbacks; the local model server; the PII analyzer and anonymizer; and the workers that parse incoming events or mail.
 - **reachable**: shares a compose network with an exposed or content-consuming service, so it sits one hop behind one. A pre-authentication injection through a public application reaches it.
 - **internal** (listed): none of the above. On 2026-11-25 no scanned production image is internal, because every compose network includes an exposed or content-consuming service. Only the developer compose stays internal. The `internal` list still records the intent for services that leave such a network.
-- **unknown**: in none of the lists and not derived (today the three images of the GPU host). These are treated as exposed and named in the run summary.
+- **unknown**: in none of the lists and not derived. These are treated as exposed and named in the run summary.
 
 A tracked file that mentions `reverse_proxy` and is not listed in `deploy/image-exposure.json` stops the scan, so a new route writer cannot leave an exposed image classified as internal.
 

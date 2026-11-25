@@ -591,7 +591,7 @@ class NothingPublicNamesAFinding(unittest.TestCase):
             return paths
 
         self.assertEqual(uploaded_paths("scan-pinned-images.yml"),
-                         {"inputs/deploy.json", "inputs/dev.json", "inputs/gpu.json", "inputs/targets.json", "inputs/stale.json",
+                         {"inputs/deploy.json", "inputs/dev.json", "inputs/targets.json", "inputs/stale.json",
                           "kev.json"})
         self.assertEqual(uploaded_paths("image-pin-triage.yml"), set())
 
