@@ -274,6 +274,15 @@ class StaleSbom(unittest.TestCase):
         self.assertEqual(s["dropped"]["stale-sbom"], 2)
 
 
+class KernelHeaders(unittest.TestCase):
+    def test_a_known_exploited_finding_on_the_kernel_header_package_is_dropped_and_counted(self):
+        rep = report(vuln("CVE-2099-0040", "CRITICAL", "linux-libc-dev"), vuln("CVE-2099-0040", "CRITICAL", "libexample"))
+        feeds = {"kev": {"CVE-2099-0040": {}}, "epss": {}}
+        _, s, _ = run(rep, target("deploy/app"), classes(app="exposed"), feeds)
+        self.assertEqual(s["dropped"]["kernel-headers"], 1)
+        self.assertEqual([k["package"] for k in s["kept"]], ["libexample"])
+
+
 class Vex(unittest.TestCase):
     DEPLOY = {"services": {"cal": {"image": "example/cal:1", "environment": {"TZ": "UTC"}}}}
 
