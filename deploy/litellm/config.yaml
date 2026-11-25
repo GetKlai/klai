@@ -492,3 +492,12 @@ general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
   store_model_in_db: true
+  # The gateway's own cleanup job deletes spend-log rows older than 90 days.
+  # The table had no retention and held 7.1 GB in 1.67 million rows on
+  # 2026-11-25, which made up most of the nightly database dump. The daily
+  # spend totals live in their own tables and are kept.
+  # A cron and not the default interval: an interval starts over whenever the
+  # container is recreated, which every config deploy does. 03:30 UTC is well
+  # clear of the backup dump at 00:00 UTC.
+  maximum_spend_logs_retention_period: "90d"
+  maximum_spend_logs_cleanup_cron: "30 3 * * *"
