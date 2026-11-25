@@ -7,6 +7,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from qdrant_client.models import SparseVector
+
+_SPARSE = SparseVector(indices=[0], values=[1.0])
 
 
 @pytest.fixture
@@ -33,6 +36,7 @@ async def test_upsert_chunks_includes_quality_fields(mock_qdrant_client):
             path="/doc.md",
             chunks=chunks,
             vectors=vectors,
+            sparse_vectors=[_SPARSE] * len(vectors),
             artifact_id="art1",
         )
 
@@ -58,6 +62,7 @@ async def test_upsert_chunks_includes_parent_chunk_id(mock_qdrant_client):
             path="/doc.md",
             chunks=["Hello world"],
             vectors=[[0.1] * 10],
+            sparse_vectors=[_SPARSE],
             artifact_id="art1",
             parent_chunk_ids=[42],
         )
@@ -86,6 +91,7 @@ async def test_upsert_enriched_chunks_includes_quality_fields(mock_qdrant_client
             ],
             chunk_vectors=[[0.1] * 10],
             question_vectors=[None],
+            sparse_vectors=[_SPARSE],
         )
 
         mock_qdrant_client.upsert.assert_called_once()
@@ -119,6 +125,7 @@ async def test_upsert_enriched_chunks_persists_heading_path(mock_qdrant_client):
             ],
             chunk_vectors=[[0.1] * 10],
             question_vectors=[None],
+            sparse_vectors=[_SPARSE],
         )
 
         points = mock_qdrant_client.upsert.call_args.kwargs["points"]

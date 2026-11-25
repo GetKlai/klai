@@ -10,6 +10,7 @@ pool connection for the duration of a crawl.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -64,6 +65,11 @@ from knowledge_ingest.domain_selectors import (
     extract_domain,
     get_domain_rate_limit_state,
     save_domain_rate_limit_state,
+)
+from knowledge_ingest.embedder import (
+    EMBEDDING_OUTAGE_WINDOW_SECONDS,
+    EMBEDDING_RETRY_SECONDS,
+    EmbeddingUnavailable,
 )
 from knowledge_ingest.models import IngestRequest
 from knowledge_ingest.reason_codes import (
@@ -133,6 +139,10 @@ _CRAWLER_CONFIG_REJECTED_SUGGESTION = (
 # ``decide_ingest_failure_terminal_status`` for why a ratio threshold is
 # NOT used here.
 INGEST_FAILURE_TOTAL_REASON = "ingest_failure_total"
+# Pages were still out after the crawl waited out an embedding outage; the
+# crawl_job_health view carries the reason and crawl_embedding_unavailable
+# alerts on it.
+EMBEDDING_UNAVAILABLE_REASON = "embedding_unavailable"
 # The run audit before the first write found that most changed pages lost a
 # large part of their stored text; nothing of the run was written. Surfaced
 # through crawl_jobs.error_summary like the reasons above.
@@ -419,6 +429,7 @@ def decide_ingest_failure_terminal_status(
     *,
     pages_done: int,
     pages_failed: int,
+    pages_embedding_unavailable: int = 0,
 ) -> tuple[str, dict | None]:
     """Pure decision function — sibling of :func:`decide_fetch_failure_terminal_status`.
 
@@ -453,6 +464,10 @@ def decide_ingest_failure_terminal_status(
             page still counts as done; see the caller's docstring for that
             pre-existing caveat, unchanged by this guard).
         pages_failed: pages whose ingest raised (existing counter).
+        pages_embedding_unavailable: of those, pages still failing on an
+            embedding outage after the crawl waited it out. Any such page
+            fails the job partially, whatever else succeeded: the page is
+            not at fault, and a one-off crawl never runs again by itself.
 
     Returns:
         ``(terminal_status, summary_dict_or_None)`` — same contract as
@@ -460,6 +475,16 @@ def decide_ingest_failure_terminal_status(
         the guard does not fire, so the caller falls through to its
         existing terminal-status logic.
     """
+    if pages_embedding_unavailable > 0:
+        return (
+            "failed_partial",
+            {
+                "reason": EMBEDDING_UNAVAILABLE_REASON,
+                "pages_attempted": pages_done + pages_failed,
+                "pages_failed": pages_failed,
+                "pages_embedding_unavailable": pages_embedding_unavailable,
+            },
+        )
     if pages_failed <= 0:
         return ("", None)
     if pages_done > 0:
@@ -1594,83 +1619,118 @@ async def run_crawl_job(
                 await pg_store.get_crawled_pages_markdown(conn, org_id, kb_slug)
             )
 
-        for result in pages_to_ingest:
-            url = result.url
-            if resource_key:
-                from knowledge_ingest.connector_state import (
-                    FenceState,
-                    check_connector_resource_fence,
-                )
-
-                fence_state = await check_connector_resource_fence(resource_key)
-                if fence_state is not FenceState.ACTIVE:
-                    logger.warning(
-                        "connector_resource_job_skipped",
-                        resource_key=resource_key,
-                        fence_state=fence_state.value,
-                        job_id=job_id,
-                        url=url,
+        # A page whose ingest met an embedding outage (the GPU server
+        # restarting) is tried again after EMBEDDING_RETRY_SECONDS, for as long
+        # as an enrichment job would wait (EMBEDDING_OUTAGE_WINDOW_SECONDS);
+        # what is still out then is counted failed and the job does not end
+        # completed (decide_ingest_failure_terminal_status).
+        pending = list(pages_to_ingest)
+        outage: list = []
+        for retry_round in range(EMBEDDING_OUTAGE_WINDOW_SECONDS // EMBEDDING_RETRY_SECONDS + 1):
+            outage = []
+            for result in pending:
+                url = result.url
+                if resource_key:
+                    from knowledge_ingest.connector_state import (
+                        FenceState,
+                        check_connector_resource_fence,
                     )
-                    continue
-            async with connection_factory() as conn:
-                async with guard_crawl_execution(conn, job_id, execution_generation):
-                    # The session advisory lock prevents a newer attempt from
-                    # claiming the job until this page's independently committed
-                    # side effects and progress update have finished.
-                    page_changed = False
-                    try:
-                        page_changed = await _ingest_crawl_result(
-                            conn,
-                            result,
-                            url,
-                            org_id,
-                            kb_slug,
-                            stored=known_hashes.get(url),
-                            login_indicator_selector=login_indicator_selector,
-                            authenticated_context=bool(cookies or login_indicator_selector),
-                            connector_id=connector_id,
-                            accept_shrink=accept_content_regression,
-                            site_lines=site_lines_by_host.get(urlparse(url).netloc, frozenset()),
-                        )
-                        pages_done += 1
-                    except AnonymousAuthWallDetected as wall_exc:
-                        # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.1 — per-page wall,
-                        # NOT a session-wide failure. Record + continue BFS so sibling
-                        # URLs (which may be public) still ingest.
-                        auth_wall_pages.append(wall_exc.url)
-                        # 2026-08-18 stop-the-bleeding fix: was "crawl_page_login_wall".
-                        # The event name asserted the presumed CAUSE (a login wall)
-                        # rather than the actual OBSERVATION (near-duplicate content
-                        # cluster). On 2026-08-18 this misdirected a live
-                        # investigation for an hour — the operator saw "login wall"
-                        # in the logs and went looking for credentials, when the
-                        # real cause was 13 identical OpenAPI-parser error pages.
-                        # Behaviour is unchanged: the page is still skipped, BFS
-                        # still continues (REQ-04.1).
-                        logger.info(
-                            "crawl_page_template_cluster_skipped",
-                            url=url,
+
+                    fence_state = await check_connector_resource_fence(resource_key)
+                    if fence_state is not FenceState.ACTIVE:
+                        logger.warning(
+                            "connector_resource_job_skipped",
+                            resource_key=resource_key,
+                            fence_state=fence_state.value,
                             job_id=job_id,
-                            pattern=wall_exc.signal.pattern,
-                            evidence=wall_exc.signal.evidence,
+                            url=url,
                         )
-                    except Exception as exc:
-                        logger.warning("crawl_page_failed", url=url, job_id=job_id, error=str(exc))
-                        pages_failed += 1
+                        continue
+                async with connection_factory() as conn:
+                    async with guard_crawl_execution(conn, job_id, execution_generation):
+                        # The session advisory lock prevents a newer attempt from
+                        # claiming the job until this page's independently committed
+                        # side effects and progress update have finished.
+                        page_changed = False
+                        try:
+                            page_changed = await _ingest_crawl_result(
+                                conn,
+                                result,
+                                url,
+                                org_id,
+                                kb_slug,
+                                stored=known_hashes.get(url),
+                                login_indicator_selector=login_indicator_selector,
+                                authenticated_context=bool(cookies or login_indicator_selector),
+                                connector_id=connector_id,
+                                accept_shrink=accept_content_regression,
+                                site_lines=site_lines_by_host.get(
+                                    urlparse(url).netloc, frozenset()
+                                ),
+                            )
+                            pages_done += 1
+                        except AnonymousAuthWallDetected as wall_exc:
+                            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.1 — per-page wall,
+                            # NOT a session-wide failure. Record + continue BFS so sibling
+                            # URLs (which may be public) still ingest.
+                            auth_wall_pages.append(wall_exc.url)
+                            # 2026-08-18 stop-the-bleeding fix: was "crawl_page_login_wall".
+                            # The event name asserted the presumed CAUSE (a login wall)
+                            # rather than the actual OBSERVATION (near-duplicate content
+                            # cluster). On 2026-08-18 this misdirected a live
+                            # investigation for an hour — the operator saw "login wall"
+                            # in the logs and went looking for credentials, when the
+                            # real cause was 13 identical OpenAPI-parser error pages.
+                            # Behaviour is unchanged: the page is still skipped, BFS
+                            # still continues (REQ-04.1).
+                            logger.info(
+                                "crawl_page_template_cluster_skipped",
+                                url=url,
+                                job_id=job_id,
+                                pattern=wall_exc.signal.pattern,
+                                evidence=wall_exc.signal.evidence,
+                            )
+                        except EmbeddingUnavailable as exc:
+                            # Not the page's fault: tried again after the wait below.
+                            logger.warning(
+                                "crawl_page_embedding_unavailable",
+                                url=url,
+                                job_id=job_id,
+                                error=str(exc),
+                            )
+                            outage.append(result)
+                        except Exception as exc:
+                            logger.warning(
+                                "crawl_page_failed", url=url, job_id=job_id, error=str(exc)
+                            )
+                            pages_failed += 1
 
-                    # pages_changed is incremented in the database rather than
-                    # set from a local counter, so pages changed by an earlier,
-                    # superseded attempt of this job are not lost on recovery.
-                    await conn.execute(
-                        "UPDATE knowledge.crawl_jobs "
-                        "SET pages_done=$1, pages_changed=pages_changed+$2, updated_at=$3 "
-                        "WHERE id=$4 AND execution_generation=$5 AND status='running'",
-                        pages_done,
-                        1 if page_changed else 0,
-                        int(time.time()),
-                        job_id,
-                        execution_generation,
-                    )
+                        # pages_changed is incremented in the database rather than
+                        # set from a local counter, so pages changed by an earlier,
+                        # superseded attempt of this job are not lost on recovery.
+                        await conn.execute(
+                            "UPDATE knowledge.crawl_jobs "
+                            "SET pages_done=$1, pages_changed=pages_changed+$2, updated_at=$3 "
+                            "WHERE id=$4 AND execution_generation=$5 AND status='running'",
+                            pages_done,
+                            1 if page_changed else 0,
+                            int(time.time()),
+                            job_id,
+                            execution_generation,
+                        )
+            waited = retry_round * EMBEDDING_RETRY_SECONDS
+            if not outage or waited >= EMBEDDING_OUTAGE_WINDOW_SECONDS or await cancel_check():
+                break
+            logger.warning(
+                "crawl_pages_waiting_for_embedding",
+                job_id=job_id,
+                pages=len(outage),
+                retry_in_seconds=EMBEDDING_RETRY_SECONDS,
+            )
+            await asyncio.sleep(EMBEDDING_RETRY_SECONDS)
+            pending = outage
+        pages_embedding_unavailable = len(outage)
+        pages_failed += pages_embedding_unavailable
 
         # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4 — dirty-content guard.
         # Evaluate FIRST: if too many pages classified as auth-walled while
@@ -1705,6 +1765,7 @@ async def run_crawl_job(
         ingest_failure_status, ingest_failure_summary = decide_ingest_failure_terminal_status(
             pages_done=pages_done,
             pages_failed=pages_failed,
+            pages_embedding_unavailable=pages_embedding_unavailable,
         )
 
         # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.2/04.3 — terminal status:

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import structlog
+from qdrant_client.models import Filter, HasVectorCondition
 
 from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store, qdrant_store, queues
@@ -134,6 +135,21 @@ async def _fetch_qdrant_artifact_counts() -> Counter[ArtifactKey]:
     return counts
 
 
+async def _count_points_without_sparse() -> int:
+    """Points the hybrid search finds through the dense leg only.
+
+    Ingest refuses to write such a point (qdrant_store._replace_points), so
+    anything above zero predates that or slipped past it. The repair is
+    scripts/sparse_backfill.py, which writes only the missing sparse vectors.
+    """
+    result = await qdrant_store.get_client().count(
+        qdrant_store.COLLECTION,
+        count_filter=Filter(must_not=[HasVectorCondition(has_vector="vector_sparse")]),
+        exact=True,
+    )
+    return result.count
+
+
 async def lost_graph_extractions(conn: Any, org_ids: set[str]) -> dict[str, Any]:
     """Active rows whose recorded, finished extraction has an episode the graph lacks.
 
@@ -193,6 +209,7 @@ async def reconcile_pg_qdrant() -> dict[str, Any]:
                         logger.exception("graph_lost_extractions_check_failed")
                         graph_report = {"graph_check": "error", "graph_error": str(exc)}
             qdrant_artifact_counts = await _fetch_qdrant_artifact_counts()
+            points_without_sparse = await _count_points_without_sparse()
     except Exception as exc:
         # A crashed reconcile must still emit the pg_qdrant_reconcile event,
         # otherwise the Grafana alert (which matches status:failed OR
@@ -205,7 +222,9 @@ async def reconcile_pg_qdrant() -> dict[str, Any]:
         for artifact in recent_artifacts
         if (key := _artifact_key_from_mapping(artifact)) is not None
     }
+    # Its own alert (ingest-points-without-sparse), so it does not move status.
     report = _diff_inventory(pg_artifacts, qdrant_artifact_counts, recent_keys) | graph_report
+    report["points_without_sparse"] = points_without_sparse
     if graph_report["graph_check"] == "error":
         status = "error"
     elif report["discrepancies_total"] or report.get("graph_lost_extractions"):

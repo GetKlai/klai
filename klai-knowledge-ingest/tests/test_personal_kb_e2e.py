@@ -22,11 +22,14 @@ from qdrant_client.models import (
     Filter,
     MatchValue,
     SparseIndexParams,
+    SparseVector,
     SparseVectorParams,
     VectorParams,
 )
 
 import knowledge_ingest.qdrant_store as qs_module
+
+_SPARSE = SparseVector(indices=[0], values=[1.0])
 
 EMBED_DIM = 1024
 COLLECTION = "klai_knowledge"
@@ -68,6 +71,7 @@ async def test_upsert_chunks_stores_user_id(mem_client):
             path="users/user-aaa/note.md",
             chunks=["My private note."],
             vectors=[_unit_vector()],
+            sparse_vectors=[_SPARSE],
             artifact_id="art-aaa",
             user_id="user-aaa",
         )
@@ -91,6 +95,7 @@ async def test_personal_chunk_invisible_to_other_user(mem_client):
             path="users/user-aaa/note.md",
             chunks=["User A secret note."],
             vectors=[_unit_vector()],
+            sparse_vectors=[_SPARSE],
             artifact_id="art-aaa",
             user_id="user-aaa",
         )
@@ -101,6 +106,7 @@ async def test_personal_chunk_invisible_to_other_user(mem_client):
             path="users/user-bbb/note.md",
             chunks=["User B secret note."],
             vectors=[_unit_vector()],
+            sparse_vectors=[_SPARSE],
             artifact_id="art-bbb",
             user_id="user-bbb",
         )
@@ -146,6 +152,7 @@ async def test_non_personal_chunk_has_no_user_id(mem_client):
             path="docs/readme.md",
             chunks=["Team readme content."],
             vectors=[_unit_vector()],
+            sparse_vectors=[_SPARSE],
             artifact_id="art-team",
             user_id=None,
         )
@@ -165,6 +172,7 @@ async def test_upsert_chunks_reingest_removes_old_points_for_same_path(mem_clien
             path="docs/page.md",
             chunks=["Old procedure."],
             vectors=[_unit_vector()],
+            sparse_vectors=[_SPARSE],
             artifact_id="art-old",
         )
         await qs_module.upsert_chunks(
@@ -173,6 +181,7 @@ async def test_upsert_chunks_reingest_removes_old_points_for_same_path(mem_clien
             path="docs/page.md",
             chunks=["New procedure."],
             vectors=[_unit_vector()],
+            sparse_vectors=[_SPARSE],
             artifact_id="art-new",
         )
 
@@ -210,6 +219,7 @@ async def test_personal_chunk_not_returned_without_user_id_filter(mem_client):
             path="users/user-aaa/note.md",
             chunks=["Personal secret."],
             vectors=[_unit_vector()],
+            sparse_vectors=[_SPARSE],
             artifact_id="art-aaa",
             user_id="user-aaa",
         )

@@ -46,6 +46,11 @@ from knowledge_ingest.content_profiles import child_chunk_chars, get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 from knowledge_ingest.derived_state import DONE, FAILED, NOT_APPLICABLE
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
+from knowledge_ingest.embedder import (
+    EMBEDDING_OUTAGE_WINDOW_SECONDS,
+    EMBEDDING_RETRY_SECONDS,
+    EmbeddingUnavailable,
+)
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
     enrichment_batch_size,
@@ -61,6 +66,7 @@ from knowledge_ingest.llm_capacity import (
     deferral_window_spent,
     is_llm_capacity_error,
 )
+from knowledge_ingest.sparse_embedder import SparseEmbeddingRejected
 
 logger = structlog.get_logger()
 
@@ -521,6 +527,50 @@ async def _defer_after_llm_capacity(
     )
 
 
+async def _defer_after_embedding_outage(
+    task: Any,
+    context: Any,
+    exc: EmbeddingUnavailable,
+    embedding_deferred_since: int | None,
+    **job_args: Any,
+) -> None:
+    """Queue an enrichment job again that found an embedding service down.
+
+    A fresh job instead of a procrastinate retry, so waiting out an outage does
+    not spend the attempts that protect against other failures; the start of
+    the outage travels in the job arguments. The document stays pending while
+    it waits, and records failed (embedding_unavailable) once the outage has
+    lasted ``EMBEDDING_OUTAGE_WINDOW_SECONDS``.
+    """
+    artifact_id = job_args["artifact_id"]
+    since = embedding_deferred_since or int(time.time())
+    if time.time() - since >= EMBEDDING_OUTAGE_WINDOW_SECONDS:
+        logger.error(
+            "enrichment_embedding_outage_exhausted",
+            artifact_id=artifact_id,
+            deferred_since=since,
+            error=str(exc),
+        )
+        await _give_up("enrichment", artifact_id, "embedding_unavailable")
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    try:
+        await task.configure(
+            queueing_lock=context.job.queueing_lock,
+            schedule_in={"seconds": EMBEDDING_RETRY_SECONDS},
+        ).defer_async(**job_args, embedding_deferred_since=since)
+    except AlreadyEnqueued:
+        # A job for this artifact is already waiting and covers this one.
+        pass
+    logger.warning(
+        "enrichment_deferred_embedding_unavailable",
+        artifact_id=artifact_id,
+        retry_in_seconds=EMBEDDING_RETRY_SECONDS,
+        deferred_since=since,
+        error=str(exc),
+    )
+
+
 def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
     import procrastinate
@@ -567,7 +617,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
         pass_context=True,
     )
     async def enrich_document_interactive(
-        context: Any, artifact_id: str, llm_deferred_since: int | None = None
+        context: Any,
+        artifact_id: str,
+        llm_deferred_since: int | None = None,
+        embedding_deferred_since: int | None = None,
     ) -> None:
         """Enrich chunks for a single-doc upload (high priority).
 
@@ -584,6 +637,17 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 llm_deferred_since,
                 artifact_id=artifact_id,
             )
+        except EmbeddingUnavailable as exc:
+            await _defer_after_embedding_outage(
+                enrich_document_interactive,
+                context,
+                exc,
+                embedding_deferred_since,
+                artifact_id=artifact_id,
+                llm_deferred_since=llm_deferred_since,
+            )
+        except SparseEmbeddingRejected:
+            await _give_up("enrichment", artifact_id, "sparse_rejected")
         except Exception as exc:
             await _fail_if_last_attempt(
                 "enrichment", artifact_id, exc, context, _INTERACTIVE_MAX_ATTEMPTS
@@ -606,6 +670,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         resource_key: str | None = None,  # noqa: ARG001
         llm_deferred_since: int | None = None,
         batch_offset: int = 0,
+        embedding_deferred_since: int | None = None,
     ) -> None:
         """Enrich chunks for crawl/import jobs (lower priority), and every
         batch after the first of a large document.
@@ -624,6 +689,18 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 artifact_id=artifact_id,
                 batch_offset=batch_offset,
             )
+        except EmbeddingUnavailable as exc:
+            await _defer_after_embedding_outage(
+                enrich_document_bulk,
+                context,
+                exc,
+                embedding_deferred_since,
+                artifact_id=artifact_id,
+                batch_offset=batch_offset,
+                llm_deferred_since=llm_deferred_since,
+            )
+        except SparseEmbeddingRejected:
+            await _give_up("enrichment", artifact_id, "sparse_rejected")
         except Exception as exc:
             await _fail_if_last_attempt("enrichment", artifact_id, exc, context, _BULK_MAX_ATTEMPTS)
             raise
@@ -1038,6 +1115,9 @@ async def _enrich_document(
         type=content_type,
     )
     try:
+        # Before any model work: during an outage a retry then costs one
+        # health call per service instead of the document's LLM calls.
+        await embedder.check_available()
         profile = get_profile(content_type)
 
         # Build participant context string if available
@@ -1226,7 +1306,6 @@ async def _enrich_document(
 
         total_ms = int((time.monotonic() - t_total) * 1000)
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
-        sparse_success_count = sum(1 for sv in sparse_vectors if sv is not None)
         logger.info(
             "enrichment_complete",
             kb_slug=kb_slug,
@@ -1238,7 +1317,6 @@ async def _enrich_document(
             enriched=enriched_count,
             depth=synthesis_depth,
             type=content_type,
-            sparse_ok=sparse_success_count,
             llm_ms=llm_ms,
             tei_ms=tei_ms,
             sparse_ms=sparse_ms,

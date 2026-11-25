@@ -5,15 +5,23 @@ Synthetic data only: fictional products on example.com.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    PointStruct,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 
 import knowledge_ingest.qdrant_store as qs
 from knowledge_ingest.product_label import derive_product
 from knowledge_ingest.utils.content_fingerprint import compute_minhash
+
+_SPARSE = SparseVector(indices=[0], values=[1.0])
 
 ORG, KB = "org-test", "kb-test"
 
@@ -92,6 +100,7 @@ async def mem_client():
     await client.create_collection(
         qs.COLLECTION,
         vectors_config={"vector_chunk": VectorParams(size=2, distance=Distance.COSINE)},
+        sparse_vectors_config={"vector_sparse": SparseVectorParams()},
     )
     with patch.object(qs, "get_client", return_value=client):
         yield client
@@ -99,16 +108,16 @@ async def mem_client():
 
 
 async def test_raw_upsert_stores_the_text_fingerprint(mem_client):
-    with patch.object(qs.sparse_embedder, "embed_sparse_batch", AsyncMock(return_value=[None])):
-        await qs.upsert_chunks(
-            org_id=ORG,
-            kb_slug=KB,
-            path="orbit/forwarding",
-            chunks=[_ARTICLE.format(p="Orbit")],
-            vectors=[[1.0, 0.0]],
-            artifact_id="art-1",
-            extra_payload={"product": "orbit"},
-        )
+    await qs.upsert_chunks(
+        org_id=ORG,
+        kb_slug=KB,
+        path="orbit/forwarding",
+        chunks=[_ARTICLE.format(p="Orbit")],
+        vectors=[[1.0, 0.0]],
+        sparse_vectors=[_SPARSE],
+        artifact_id="art-1",
+        extra_payload={"product": "orbit"},
+    )
     (point,), _ = await mem_client.scroll(qs.COLLECTION, with_payload=True)
     assert point.payload["product"] == "orbit"
     assert point.payload["text_fingerprint"] == compute_minhash(_ARTICLE.format(p="Orbit"))

@@ -37,6 +37,7 @@ from knowledge_ingest import (
     org_config,
     pg_store,
     qdrant_store,
+    sparse_embedder,
 )
 from knowledge_ingest import (
     graph as graph_module,
@@ -62,6 +63,7 @@ from knowledge_ingest.enrichment_policy import (
 )
 from knowledge_ingest.graph_refresh import maybe_refresh_stale_graph
 from knowledge_ingest.identity import assert_caller_identity, assert_caller_identity_tenant_only
+from knowledge_ingest.ingest_tasks import record_docs_page_failure
 from knowledge_ingest.llm_capacity import LLMCapacityUnavailable
 from knowledge_ingest.models import (
     BulkSyncRequest,
@@ -575,6 +577,10 @@ async def ingest_document(
         return {"status": "skipped", "reason": "empty document", "chunks": 0}
 
     vectors = await embedder.embed(texts)
+    # Before the version is recorded, like the dense vectors: an unavailable
+    # sidecar then fails the request with nothing written, and the caller's
+    # retry finds no new version claiming this content.
+    sparse_vectors = await sparse_embedder.embed_sparse_batch(texts)
 
     title = _extract_title(indexable_content, req.path, req.title)
     source_profile = resolve_source_knowledge_profile(
@@ -948,6 +954,7 @@ async def ingest_document(
         path=req.path,
         chunks=texts,
         vectors=vectors,
+        sparse_vectors=sparse_vectors,
         artifact_id=artifact_id,
         extra_payload=extra_payload,
         user_id=chunk_user_id,
@@ -1248,6 +1255,7 @@ async def gitea_webhook(request: Request) -> dict:
 
     queued = 0
     deleted = 0
+    failed: list[str] = []
 
     # Schedule a debounced ingest for each changed file.
     # queueing_lock ensures at most one pending task per document: if the user
@@ -1294,6 +1302,8 @@ async def gitea_webhook(request: Request) -> dict:
                 logger.debug("ingest_debounced", kb_slug=kb_slug, path=path)
             except Exception as exc:
                 logger.warning("ingest_queue_failed", path=path, error=str(exc))
+                record_docs_page_failure(org_id, kb_slug, path, "queue_unavailable")
+                failed.append(path)
         else:
             # No Procrastinate (enrichment disabled) — ingest immediately as before
             content = await _fetch_gitea_file(full_name, path)
@@ -1316,9 +1326,14 @@ async def gitea_webhook(request: Request) -> dict:
                 queued += 1
             except Exception as exc:
                 logger.warning("ingest_failed", path=path, error=str(exc))
+                record_docs_page_failure(org_id, kb_slug, path, type(exc).__name__)
+                failed.append(path)
 
     if removed:
         deleted = await _purge_removed_paths(org_id, kb_slug, sorted(removed))
+    if failed:
+        # Gitea marks the delivery failed, where it can be redelivered.
+        raise HTTPException(status_code=502, detail=f"ingest failed for {len(failed)} path(s)")
 
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
 
@@ -1657,10 +1672,19 @@ async def deregister_kb_webhook(request: Request, req: KBWebhookRequest) -> dict
 
 @router.post("/ingest/v1/kb/sync")
 async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
-    """Re-index all pages of a KB from Gitea. Called by Docs on KB creation or for recovery."""
+    """Re-index all pages of a KB from Gitea. Called by Docs on KB creation or for recovery.
+
+    A page that meets an embedding outage is handed to ``ingest_from_gitea``,
+    which waits the outage out; any other failure is recorded per page and the
+    request answers 502 naming them, after every page was tried.
+    """
+    from knowledge_ingest.embedder import EmbeddingUnavailable
+
     _verify_internal_secret(request)
     pages = await _list_gitea_md_files(req.gitea_repo)
     ingested = 0
+    deferred: list[str] = []
+    failed: list[dict] = []
     async with tenant_scoped_connection(req.org_id) as conn:
         for path in pages:
             content = await _fetch_gitea_file(req.gitea_repo, path)
@@ -1679,7 +1703,50 @@ async def bulk_sync_kb_route(request: Request, req: BulkSyncRequest) -> dict:
             try:
                 await ingest_document(conn, ingest_req)
                 ingested += 1
+            except EmbeddingUnavailable:
+                try:
+                    await _queue_gitea_ingest(req.org_id, req.kb_slug, path, req.gitea_repo)
+                    deferred.append(path)
+                except Exception as exc:
+                    record_docs_page_failure(req.org_id, req.kb_slug, path, "queue_unavailable")
+                    failed.append({"path": path, "reason": type(exc).__name__})
             except Exception as exc:
-                logger.warning("bulk_sync_failed", path=path, error=str(exc))
-    logger.info("bulk_sync_complete", org_id=req.org_id, kb_slug=req.kb_slug, pages=ingested)
-    return {"status": "ok", "pages": ingested}
+                record_docs_page_failure(req.org_id, req.kb_slug, path, type(exc).__name__)
+                failed.append({"path": path, "reason": type(exc).__name__})
+    logger.info(
+        "bulk_sync_complete",
+        org_id=req.org_id,
+        kb_slug=req.kb_slug,
+        pages=ingested,
+        deferred=len(deferred),
+        failed=len(failed),
+    )
+    if failed:
+        raise HTTPException(
+            status_code=502,
+            detail={"pages": ingested, "deferred": deferred, "failed": failed},
+        )
+    return {"status": "ok", "pages": ingested, "deferred": deferred}
+
+
+async def _queue_gitea_ingest(org_id: str, kb_slug: str, path: str, gitea_repo: str) -> None:
+    """Queue the page for ``ingest_from_gitea``, which rides out an embedding outage."""
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    from knowledge_ingest import enrichment_tasks
+    from knowledge_ingest.embedder import EMBEDDING_RETRY_SECONDS
+
+    try:
+        await (
+            enrichment_tasks.get_app()
+            .ingest_from_gitea.configure(  # type: ignore[attr-defined]
+                queueing_lock=f"gitea:{org_id}:{kb_slug}:{path}",
+                schedule_in={"seconds": EMBEDDING_RETRY_SECONDS},
+            )
+            .defer_async(
+                org_id=org_id, kb_slug=kb_slug, path=path, gitea_repo=gitea_repo, user_id=None
+            )
+        )
+    except AlreadyEnqueued:
+        # A save of this page is already queued and fetches the latest text.
+        pass

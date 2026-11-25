@@ -218,11 +218,6 @@ async def _enrich(jobs, artifact_id: str, *, attempts=0, error=None, **args):
             enrichment_tasks.embedder, "embed", AsyncMock(side_effect=lambda t: [[0.1]] * len(t))
         ),
         patch.object(
-            enrichment_tasks.sparse_embedder,
-            "embed_sparse_batch",
-            AsyncMock(side_effect=lambda t: [None] * len(t)),
-        ),
-        patch.object(
             enrichment_tasks.kb_config, "get_kb_visibility", AsyncMock(return_value="internal")
         ),
         patch.object(enrichment_tasks.kb_config, "get_kb_aliases", AsyncMock(return_value=[])),

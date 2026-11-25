@@ -8,7 +8,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
@@ -18,6 +19,7 @@ from retrieval_api.api.retrieve import router as retrieve_router
 from retrieval_api.config import settings
 from retrieval_api.logging_setup import RequestContextMiddleware, setup_logging
 from retrieval_api.middleware.auth import AuthMiddleware
+from retrieval_api.services.tei import EmbeddingUnavailable
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -68,6 +70,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="retrieval-api", version="1.0.0", lifespan=lifespan)
+
+
+@app.exception_handler(EmbeddingUnavailable)
+async def _embedding_unavailable(_request: Request, _exc: EmbeddingUnavailable) -> JSONResponse:
+    # The dense service stayed down past tei's retries. No other retrieval mode
+    # stands in for it: the caller gets a distinct 503, which the chat layer
+    # already presents as an unreachable knowledge base.
+    return JSONResponse(status_code=503, content={"detail": "embedding_unavailable"})
+
 
 # Middleware registration order: last-added runs FIRST on the request
 # (Starlette LIFO — see .claude/rules/klai/lang/python.md and

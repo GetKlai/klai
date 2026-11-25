@@ -97,3 +97,25 @@ in the last 25 hours.
    `enrichment_tasks.init_app()`.
 4. Once fixed, run or wait for the next reconcile. The missing-run alert
    resolves after any `pg_qdrant_reconcile` event is logged.
+
+## Points Without A Sparse Vector
+
+`qdrant_points_without_sparse` fires when the nightly `pg_qdrant_reconcile`
+event carries `points_without_sparse` above zero: points in `klai_knowledge`
+that hybrid search finds through the dense vector only.
+
+Ingest refuses to write such a point: an unavailable embedding service fails
+the base ingest request before anything is written, and sends an enrichment
+job back to the queue every 2 minutes for 16 minutes, after which the document
+records `failed (embedding_unavailable)`. A count above zero is therefore a point written
+before that guard, or a writer that bypasses `qdrant_store._replace_points`.
+
+1. Count per knowledge base, read-only (inside the knowledge-ingest container):
+   `python -m knowledge_ingest.scripts.sparse_backfill --org <org_id>`
+   without `--execute`. It prints chunks with and without a sparse vector.
+2. Find the writer: the points' `artifact_id` and the time they were written.
+   A new writer that bypasses `_replace_points` is the bug to fix first.
+3. The repair writes only the missing `vector_sparse` of those points
+   (`--execute`, per org and optionally `--kb`); it never rebuilds a knowledge
+   base. It rewrites production knowledge data, so it runs only after the
+   owner approved that one run, with the dry-run counts in front of them.

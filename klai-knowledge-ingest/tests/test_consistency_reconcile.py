@@ -13,6 +13,7 @@ import yaml
 
 from knowledge_ingest.consistency_reconcile import (
     ArtifactKey,
+    _count_points_without_sparse,
     _diff_inventory,
     _fetch_qdrant_artifact_counts,
     reconcile_pg_qdrant,
@@ -23,6 +24,76 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INGEST_ALERT_PATH = (
     REPO_ROOT / "deploy" / "grafana" / "provisioning" / "alerting" / "ingest-rules.yaml"
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_sparse_count_query():
+    """The reconcile tests below mock the inventories; the sparse count has its own tests."""
+    with patch(
+        "knowledge_ingest.consistency_reconcile._count_points_without_sparse",
+        new_callable=AsyncMock,
+        return_value=0,
+    ):
+        yield
+
+
+async def test_points_without_a_sparse_vector_are_counted():
+    from qdrant_client import AsyncQdrantClient
+    from qdrant_client.models import (
+        PointStruct,
+        SparseVector,
+        SparseVectorParams,
+        VectorParams,
+    )
+
+    client = AsyncQdrantClient(":memory:")
+    await client.create_collection(
+        "klai_knowledge",
+        vectors_config={"vector_chunk": VectorParams(size=2, distance="Cosine")},
+        sparse_vectors_config={"vector_sparse": SparseVectorParams()},
+    )
+    sparse = SparseVector(indices=[1], values=[1.0])
+    await client.upsert(
+        "klai_knowledge",
+        points=[
+            PointStruct(id=1, vector={"vector_chunk": [1, 0], "vector_sparse": sparse}),
+            PointStruct(id=2, vector={"vector_chunk": [1, 1], "vector_sparse": sparse}),
+            PointStruct(id=3, vector={"vector_chunk": [0, 1]}),  # written before it was required
+        ],
+    )
+    with patch("knowledge_ingest.consistency_reconcile.qdrant_store.get_client", lambda: client):
+        assert await _count_points_without_sparse() == 1
+
+
+async def test_the_sparse_count_is_reported_on_the_alerted_event():
+    env = _patched_reconcile_env(pg_artifacts=[], recent_artifacts=[], qdrant_counts=Counter())
+    with (
+        env[0],
+        env[1],
+        env[2],
+        env[3],
+        patch(
+            "knowledge_ingest.consistency_reconcile._count_points_without_sparse",
+            new_callable=AsyncMock,
+            return_value=3,
+        ),
+        patch("knowledge_ingest.consistency_reconcile.logger") as mock_logger,
+    ):
+        result = await reconcile_pg_qdrant()
+
+    assert result["points_without_sparse"] == 3
+    assert mock_logger.info.call_args.kwargs["points_without_sparse"] == 3
+
+
+def test_points_without_sparse_alert_rule_fires_above_zero():
+    parsed = yaml.safe_load(INGEST_ALERT_PATH.read_text(encoding="utf-8"))
+    rules = parsed["groups"][0]["rules"]
+    rule = next(r for r in rules if r["uid"] == "ingest-points-without-sparse")
+
+    query = rule["data"][0]["model"]["expr"]
+    assert "event:pg_qdrant_reconcile" in query
+    assert "points_without_sparse:>0" in query
+    assert rule["data"][2]["model"]["conditions"][0]["evaluator"] == {"params": [0], "type": "gt"}
 
 
 class _RetryStrategy:

@@ -311,7 +311,7 @@ async def build_arm(
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
-            vector={"vector_chunk": d, **({"vector_sparse": s} if s is not None else {})},
+            vector={"vector_chunk": d, "vector_sparse": s},
             payload=p,
         )
         for d, s, p in zip(dense, sparse, payloads, strict=True)

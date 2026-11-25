@@ -42,22 +42,21 @@ async def mem_client():
     await client.close()
 
 
-def _sparse_for(texts: list[str]) -> list[SparseVector | None]:
+def _sparse_for(texts: list[str]) -> list[SparseVector]:
     return [SparseVector(indices=[len(t)], values=[1.0]) for t in texts]
 
 
-async def _write_raw(texts: list[str], *, sparse: bool = True) -> None:
-    embed = AsyncMock(side_effect=_sparse_for if sparse else lambda t: [None] * len(t))
-    with patch.object(qs.sparse_embedder, "embed_sparse_batch", embed):
-        await qs.upsert_chunks(
-            org_id=ORG,
-            kb_slug=KB,
-            path=PATH,
-            chunks=texts,
-            vectors=[[1.0, 0.0, 0.0, 0.0]] * len(texts),
-            artifact_id=ART,
-            parent_chunk_ids=list(range(100, 100 + len(texts))),
-        )
+async def _write_raw(texts: list[str]) -> None:
+    await qs.upsert_chunks(
+        org_id=ORG,
+        kb_slug=KB,
+        path=PATH,
+        chunks=texts,
+        vectors=[[1.0, 0.0, 0.0, 0.0]] * len(texts),
+        sparse_vectors=_sparse_for(texts),
+        artifact_id=ART,
+        parent_chunk_ids=list(range(100, 100 + len(texts))),
+    )
 
 
 async def _points(client: AsyncQdrantClient) -> list:
@@ -75,13 +74,6 @@ async def test_raw_chunk_carries_sparse_vector_on_first_write(mem_client):
     assert [p.payload["text"] for p in points] == ["alpha text", "beta"]
     assert all("context_prefix" not in p.payload for p in points)
     assert [p.vector["vector_sparse"].indices for p in points] == [[10], [4]]
-
-
-async def test_raw_chunk_stays_dense_only_when_sidecar_gives_nothing(mem_client):
-    await _write_raw(["alpha"], sparse=False)
-
-    (point,) = await _points(mem_client)
-    assert "vector_sparse" not in point.vector
 
 
 # --- enrichment in batches --------------------------------------------------
@@ -129,6 +121,7 @@ async def test_enriched_batch_leaves_points_of_another_artifact_version_alone(me
         enriched_chunks=[_enriched("c0")],
         chunk_vectors=[[0.0, 1.0, 0.0, 0.0]],
         question_vectors=[None],
+        sparse_vectors=_sparse_for(["ctx c0"]),
         artifact_id="art-OLD",
         chunk_offset=0,
     )
@@ -200,10 +193,14 @@ async def test_document_above_batch_size_is_enriched_in_queued_batches(mem_clien
 
 
 async def test_backfill_dry_run_counts_and_real_run_writes_only_missing(mem_client):
-    await _write_raw(["second"], sparse=False)  # a base chunk written before this change
     await mem_client.upsert(
         qs.COLLECTION,
         points=[
+            PointStruct(  # a base chunk written dense-only before the sparse vector was required
+                id="00000000-0000-0000-0000-000000000003",
+                vector={"vector_chunk": [1, 0, 0, 0]},
+                payload={"org_id": ORG, "kb_slug": KB, "path": PATH, "text": "second"},
+            ),
             PointStruct(
                 id="00000000-0000-0000-0000-000000000001",
                 vector={
@@ -284,17 +281,16 @@ async def test_few_caller_chunks_survive_enrichment_with_their_speaker_turns(mem
 
 
 async def test_sparse_result_count_mismatch_is_a_loud_error_not_a_silent_drop(mem_client):
-    short = AsyncMock(return_value=_sparse_for(["only one"]))
-    with patch.object(qs.sparse_embedder, "embed_sparse_batch", short):
-        with pytest.raises(ValueError):
-            await qs.upsert_chunks(
-                org_id=ORG,
-                kb_slug=KB,
-                path=PATH,
-                chunks=["a", "b"],
-                vectors=[[1.0, 0.0, 0.0, 0.0]] * 2,
-                artifact_id=ART,
-            )
+    with pytest.raises(ValueError):
+        await qs.upsert_chunks(
+            org_id=ORG,
+            kb_slug=KB,
+            path=PATH,
+            chunks=["a", "b"],
+            vectors=[[1.0, 0.0, 0.0, 0.0]] * 2,
+            sparse_vectors=_sparse_for(["only one"]),
+            artifact_id=ART,
+        )
 
 
 async def test_an_infrastructure_failure_in_enrichment_is_raised_not_swallowed():

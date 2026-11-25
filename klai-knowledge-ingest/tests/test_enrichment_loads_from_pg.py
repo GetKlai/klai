@@ -488,11 +488,6 @@ async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
             return_value=[[0.1] * 10],
         ),
         patch(
-            "knowledge_ingest.enrichment_tasks.sparse_embedder.embed_sparse_batch",
-            new_callable=AsyncMock,
-            return_value=[None],
-        ),
-        patch(
             "knowledge_ingest.enrichment_tasks.pg_store.artifact_is_active",
             new_callable=AsyncMock,
             return_value=False,

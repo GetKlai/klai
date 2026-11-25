@@ -17,6 +17,7 @@ Per job the view carries `fetch_total`, `crawler_side_failures`, `top_signature`
 | `crawl_crawler_errors` | The latest job of a source finished in the last 26 h with at least 20 fetch outcomes, of which 20% or more were crawler-side. | critical, pages (`page="true"`) |
 | `crawl_fleet_signature` | In the last 24 h, jobs of at least 3 different sources have the same `error_type:status_code` as half or more of their outcomes. Unrelated sites do not fail identically, so the cause is on our side. | critical |
 | `crawl_success_below_baseline` | The latest job ingested under 70% of the median `pages_done` of the source's last 5 completed jobs before it (needs 3 or more of those, and a median of at least 1). Catches partial breakage that has no error signature. | warning, email only |
+| `crawl_embedding_unavailable` | The latest job of a source finished in the last 26 h as `failed_partial` with reason `embedding_unavailable`: pages were still failing on the embedding services after the crawl waited 16 minutes for them. Those pages are not in search; run the crawl again once the GPU server is back. | warning |
 | `crawl_jobs_silent` | A web connector that is enabled, active and scheduled every day has no crawl job updated in the last 30 h. | critical |
 
 ## Query 1: what happened to one knowledge base

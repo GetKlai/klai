@@ -231,8 +231,6 @@ async def _write(client: AsyncQdrantClient, updates: list[tuple]) -> None:
     texts = [text for _, text in reembed]
     dense = await embedder.embed(texts) if texts else []
     sparse = await sparse_embedder.embed_sparse_batch(texts) if texts else []
-    if any(vector is None for vector in sparse):
-        raise RuntimeError("sparse sidecar returned no vector; nothing written for this batch")
     operations: list = []
     if reembed:
         vectors = [

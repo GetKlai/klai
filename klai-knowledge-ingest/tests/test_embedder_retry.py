@@ -18,6 +18,7 @@ import structlog.testing
 from knowledge_ingest.embedder import (
     _MAX_ATTEMPTS,
     _MAX_BACKOFF_SECONDS,
+    EmbeddingUnavailable,
     _embed_batch,
 )
 
@@ -119,7 +120,7 @@ async def test_exhausts_5_attempts_on_persistent_timeout():
     client.post = AsyncMock(side_effect=httpx.ReadTimeout("always fails"))
 
     with patch("knowledge_ingest.embedder.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(EmbeddingUnavailable):
             await _embed_batch(client, ["x", "y"])
 
     assert client.post.await_count == _MAX_ATTEMPTS
@@ -138,7 +139,7 @@ async def test_final_exhaustion_logs_at_error_level():
 
     with patch("knowledge_ingest.embedder.asyncio.sleep", new_callable=AsyncMock):
         with structlog.testing.capture_logs() as captured:
-            with pytest.raises(httpx.ReadTimeout):
+            with pytest.raises(EmbeddingUnavailable):
                 await _embed_batch(client, ["x", "y"])
 
     final_events = [e for e in captured if e.get("event") == "tei_embed_failed_max_attempts"]
@@ -208,7 +209,7 @@ async def test_backoff_uses_full_jitter():
         patch("knowledge_ingest.embedder.random.uniform", side_effect=_spy_uniform),
         patch("knowledge_ingest.embedder.asyncio.sleep", new_callable=AsyncMock),
     ):
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(EmbeddingUnavailable):
             await _embed_batch(client, ["x"])
 
     # One uniform() call per attempt that triggered a sleep — that's
@@ -249,7 +250,7 @@ async def test_5xx_path_uses_jitter_and_logs_status():
         patch("knowledge_ingest.embedder.asyncio.sleep", new_callable=AsyncMock),
     ):
         with structlog.testing.capture_logs() as captured:
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(EmbeddingUnavailable):
                 await _embed_batch(client, ["x"])
 
     assert client.post.await_count == _MAX_ATTEMPTS
@@ -266,3 +267,23 @@ async def test_5xx_path_uses_jitter_and_logs_status():
     assert len(finals) == 1
     assert finals[0]["last_status"] == 503
     assert finals[0]["log_level"] == "error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectError("connection refused"), httpx.RemoteProtocolError("Server disconnected")],
+    ids=["refused", "dropped"],
+)
+async def test_a_refused_or_dropped_connection_is_an_outage_not_an_ordinary_error(error):
+    """A restarting GPU server refuses or drops the connection; that must reach
+    the jobs as EmbeddingUnavailable, which they wait out, not as an ordinary
+    error that spends their short retry budget."""
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=error)
+
+    with patch("knowledge_ingest.embedder.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(EmbeddingUnavailable):
+            await _embed_batch(client, ["x"])
+
+    assert client.post.await_count == _MAX_ATTEMPTS

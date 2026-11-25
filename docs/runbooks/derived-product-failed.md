@@ -43,6 +43,8 @@ reason names; a single document is about that document.
 | reason | product | what happened |
 |---|---|---|
 | `retries_exhausted` | both | The job failed on every attempt. The preceding error lines with the same `artifact_id` carry the cause. |
+| `embedding_unavailable` | enrichment | The dense or sparse embedding service on the GPU server stayed down for 16 minutes while the job was queued again every 2 minutes (`enrichment_deferred_embedding_unavailable`), so no enriched point was written; the raw points stay. Check the GPU server; once it is back, re-queue. |
+| `sparse_rejected` | enrichment | The sparse sidecar answered and refused this document (a 4xx, or a result count that does not match its chunks). Not an outage, so it was not retried; the preceding `sparse_sidecar_batch_unavailable` line has the answer. |
 | `llm_capacity_exhausted` | enrichment | The LLM had no capacity for the whole deferral window (`llm_capacity.py`). |
 | `no_stored_text` | both | The row has no `document_text`; the job had nothing to work from. |
 | `quarantined` | graph | FalkorDB died repeatedly while writing this document's episode, so the document is held out of the graph for this writer build. |
@@ -69,3 +71,22 @@ knowledge base first.
   the graph switched off the graph run refuses to start. A new sync
   of the source document also queues a fresh extraction. For a quarantined
   document, first find out why FalkorDB dies on it.
+
+## Docs page not ingested
+
+`docs_page_ingest_failed` fires when a saved Docs page did not reach search as
+saved: its ingest failed before a new version was written, so search still
+holds the page's previous version, or nothing for a new page. The event
+carries `org_id`, `kb_slug`, `path` and `reason`.
+
+- `embedding_unavailable`: the embedding services stayed down for 16 minutes
+  while the `ingest_from_gitea` job was queued again every 2 minutes
+  (`gitea_ingest_deferred_embedding_unavailable`).
+- `queue_unavailable`: the webhook or the bulk sync could not queue the page;
+  the webhook delivery or the bulk sync request failed with a 502 as well.
+- any other value: the exception type of the failed ingest; the job's error is
+  in `procrastinate_jobs` (task `ingest_from_gitea`, status `failed`).
+
+Nothing re-queues the page by itself. Once the cause is gone, save the page
+again in Docs, redeliver the webhook from Gitea, or run the bulk sync of the
+knowledge base.
