@@ -1,0 +1,158 @@
+name: Chat image rollout
+
+# Moves every provisioning-managed tenant to the chat image pinned as
+# portal-api's LIBRECHAT_IMAGE in deploy/docker-compose.yml, canary first:
+# the tenant the production journeys log in to (first DNS label of the
+# E2E_BASE_URL secret) moves alone, E2E prod-tenant must pass on it, and only
+# then does the fleet follow, with a second E2E run after it. Red at either
+# step puts back what moved. The decisions and their tests are in
+# deploy/scripts/chat-image-rollout.sh; the state they leave on core-01 is
+# what portal-api creates containers from, so one merged pin starts the whole
+# sequence and nothing waits for a person.
+#
+# On 2026-11-24 the move from upstream v0.8.8 to v0.8.9 recreated all 45 tenants
+# first (deploy-librechat-config.yml with recreate_containers) and ran the
+# journeys after; had the image been broken, every customer would have had it
+# before any proof ran.
+#
+# The compose-managed tenant (librechat-getklai) is not part of this: compose
+# owns its image and deploy-compose.yml moves it at merge, ahead of the canary.
+#
+# The canary must be marked synthetic on core-01: the line
+# KLAI_TENANT_PURPOSE=synthetic in /opt/klai/librechat/<slug>/.env. Without it
+# the run refuses (exit 4), so a secret that points at a customer tenant can
+# never make that customer the canary.
+#
+# Two jobs on purpose: `plan` moves no container (it only writes the baseline
+# state when none exists), `rollout` is the one that moves containers. Auto-rollback leaves a red E2E run alone when a `rollout` job of
+# this workflow ran while it did, because this sequence answers that red itself.
+#
+# Triggers: a push that touches the compose file (the run does nothing when the
+# pin did not move); hourly, to finish or undo a run that died halfway and to
+# retry after E2E was red for another reason; by hand, with `force` for the
+# no-op exercise (the current image as candidate, the full sequence) and
+# `retry_rejected` to try a rejected image again.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/docker-compose.yml'
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run the full sequence even when the pinned image is already stable'
+        type: boolean
+        default: false
+      retry_rejected:
+        description: 'Try the pinned image again although an earlier run rejected it'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # gh workflow run for the E2E prod-tenant runs.
+  actions: write
+
+# One rollout at a time; never cancelled, a cancelled run is what leaves a
+# half-moved fleet.
+concurrency:
+  group: chat-image-rollout
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    outputs:
+      move: ${{ steps.plan.outputs.move }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # The compose sync of the same commit recreates portal-api when its
+      # environment changed; the recreates below go through portal-api, so
+      # wait for that sync to finish (it holds the host lock while it works).
+      - name: Wait for the compose sync of this commit
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deadline=$(( SECONDS + 40 * 60 ))
+          while (( SECONDS < deadline )); do
+            pending="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy-compose.yml --commit "$GITHUB_SHA" \
+              --json status --jq '[.[] | select(.status != "completed")] | length')" || pending=1
+            [[ "$pending" == 0 ]] && exit 0
+            sleep 30
+          done
+          echo "::error::the compose sync of $GITHUB_SHA did not finish within 40 minutes; nothing moved"
+          exit 1
+
+      - name: Decide whether anything moves
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          CORE01_HOST: ${{ secrets.CORE01_HOST }}
+          CORE01_DEPLOY_KEY: ${{ secrets.CORE01_DEPLOY_KEY }}
+          CORE01_KNOWN_HOSTS: ${{ secrets.CORE01_KNOWN_HOSTS }}
+          ROLLOUT_FORCE: ${{ inputs.force == true }}
+          ROLLOUT_RETRY_REJECTED: ${{ inputs.retry_rejected == true }}
+        run: |
+          set -euo pipefail
+          eval "$(ssh-agent -s)" > /dev/null
+          trap 'ssh-agent -k > /dev/null' EXIT
+          ssh-add - <<< "$CORE01_DEPLOY_KEY" 2> /dev/null
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$CORE01_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          target="$(awk '$1 == "LIBRECHAT_IMAGE:" { print $2; exit }' deploy/docker-compose.yml)"
+          rc=0
+          ROLLOUT_PLAN_ONLY=true ROLLOUT_SSH_TARGET="klai@$CORE01_HOST" \
+            bash deploy/scripts/chat-image-rollout.sh "$target" "$E2E_BASE_URL" > plan.out || rc=$?
+          cat plan.out
+          # 3: nothing moved and nothing should (E2E red elsewhere, or the
+          # image was rejected before); the hourly run looks again.
+          if [[ "$rc" != 0 && "$rc" != 3 ]]; then exit "$rc"; fi
+          grep -m1 -E '^move=(true|false)$' plan.out >> "$GITHUB_OUTPUT"
+
+  rollout:
+    needs: plan
+    if: needs.plan.outputs.move == 'true'
+    runs-on: ubuntu-latest
+    # Worst case four E2E runs of about 15 minutes each, plus queueing behind
+    # other E2E runs and one recreate of the whole fleet.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Canary, proof, fleet, proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          CORE01_HOST: ${{ secrets.CORE01_HOST }}
+          CORE01_DEPLOY_KEY: ${{ secrets.CORE01_DEPLOY_KEY }}
+          CORE01_KNOWN_HOSTS: ${{ secrets.CORE01_KNOWN_HOSTS }}
+          ROLLOUT_FORCE: ${{ inputs.force == true }}
+          ROLLOUT_RETRY_REJECTED: ${{ inputs.retry_rejected == true }}
+        run: |
+          set -euo pipefail
+          eval "$(ssh-agent -s)" > /dev/null
+          trap 'ssh-agent -k > /dev/null' EXIT
+          ssh-add - <<< "$CORE01_DEPLOY_KEY" 2> /dev/null
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$CORE01_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          target="$(awk '$1 == "LIBRECHAT_IMAGE:" { print $2; exit }' deploy/docker-compose.yml)"
+          rc=0
+          ROLLOUT_SSH_TARGET="klai@$CORE01_HOST" \
+            bash deploy/scripts/chat-image-rollout.sh "$target" "$E2E_BASE_URL" || rc=$?
+          if [[ "$rc" == 3 ]]; then
+            echo "::notice::nothing moved: E2E prod-tenant is red for another reason, or this image was rejected before"
+            exit 0
+          fi
+          exit "$rc"

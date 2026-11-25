@@ -191,6 +191,13 @@ check "RECREATE_CONTAINERS=true -> 0" 0 "$rc"
 check_calls "  passes recreate_containers=true to the endpoint" \
     "^regenerate http://localhost:8010/internal/librechat/regenerate\?recreate_containers=true "
 
+# The staged chat image rollout recreates the canary tenant alone.
+new_case one_tenant
+run_target RECREATE_CONTAINERS=true TENANT=e2e
+check "TENANT=e2e -> 0" 0 "$rc"
+check_calls "  narrows the recreate to that tenant" \
+    "^regenerate http://localhost:8010/internal/librechat/regenerate\?recreate_containers=true&tenant=e2e "
+
 echo
 if [[ "$failures" -eq 0 ]]; then
     echo "tenant-config-regenerate: all cases passed"

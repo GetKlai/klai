@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       recreate_containers:
-        description: 'Recreate all provisioning-managed tenant containers instead of restart-only'
+        description: 'Recreate all provisioning-managed tenant containers instead of restart-only (images follow the rollout state; a new image goes through Chat image rollout)'
         type: boolean
         default: false
 

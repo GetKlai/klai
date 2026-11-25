@@ -8,6 +8,7 @@
  */
 import { test, expect, type Page } from '@playwright/test'
 import { getChatFrame, hasTcpExplanation, latestReplyText } from './_lib/chat'
+import { CHAT } from './_lib/chat-selectors'
 
 test.skip(process.env.E2E_MODE === 'voys-attached', 'Strict/Open smoke mutates the current chat user preference')
 
@@ -56,13 +57,13 @@ async function askChat(page: Page, prompt: string): Promise<string> {
   const frame = await getChatFrame(page)
   // Wait for a NEW assistant message that carries a mode marker: matching the
   // page as a whole could still see the previous turn's reply.
-  const repliesBefore = await frame.locator('.agent-turn').count()
-  await frame.locator('#prompt-textarea').fill(prompt)
-  await frame.locator('[data-testid="send-button"]').click()
+  const repliesBefore = await frame.locator(CHAT.assistantTurn).count()
+  await frame.locator(CHAT.promptTextarea).fill(prompt)
+  await frame.locator(CHAT.sendButton).click()
   // Polled through latestReplyText so the wait reads the reply the way the
   // assertions do.
   await expect
-    .poll(async () => ((await frame.locator('.agent-turn').count()) > repliesBefore ? latestReplyText(frame) : ''), {
+    .poll(async () => ((await frame.locator(CHAT.assistantTurn).count()) > repliesBefore ? latestReplyText(frame) : ''), {
       timeout: 90_000,
     })
     .toMatch(

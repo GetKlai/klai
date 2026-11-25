@@ -1,7 +1,14 @@
 #!/bin/sh
 # Does this LibreChat config boot on this image?
 #
-# usage: chat-config-boot.sh <image-ref> <config-file>
+# usage: chat-config-boot.sh <image-ref> <config-file> [command ...]
+#
+# With a command, the script does not stop at /health: it publishes the app on
+# 127.0.0.1:$BOOT_PORT (default 3080), starts a stand-in for the chat model
+# (deploy/tests/chat-model-stub.js, run with the image's own node) behind the
+# "Klai AI" endpoint and the klai-knowledge MCP host, enables local email login, runs the command with
+# CHAT_URL set while everything is up, and exits with the command's status.
+# librechat-image-build.yml uses that for the screen check before merge.
 #
 # Why this exists: on merge, deploy-librechat-config.yml copies librechat.yaml
 # to the host and restarts every tenant chat container, which still run the
@@ -59,7 +66,7 @@
 # exit.
 set -eu
 
-[ $# -eq 2 ] || { echo "usage: $0 <image-ref> <config-file>" >&2; exit 2; }
+[ $# -ge 2 ] || { echo "usage: $0 <image-ref> <config-file> [command ...]" >&2; exit 2; }
 IMAGE=$1
 CONFIG=$2
 [ -f "$CONFIG" ] || { echo "config file not found: $CONFIG" >&2; exit 2; }
@@ -71,11 +78,12 @@ CONFIG=$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")
 MONGO_IMAGE=$(awk '/^  mongodb:/{f=1} f&&/^[[:space:]]*image:/{print $2; exit}' "$COMPOSE")
 [ -n "$MONGO_IMAGE" ] || { echo "no mongodb image found in $COMPOSE" >&2; exit 2; }
 TIMEOUT=${BOOT_TIMEOUT:-120}
+shift 2
 
 P=lc-config-boot-$$
 # shellcheck disable=SC2329  # invoked via trap
 cleanup() {
-    docker rm -f "${P}-app" "${P}-mongo" >/dev/null 2>&1 || true
+    docker rm -f "${P}-app" "${P}-mongo" "${P}-model" >/dev/null 2>&1 || true
     docker network rm "${P}-net" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT HUP INT TERM
@@ -91,7 +99,25 @@ until docker exec "${P}-mongo" mongosh --quiet --eval 'db.runCommand({ping:1}).o
     sleep 2
 done
 
-docker run -d --name "${P}-app" --network "${P}-net" \
+# Defaults: boot only. A command switches on what a screen needs; the origin
+# stays on example.com otherwise, so nothing points at a real host.
+ORIGIN=https://chat.example.com
+MODEL_URL=http://portal-api.example.com/partner/v1
+SERVE_ARGS=""
+if [ $# -gt 0 ]; then
+    PORT_ON_HOST=${BOOT_PORT:-3080}
+    ORIGIN=http://localhost:$PORT_ON_HOST
+    MODEL_URL=http://${P}-model:8080/v1
+    # The alias is the knowledge MCP host librechat.yaml names, so the default
+    # model spec finds its tools on the same stub.
+    docker run -d --name "${P}-model" --network "${P}-net" --network-alias klai-knowledge-mcp \
+        -v "$ROOT/deploy/tests/chat-model-stub.js:/stub.js:ro" \
+        --entrypoint node "$IMAGE" /stub.js >/dev/null
+    SERVE_ARGS="-p 127.0.0.1:$PORT_ON_HOST:3080 -e ALLOW_EMAIL_LOGIN=true -e ALLOW_REGISTRATION=true -e ALLOW_UNVERIFIED_EMAIL_LOGIN=true"
+fi
+
+# shellcheck disable=SC2086  # SERVE_ARGS is a list of flags without spaces in them
+docker run -d --name "${P}-app" --network "${P}-net" $SERVE_ARGS \
     -v "$CONFIG:/app/librechat.yaml:ro" \
     -v "$ENTRYPOINT:/klai-entrypoint.sh:ro" \
     -e MONGO_URI="mongodb://${P}-mongo:27017/chat-boot-test" \
@@ -100,10 +126,10 @@ docker run -d --name "${P}-app" --network "${P}-net" \
     -e CREDS_KEY=0000000000000000000000000000000000000000000000000000000000000003 \
     -e CREDS_IV=00000000000000000000000000000004 \
     -e HOST=0.0.0.0 -e PORT=3080 \
-    -e DOMAIN_CLIENT=https://chat.example.com -e DOMAIN_SERVER=https://chat.example.com \
+    -e DOMAIN_CLIENT="$ORIGIN" -e DOMAIN_SERVER="$ORIGIN" \
     -e MEILI_MESSAGES_INDEX=boottest_messages -e MEILI_CONVOS_INDEX=boottest_convos \
     -e MEILI_HOST=http://meilisearch.example.com:7700 -e MEILI_MASTER_KEY=fake-meili-key -e MEILI_NO_SYNC=true \
-    -e KLAI_CHAT_API_KEY=fake-chat-key -e KLAI_CHAT_BASE_URL=http://portal-api.example.com/partner/v1 \
+    -e KLAI_CHAT_API_KEY=fake-chat-key -e KLAI_CHAT_BASE_URL="$MODEL_URL" \
     -e KLAI_ORG_SLUG=boottest -e KLAI_ZITADEL_ORG_ID=000000000000000000 \
     -e KNOWLEDGE_INGEST_SECRET=fake-ingest-secret \
     -e TWENTY_BASE_URL=https://crm.example.com -e TWENTY_API_KEY=fake-twenty-key \
@@ -134,7 +160,16 @@ while [ $elapsed -lt "$TIMEOUT" ]; do
             fail "config-validation: LibreChat rejected the config"
         fi
         echo "OK /health 200 after ${elapsed}s"
-        exit 0
+        [ $# -gt 0 ] || exit 0
+        rc=0
+        CHAT_URL=$ORIGIN "$@" || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            echo "---- last 40 app log lines ----" >&2
+            docker logs "${P}-app" 2>&1 | tail -40 >&2
+            echo "---- model stub log ----" >&2
+            docker logs "${P}-model" 2>&1 | tail -20 >&2
+        fi
+        exit "$rc"
     fi
     sleep 2
     elapsed=$((elapsed + 2))

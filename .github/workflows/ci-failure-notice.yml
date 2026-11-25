@@ -49,6 +49,8 @@ on:
       - Sync compose and config to core-01
       - Sync LibreChat base config to core-01
       - Deploy LiteLLM hooks
+      # Moves tenant chat containers to a new image, canary first.
+      - Chat image rollout
       # The alarm for updates that stopped landing: red when a Renovate
       # automerge PR is stuck, the Dependency Dashboard lists errors or
       # Renovate has not run. Scheduled runs belong to the default branch, so
