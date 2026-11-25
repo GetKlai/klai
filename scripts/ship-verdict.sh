@@ -215,7 +215,12 @@ evaluate() {
     # The first job start, not the run creation: a run queued behind another one
     # in the concurrency group starts its job later than it was created.
     started="$(ghr run view "$rid" --repo "$REPO" --json jobs | jq -r '[.jobs[].startedAt | select(. > "2000")] | min // empty')"
-    if [[ -z "$started" ]]; then say "E2E run $rid is queued, not started"; return 1; fi
+    if [[ -z "$started" ]]; then
+      # A run cancelled while it waited in the concurrency group never started
+      # a job and never will; the run that displaced it is further down.
+      [[ "$status" == completed ]] && continue
+      say "E2E run $rid is queued, not started"; return 1
+    fi
     [[ "$started" > "$d" ]] || continue
     case "$status:$conclusion" in
       completed:cancelled|completed:skipped) continue ;;
