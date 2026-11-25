@@ -816,6 +816,24 @@
     // has a ceiling above is refused, because a second allowedVersions rule
     // replaces the first instead of adding to it.
     // ---------------------------------------------------------------------
+    {
+      description:
+        'Rolled back on core-01: Renovate must not propose these exact versions of redis \
+        again; later releases still flow. Renovate never proposes a downgrade, so \
+        this entry can go once deploy/docker-compose.yml runs a newer version.',
+      matchDepNames: ['redis'],
+      // 8.12.0-alpine: failed gate datastore-shadow on falkordb, run https://github.com/GetKlai/klai/actions/runs/45713594465, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
+      allowedVersions: '!/^v?(8\\.12\\.0)$/',
+    },
+    {
+      description:
+        'Rolled back on core-01: Renovate must not propose these exact versions of falkordb/falkordb \
+        again; later releases still flow. Renovate never proposes a downgrade, so \
+        this entry can go once deploy/docker-compose.yml runs a newer version.',
+      matchDepNames: ['falkordb/falkordb'],
+      // 6.2.0: failed gate datastore-shadow on falkordb, run https://github.com/GetKlai/klai/actions/runs/45713594465, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
+      allowedVersions: '!/^v?(6\\.2\\.0)$/',
+    },
     // End of the rolled-back versions: scripts/renovate-revert-after-rollback.py inserts above this line.
   ],
 }
