@@ -23,7 +23,7 @@ readonly SECRETS_DIR="${SECRETS_DIR:-${COMPOSE_DIR}/secrets}"
 readonly MONGODB_NETWORK="${MONGODB_NETWORK:-klai-net-mongodb}"
 readonly MONGODB_MIN_NOFILE="${MONGODB_MIN_NOFILE:-64000}"
 readonly QDRANT_NETWORK="${QDRANT_NETWORK:-klai-net}"
-readonly TOTAL_STEPS=21
+readonly TOTAL_STEPS=26
 
 # How many day-directories stay on core-01 after a successful run.
 #
@@ -912,6 +912,136 @@ backup_vaultwarden() {
   record_file "${db}" && record_file "${files}"
 }
 
+# The SQLite online backup API (sqlite.org/backup.html) through Python's
+# sqlite3.Connection.backup, in one step: a read transaction, so the copy is a
+# consistent snapshot of the database including what still sits in its WAL,
+# taken while the service keeps writing. A file copy of the database and its
+# -wal is not: a checkpoint between the two reads tears the pair. The copy is
+# made in the helper's own /tmp and switched to a rollback journal, so it is
+# one self-contained file, and streamed out.
+readonly SQLITE_COPY_PY='
+import os, shutil, sqlite3, sys, tempfile
+
+src = sqlite3.connect("file:" + os.environ["DB"] + "?mode=ro", uri=True)
+with tempfile.TemporaryDirectory() as tmp:
+    dst = sqlite3.connect(os.path.join(tmp, "copy.sqlite3"))
+    src.backup(dst)
+    dst.execute("PRAGMA journal_mode=DELETE")
+    dst.close()
+    with open(os.path.join(tmp, "copy.sqlite3"), "rb") as f:
+        shutil.copyfileobj(f, sys.stdout.buffer)
+'
+
+# sqlite_online_copy <container> <database path inside it> <output>
+#
+# Neither the Grafana nor the Calnode image ships sqlite3, a stock alpine has
+# none without a network to install it from, and the host's sqlite3 cannot open
+# a root-owned volume as klai (all checked on core-01, 2026-11-25). The
+# portal-api image has Python with the sqlite3 module and is on the host by
+# construction: its container's own image ID is used, so nothing is pulled at
+# 02:00 and the tool is exactly the bytes already running. The helper runs on
+# --network none with the service's volumes mounted read-write: a WAL reader
+# takes locks and writes its read mark into the -shm file, which a read-only
+# mount refuses. mode=ro keeps the database itself untouched. The one thing the
+# helper can leave behind is an empty -wal and a -shm next to a WAL database
+# whose service has no connection open at that moment; SQLite gives both the
+# database's owner and mode, so the service opens them as its own (measured as
+# root on a volume owned by another user). The output is created 0600 before data lands, made
+# under .partial and recorded only after integrity_check passes, so a failure
+# ships nothing and fails the step. A stopped service is a failure: a night
+# without this copy must not look green.
+sqlite_online_copy() {
+  local container="$1" db="$2" out="$3" tool check
+
+  rm -f "${out}" "${out}.partial"
+  container_running "${container}" || { fail "${container} is not running"; return 1; }
+  tool="$(docker inspect -f '{{.Image}}' "$(ctr portal-api)")" && [[ -n "${tool}" ]] \
+    || { fail "no portal-api container to take the SQLite tool image from"; return 1; }
+  if ! { install -m 600 /dev/null "${out}.partial" \
+      && docker run --rm --network none --user 0:0 \
+        --volumes-from "${container}" \
+        -e DB="${db}" \
+        --entrypoint python3 "${tool}" -c "${SQLITE_COPY_PY}" > "${out}.partial"; }; then
+    rm -f "${out}.partial"
+    fail "the online copy of ${db} in ${container} failed"
+    return 1
+  fi
+  check="$(sqlite3 "${out}.partial" 'PRAGMA integrity_check;' 2>&1)"
+  if [[ "${check}" != ok ]]; then
+    rm -f "${out}.partial"
+    fail "the copy of ${db} fails integrity_check: ${check}"
+    return 1
+  fi
+  mv "${out}.partial" "${out}" || { rm -f "${out}" "${out}.partial"; return 1; }
+  record_file "${out}"
+}
+
+# Dashboards, alert rules and data sources are provisioned from the repository,
+# but grafana.db also holds what is made in the UI: service accounts and their
+# tokens, users and preferences, silences, annotations, unprovisioned
+# dashboards. It runs in rollback-journal mode (Grafana's [database] wal
+# defaults to false), so the copy holds a read lock for the moment it takes and
+# Grafana retries a locked write (transaction_retries, default 5). plugins/ is
+# left out: Grafana's background installer puts back the pinned
+# GF_INSTALL_PLUGINS entry and its default preinstall list at every start, and
+# the image bundles the core data sources. unified-search is an index Grafana
+# rebuilds; png, pdf and csv are render output.
+backup_grafana() {
+  sqlite_online_copy "$(ctr grafana)" /var/lib/grafana/grafana.db "${BACKUP_DIR}/grafana-db.sqlite3"
+}
+
+# Bookings, event types and the encrypted calendar and SMTP credentials. The
+# database is in WAL mode, with recent bookings in calnode.db-wal. Calnode's
+# only documented backup is its Litestream replica, which is not configured
+# here. The key that decrypts the credentials is CALNODE_ENCRYPTION_KEY in the
+# deploy secrets, not in this volume.
+backup_calnode() {
+  sqlite_online_copy "$(ctr calnode)" /data/calnode.db "${BACKUP_DIR}/calnode-db.sqlite3"
+}
+
+# tar_running_dir <container> <directory inside it> <output>: a gzip tar of a
+# directory of a service that must be running, made through a read-only mount,
+# owner-only before data lands and under .partial until it is complete.
+tar_running_dir() {
+  local container="$1" dir="$2" out="$3"
+
+  rm -f "${out}" "${out}.partial"
+  container_running "${container}" || { fail "${container} is not running"; return 1; }
+  if ! docker run --rm --network none \
+      --volumes-from "${container}:ro" \
+      -v "${BACKUP_DIR}:/backup" \
+      -e OWNER="$(id -u):$(id -g)" \
+      -e DIR="${dir}" \
+      -e OUT="/backup/$(basename "${out}").partial" \
+      alpine sh -c 'set -e; umask 077; tar -czf "$OUT" -C "$DIR" .; chown "$OWNER" "$OUT"'; then
+    rm -f "${out}.partial"
+    fail "the tar of ${dir} in ${container} failed"
+    return 1
+  fi
+  mv "${out}.partial" "${out}" || { rm -f "${out}" "${out}.partial"; return 1; }
+  record_file "${out}"
+}
+
+# Certificates, their keys and the ACME account. Caddy would ask for them all
+# again, but at once and for every host name, against Let's Encrypt's 300 new
+# orders per account per 3 hours and 50 certificates per registered domain per
+# week; past that, HTTPS stays down for up to a week.
+backup_caddy_data() {
+  tar_running_dir "$(ctr caddy)" /data "${BACKUP_DIR}/caddy-data.tar.gz"
+}
+
+# The per-tenant site blocks. portal-api and the docs app write each one once,
+# when a tenant or a custom domain is provisioned, and nothing writes them
+# again, so a lost file is a tenant without a route until someone re-provisions it.
+backup_caddy_tenants() {
+  tar_running_dir "$(ctr caddy)" /etc/caddy/tenants "${BACKUP_DIR}/caddy-tenants.tar.gz"
+}
+
+# Attachments on error reports. The events they belong to are in Postgres.
+backup_glitchtip_uploads() {
+  tar_running_dir "$(ctr glitchtip-web)" /code/uploads "${BACKUP_DIR}/glitchtip-uploads.tar.gz"
+}
+
 backup_research_uploads() {
   local output="${BACKUP_DIR}/research-uploads"
   local listing
@@ -1069,6 +1199,11 @@ main() {
   run_step "Fider Postgres: dump all databases" backup_fider_postgres
   run_step "Scribe audio: tar failed retry recordings" backup_scribe_audio
   run_step "Vaultwarden: SQLite copy and key files" backup_vaultwarden
+  run_step "Grafana: SQLite online copy" backup_grafana
+  run_step "Calnode: SQLite online copy" backup_calnode
+  run_step "Caddy: tar certificates and ACME account" backup_caddy_data
+  run_step "Caddy: tar per-tenant site blocks" backup_caddy_tenants
+  run_step "GlitchTip: tar error-report attachments" backup_glitchtip_uploads
   run_step "Research uploads: rsync user uploads" backup_research_uploads
   run_step "Encrypt and upload to Storage Box" encrypt_and_upload
 

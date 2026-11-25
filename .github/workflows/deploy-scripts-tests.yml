@@ -256,6 +256,13 @@ jobs:
       - name: backup vaultwarden suite
         run: bash deploy/scripts/tests/backup-vaultwarden.test.sh
 
+      # The Grafana and Calnode copies hold what is still in the WAL, the Caddy
+      # and GlitchTip tars their directory, and a failure ships none of them.
+      - name: backup service-volumes suite
+        run: |
+          sudo apt-get install -y sqlite3 > /dev/null
+          bash deploy/scripts/tests/backup-service-volumes.test.sh
+
       # Two runs on one date leave a complete-looking broken set; the second refuses.
       - name: backup single-run lock suite
         run: bash deploy/scripts/tests/backup-single-run.test.sh
