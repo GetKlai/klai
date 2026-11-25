@@ -16,7 +16,11 @@
 #   A. Every RW mount in docker-compose.yml has an entry here.
 #   B. Every `data` entry's container_path matches the image's declared data
 #      path (env var or curated conventional path).
-#   C. Every `data` entry has backup + retention fields filled.
+#   C. Every entry is backed up or exempt for a reason, and agrees with
+#      deploy/scripts/backup.sh: `backup: skip` needs a `skip_reason` from the
+#      list below; `backup: missing` needs a `gap` and is printed as
+#      UNPROTECTED on every run; any other `backup` needs a `backup_step` that
+#      backup.sh runs, and every step backup.sh runs is named by an entry.
 #
 # Fields per entry:
 #   service             — compose service name (one of the consumers)
@@ -27,14 +31,20 @@
 #   category            — data | config | ephemeral
 #   data_path_source    — how the container_path was verified (env <VAR> | upstream docs | fixed)
 #   pii                 — true if user-provided content can land here
-#   backup              — artifact kind produced by backup.sh (sql, rdb, tar, snapshot, skip)
+#   backup              — artifact kind produced by backup.sh (sql, rdb, tar, snapshot, sqlite),
+#                         skip (losing it is acceptable) or missing (a known gap, not acceptable)
 #   backup_method       — concrete command family (pg_dumpall, mongodump, docker-run-tar, snapshot-api, rsync)
+#   backup_step         — the backup.sh function that backs it up (required unless skip or missing)
+#   skip_reason         — why losing it is acceptable (required with skip): cache, rebuildable,
+#                         model-weights, logs, metrics, source-controlled, runtime, or
+#                         same-volume-as:<key> for a second consumer of a volume another entry covers
+#   gap                 — what is unprotected and why (required with missing)
 #   retention           — manual | delete_on_success | max_age_days:<N> | source_controlled
 #   retention_enforced_by — file path to the code that enforces retention (where applicable)
 #   notes               — free-form remarks, mandatory for overrides
 
 version: 1
-last_reviewed: 2026-04-21
+last_reviewed: 2026-11-24
 
 mounts:
 
@@ -51,6 +61,7 @@ mounts:
     pii: true
     backup: sql
     backup_method: pg_dumpall
+    backup_step: backup_postgres
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -69,6 +80,7 @@ mounts:
     pii: true
     backup: archive
     backup_method: mongodump
+    backup_step: backup_mongodb
     retention: manual
     retention_enforced_by: n/a
     notes: LibreChat conversation history.
@@ -84,6 +96,7 @@ mounts:
     pii: false
     backup: rdb
     backup_method: bgsave-copy
+    backup_step: backup_redis
     retention: manual
     retention_enforced_by: n/a
     notes: LiteLLM + GlitchTip cache. Loss is recoverable (cache regenerates).
@@ -100,6 +113,7 @@ mounts:
     pii: false
     backup: rdb
     backup_method: bgsave-copy
+    backup_step: backup_vexa_redis
     retention: manual
     retention_enforced_by: n/a
     notes: >-
@@ -119,6 +133,7 @@ mounts:
     pii: true
     backup: snapshot
     backup_method: snapshot-api
+    backup_step: backup_meilisearch
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -139,6 +154,7 @@ mounts:
     pii: true
     backup: snapshot
     backup_method: snapshot-api
+    backup_step: backup_qdrant
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -157,6 +173,7 @@ mounts:
     pii: true
     backup: rdb
     backup_method: bgsave-copy
+    backup_step: backup_falkordb
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -175,6 +192,7 @@ mounts:
     pii: false
     backup: snapshot
     backup_method: garage-meta-snapshot
+    backup_step: backup_garage_meta
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -193,6 +211,7 @@ mounts:
     pii: true
     backup: tar
     backup_method: rsync
+    backup_step: backup_garage_data
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -211,6 +230,7 @@ mounts:
     pii: false
     backup: tar
     backup_method: docker-run-tar
+    backup_step: backup_gitea
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -228,6 +248,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: metrics
     retention: max_age_days:365
     retention_enforced_by: '-retentionPeriod flag on service cmd'
     notes: |
@@ -246,6 +267,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: logs
     retention: max_age_days:30
 
   victorialogs-content:
@@ -259,6 +281,7 @@ mounts:
     pii: true
     backup: skip
     backup_method: skip
+    skip_reason: logs
     retention: max_age_days:7
     retention_enforced_by: '-retentionPeriod=30d flag on service cmd'
     notes: |
@@ -274,8 +297,9 @@ mounts:
     category: data
     data_path_source: upstream docs (GF_PATHS_DATA default)
     pii: false
-    backup: tar
-    backup_method: docker-run-tar
+    backup: missing
+    backup_method: none
+    gap: backup.sh has no step for grafana-data; the entry claimed tar until 2026-11-24.
     retention: manual
     retention_enforced_by: n/a
     notes: Dashboards + alert rules + user prefs. Small, worth backing up.
@@ -289,8 +313,9 @@ mounts:
     category: data
     data_path_source: upstream docs (app MEDIA_ROOT)
     pii: true
-    backup: tar
-    backup_method: docker-run-tar
+    backup: missing
+    backup_method: none
+    gap: backup.sh has no step for glitchtip-data; the entry claimed tar until 2026-11-24.
     retention: max_age_days:90
     retention_enforced_by: TBD (not yet implemented)
     notes: |
@@ -308,6 +333,7 @@ mounts:
     pii: false
     backup: sql
     backup_method: pg_dumpall
+    backup_step: backup_firecrawl_postgres
     retention: manual
     retention_enforced_by: n/a
     notes: Firecrawl crawl queue state. Small. Worth including in backup.
@@ -323,6 +349,7 @@ mounts:
     pii: true
     backup: sql
     backup_method: pg_dumpall
+    backup_step: backup_listmonk_postgres
     retention: manual
     retention_enforced_by: n/a
     notes: listmonk campaigns, subscribers, templates, and admin users.
@@ -339,6 +366,7 @@ mounts:
     pii: true
     backup: tar
     backup_method: docker-run-tar
+    backup_step: backup_listmonk_uploads
     retention: manual
     retention_enforced_by: n/a
     notes: Uploaded campaign media; archived by backup_listmonk_uploads.
@@ -352,14 +380,18 @@ mounts:
     category: data
     data_path_source: compose DATA_FOLDER=/data
     pii: true
-    backup: skip
-    backup_method: skip
+    backup: sqlite
+    backup_method: vaultwarden-backup-command
+    backup_step: backup_vaultwarden
     retention: manual
     retention_enforced_by: n/a
     notes: |
-      Vaultwarden SQLite DB and attachments. Registered for persistence audit;
-      backup coverage is intentionally not claimed here because backup.sh does
-      not currently archive this volume.
+      The team password manager: SQLite DB (db.sqlite3 in WAL mode), the
+      token-signing key rsa_key.pem, attachments, sends and config.json when
+      present. backup_vaultwarden copies the database with the server's own
+      `/vaultwarden backup` (VACUUM INTO, consistent while it runs) into
+      vaultwarden-db.sqlite3 and tars the rest into vaultwarden-files.tar.gz;
+      icon_cache is refetched and left out. Restore: docs/runbooks/backup-restore.md.
 
   calnode:
     service: calnode
@@ -370,8 +402,9 @@ mounts:
     category: data
     data_path_source: compose DATABASE_URL=sqlite:///data/calnode.db
     pii: true
-    backup: skip
-    backup_method: skip
+    backup: missing
+    backup_method: none
+    gap: backup.sh has no step for calnode-data and Litestream is not configured.
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -392,6 +425,7 @@ mounts:
     pii: true
     backup: sql
     backup_method: pg_dumpall
+    backup_step: backup_crm_postgres
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -411,6 +445,7 @@ mounts:
     pii: true
     backup: sql
     backup_method: pg_dumpall
+    backup_step: backup_fider_postgres
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -430,6 +465,7 @@ mounts:
     pii: true
     backup: sql
     backup_method: pg_dumpall
+    backup_step: backup_umami_postgres
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -449,6 +485,7 @@ mounts:
     pii: true
     backup: tar
     backup_method: backup_crm_storage
+    backup_step: backup_crm_storage
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -467,6 +504,7 @@ mounts:
     pii: true
     backup: tar
     backup_method: backup_crm_storage
+    backup_step: backup_crm_storage
     retention: manual
     retention_enforced_by: n/a
     notes: Same volume as crm-storage; the worker reads and writes uploads too.
@@ -483,6 +521,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: model-weights
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -502,6 +541,7 @@ mounts:
     pii: true
     backup: tar
     backup_method: docker-run-tar
+    backup_step: backup_scribe_audio
     retention: delete_on_success
     retention_enforced_by: klai-scribe/scribe-api/app/services/audio_storage.py::finalize_success
     notes: |
@@ -524,6 +564,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: source-controlled
     retention: source_controlled
     retention_enforced_by: git
     notes: |
@@ -541,6 +582,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: source-controlled
     retention: source_controlled
     retention_enforced_by: git
     notes: |
@@ -560,6 +602,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: source-controlled
     retention: source_controlled
     retention_enforced_by: git
     notes: Klai-branded logos and icons. Static.
@@ -573,8 +616,9 @@ mounts:
     category: data
     data_path_source: upstream docs (Caddy XDG_DATA_HOME default)
     pii: false
-    backup: tar
-    backup_method: docker-run-tar
+    backup: missing
+    backup_method: none
+    gap: backup.sh has no step for caddy-data; the entry claimed tar until 2026-11-24.
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -592,6 +636,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: rebuildable
     retention: ephemeral
     retention_enforced_by: n/a
     notes: |
@@ -609,6 +654,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: runtime
     retention: ephemeral
     retention_enforced_by: n/a
     notes: Shared Vexa Docker socket bridge volume; recreated on container start.
@@ -625,6 +671,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: runtime
     retention: ephemeral
     retention_enforced_by: n/a
     notes: >-
@@ -644,6 +691,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: source-controlled
     retention: source_controlled
     retention_enforced_by: n/a
     notes: >-
@@ -663,8 +711,9 @@ mounts:
     data_path_source: app-specific (portal-api writes dynamic tenant Caddy snippets here)
     verified: true
     pii: false
-    backup: tar
-    backup_method: docker-run-tar
+    backup: missing
+    backup_method: none
+    gap: backup.sh has no step for caddy-tenants; the entry claimed tar until 2026-11-24.
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -683,6 +732,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: same-volume-as:caddy-tenants-caddy
     retention: manual
     retention_enforced_by: n/a
     notes: |
@@ -702,6 +752,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: same-volume-as:caddy-tenants-caddy
     retention: manual
     retention_enforced_by: n/a
     notes: Docs-app reads tenants metadata. Read-only usage in practice.
@@ -717,6 +768,7 @@ mounts:
     pii: false
     backup: skip
     backup_method: skip
+    skip_reason: logs
     retention: max_age_days:7
     retention_enforced_by: Docker logrotate policy (50m x 3 files per container)
     notes: |
