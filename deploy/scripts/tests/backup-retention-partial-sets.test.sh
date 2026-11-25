@@ -59,7 +59,15 @@ if [[ "$all" == *pg_dumpall* ]]; then
     exit 0
 fi
 # `docker cp` and `docker compose cp`: the destination is the last argument.
-if [[ " $all " == *" cp "* ]]; then echo stub >"${@: -1}"; exit 0; fi
+if [[ " $all " == *" cp "* ]]; then
+  # A destination of "-" is a stream on stdout; the tar stub below passes it on.
+  if [[ "${@: -1}" == - ]]; then
+    echo stub
+  else
+    echo stub >"${@: -1}"
+  fi
+  exit 0
+fi
 if [[ "$1" == "run" ]]; then
     # tar, mongodump, the Garage snapshot tar and the Qdrant snapshot download
     # run in a throwaway container with the backup directory mounted: create
@@ -84,6 +92,8 @@ STUB
 for stub in sleep rsync age curl tar; do
     printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/bin/$stub"
 done
+# backup.sh unpacks a `docker cp ... -` stream with `tar -xOf -`.
+printf '#!/usr/bin/env bash\n[[ "$*" == "-xOf -" ]] && exec cat\nexit 0\n' >"$TMP/bin/tar"
 printf '#!/usr/bin/env bash\necho ok\n' >"$TMP/bin/sqlite3"
 chmod +x "$TMP/bin"/*
 
