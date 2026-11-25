@@ -319,25 +319,8 @@ mounts:
     retention: max_age_days:90
     retention_enforced_by: TBD (not yet implemented)
     notes: |
-      User-uploaded attachments on error reports. Also mounted by
-      glitchtip-worker (shared volume). PII possible (stack traces contain
+      User-uploaded attachments on error reports. PII possible (stack traces contain
       user data). TODO: implement 90-day sweep of old attachments.
-
-  glitchtip-worker:
-    service: glitchtip-worker
-    kind: named
-    host: glitchtip-data
-    container_path: /code/uploads
-    image: glitchtip/glitchtip:6.2.0
-    category: data
-    data_path_source: shared named volume with glitchtip-web
-    pii: true
-    backup: skip
-    backup_method: skip
-    skip_reason: same-volume-as:glitchtip-web
-    retention: max_age_days:90
-    retention_enforced_by: TBD (shared with glitchtip-web entry)
-    notes: Same volume as glitchtip-web; skipped in backup to avoid double-archive.
 
   firecrawl-postgres:
     service: firecrawl-postgres
@@ -393,7 +376,7 @@ mounts:
     kind: named
     host: vaultwarden-data
     container_path: /data
-    image: vaultwarden/server:1.37.5
+    image: vaultwarden/server:1.37.5-alpine
     category: data
     data_path_source: compose DATA_FOLDER=/data
     pii: true
