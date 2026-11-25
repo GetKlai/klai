@@ -16,6 +16,7 @@ import gzip
 import io
 import os
 import random
+import sqlite3
 import sys
 import tarfile
 
@@ -70,9 +71,20 @@ def tarball(name, files):
 
 
 for name in ("gitea-repos.tar.gz", "garage-meta.tar.gz", "garage-data.tar.gz", "crm-storage.tar.gz",
-             "listmonk-uploads.tar.gz", "scribe-audio.tar.gz"):
+             "listmonk-uploads.tar.gz", "scribe-audio.tar.gz", "vaultwarden-files.tar.gz"):
     stem = name.split(".")[0]
     tarball(name, {f"./{stem}/file-{i}.bin": rng.randint(20, 200) for i in range(rng.randint(3, 8))})
+
+# The tables backup-restore.sh requires of a Vaultwarden copy, with invented rows.
+vault = sqlite3.connect(os.path.join(out, "vaultwarden-db.sqlite3"))
+vault.execute("CREATE TABLE __diesel_schema_migrations (version TEXT PRIMARY KEY, note TEXT)")
+vault.execute("INSERT INTO __diesel_schema_migrations VALUES ('20180114171611', ?)", (header,))
+for table in ("users", "devices", "ciphers", "folders", "organizations", "users_organizations"):
+    vault.execute(f"CREATE TABLE {table} (uuid TEXT PRIMARY KEY, label TEXT)")
+    for i in range(rng.randint(1, 6)):
+        vault.execute(f"INSERT INTO {table} VALUES (?, ?)", (f"{table}-{i}", f"user{i}@example.com"))
+vault.commit()
+vault.close()
 
 research = os.path.join(out, "research-uploads")
 for i in range(rng.randint(3, 6)):

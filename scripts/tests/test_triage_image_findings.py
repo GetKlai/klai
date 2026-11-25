@@ -386,17 +386,25 @@ class Feeds(unittest.TestCase):
 
 
 class Targets(unittest.TestCase):
-    def test_targets_group_by_image_skip_our_builds_and_swap_the_crawler_base(self):
+    def test_targets_group_by_image_skip_our_builds_and_build_the_crawler(self):
         deploy = {"services": {
             "a": {"image": "example/db:1"}, "b": {"image": "example/db:1"},
             "own": {"image": "ghcr.io/getklai/portal-api:latest"},
             "crawl": {"image": "ghcr.io/getklai/crawl4ai:1-local-990101-0000"},
             "local": {"image": "example/tool:2-local-990101-1200"},
         }}
-        out = T.targets({"deploy": deploy, "dev": {"services": {"a": {"image": "example/db:1"}}}}, "example/crawler:1")
-        self.assertEqual([(t["key"], t["image"]) for t in out],
-                         [("deploy_a__deploy_b__dev_a", "example/db:1"), ("deploy_crawl", "example/crawler:1")])
+        out = T.targets({"deploy": deploy, "dev": {"services": {"a": {"image": "example/db:1"}}}}, repo=ROOT)
+        self.assertEqual([(t["key"], t["image"], t["build"]) for t in out],
+                         [("deploy_a__deploy_b__dev_a", "example/db:1", ""),
+                          ("deploy_crawl", "klai-scan/crawl4ai:build", "deploy/crawl4ai")])
         self.assertEqual(out[0]["category"], "pinned-service-deploy_a__deploy_b__dev_a")
+        self.assertEqual(out[1]["context"], T.context_hash(ROOT, "deploy/crawl4ai"))
+
+    def test_a_change_to_the_crawler_build_context_is_a_changed_pin(self):
+        built = {"key": "deploy_crawl", "services": ["deploy/crawl"], "image": "klai-scan/crawl4ai:build", "context": "aaa"}
+        out = T.changed_targets([built], [{**built, "context": "bbb"}])
+        self.assertEqual((len(out["head"]), len(out["base"])), (1, 1))
+        self.assertEqual(T.changed_targets([built], [built])["head"], [])
 
     def test_images_pinned_in_environment_values_and_settings_are_targets(self):
         digest = "example/chat@sha256:" + "c" * 64
@@ -407,7 +415,7 @@ class Targets(unittest.TestCase):
             "chat": {"image": "example/chat:1"},
         }}
         settings = 'class S:\n    chat_image: str = "example/chat:1"\n    side_image: str = "example/side:3"\n    kb_images_base_url: str = "https://x.example.com"\n'
-        out = {t["image"]: t for t in T.targets({"deploy": deploy}, "", settings)}
+        out = {t["image"]: t for t in T.targets({"deploy": deploy}, settings)}
         self.assertEqual(out["example/bot:2"]["services"], ["deploy/runtime.BOT_IMAGE"])
         self.assertEqual(out["example/chat:1"]["key"], "deploy_chat")  # the env reference does not rename the category
         self.assertEqual(out["example/chat:1"]["services"], ["deploy/chat", "deploy/portal-api.CHAT_IMAGE"])
@@ -418,7 +426,7 @@ class Targets(unittest.TestCase):
     def test_an_environment_image_that_is_not_a_plain_reference_stops_the_run(self):
         deploy = {"services": {"runtime": {"image": "example/runtime:1", "environment": {"BOT_IMAGE": "${BOT}"}}}}
         with self.assertRaisesRegex(T.TriageError, "not a plain image reference"):
-            T.targets({"deploy": deploy}, "")
+            T.targets({"deploy": deploy})
 
     def test_a_renovate_image_pin_the_derivation_does_not_know_fails_closed(self):
         renovate = {"customManagers": [{"customType": "regex", "managerFilePatterns": ["/^stack\\.yml$/"],
@@ -548,7 +556,7 @@ class NothingPublicNamesAFinding(unittest.TestCase):
             deploy = {"services": {"leaky": {"image": self.IMAGE}}}
             T.write(Path(d) / "deploy.json", deploy)
             T.write(Path(d) / "dev.json", {"services": {}})
-            T.write(Path(d) / "targets.json", T.targets({"deploy": deploy}, ""))
+            T.write(Path(d) / "targets.json", T.targets({"deploy": deploy}))
             T.write(Path(d) / "kev.json", {self.VID: "2099-05-01"})
             v = vuln(self.VID, "CRITICAL", self.PKG)
             v["InstalledVersion"] = self.VERSION

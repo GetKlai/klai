@@ -170,7 +170,7 @@ jobs:
               - 'deploy/docker-compose.gpu.yml'
               - 'klai-portal/backend/app/core/config.py'
               - 'renovate.json5'
-              - 'deploy/crawl4ai/Dockerfile'
+              - 'deploy/crawl4ai/**'
               - 'deploy/image-exposure.json'
               - 'deploy/caddy/Caddyfile'
               - 'klai-portal/backend/app/services/provisioning/infrastructure.py'

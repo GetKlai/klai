@@ -236,7 +236,7 @@ DS_WINDOW_SECONDS=1800
 # consumer keeps a pool to the old container and still looks healthy
 # (.claude/rules/klai/lang/docker.md, 2026-09-18).
 DS_STORES='
-postgres            klai       zitadel litellm klai-slack portal-api glitchtip-web glitchtip-worker retrieval-api gitea docs-app scribe-api vexa12-admin-api vexa12-meeting-api knowledge-ingest klai-connector
+postgres            klai       zitadel litellm klai-slack portal-api glitchtip-web retrieval-api gitea docs-app scribe-api vexa12-admin-api vexa12-meeting-api knowledge-ingest klai-connector
 crm-postgres        twenty     crm crm-worker
 firecrawl-postgres  firecrawl  firecrawl-api
 listmonk-db         listmonk   listmonk
@@ -251,8 +251,8 @@ fider-postgres      fider      fider
 # (glitchtip-migrate runs the migration, glitchtip-web shares its image).
 DS_APPS='
 crm            crm-postgres  twenty     sync                      crm crm-worker
-glitchtip-migrate postgres   glitchtip  sync                      glitchtip-migrate glitchtip-web glitchtip-worker
-glitchtip-web  postgres      glitchtip  sync                      glitchtip-migrate glitchtip-web glitchtip-worker
+glitchtip-migrate postgres   glitchtip  sync                      glitchtip-migrate glitchtip-web
+glitchtip-web  postgres      glitchtip  sync                      glitchtip-migrate glitchtip-web
 zitadel        postgres      zitadel    sync                      zitadel
 umami          umami-postgres umami     sync                      umami
 litellm        postgres      litellm    litellm-hook-deploy.yml   litellm
@@ -283,7 +283,7 @@ DS_ENGINE_STORES='
 qdrant              qdrant           knowledge-ingest retrieval-api portal-api
 meilisearch         meilisearch      librechat-getklai portal-api
 mongodb             mongo            librechat-getklai portal-api
-redis               redis            litellm librechat-getklai glitchtip-web glitchtip-worker retrieval-api firecrawl-api klai-mailer portal-api
+redis               redis            litellm librechat-getklai glitchtip-web retrieval-api firecrawl-api klai-mailer portal-api
 vexa12-redis        redis            vexa12-runtime vexa12-meeting-api
 crm-redis           redis-ephemeral  crm crm-worker
 falkordb            falkordb         knowledge-ingest retrieval-api

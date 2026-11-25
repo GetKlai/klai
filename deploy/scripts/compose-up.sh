@@ -329,7 +329,7 @@ verify_service_running() {
             return 1
         fi
         # A `restart: "no"` job is supposed to stop. glitchtip-migrate runs
-        # `manage.py migrate` and exits 0 when done; judged like a service it
+        # its database initialisation and exits 0 when done; judged like a service it
         # reads `exited` and fails every deploy that recreates it. Exit code
         # decides instead. Scoped to restart:no so a long-running service that
         # exits 0 is still reported down — it would come back up otherwise.

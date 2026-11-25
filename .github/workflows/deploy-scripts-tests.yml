@@ -252,6 +252,10 @@ jobs:
       - name: backup BGSAVE wait suite
         run: bash deploy/scripts/tests/backup-bgsave-wait.test.sh
 
+      # The password manager's copy: consistent, checked, and never shipped half.
+      - name: backup vaultwarden suite
+        run: bash deploy/scripts/tests/backup-vaultwarden.test.sh
+
       # Two runs on one date leave a complete-looking broken set; the second refuses.
       - name: backup single-run lock suite
         run: bash deploy/scripts/tests/backup-single-run.test.sh
@@ -261,7 +265,7 @@ jobs:
       # in the test (age is a package of the runner image's distribution).
       - name: backup restore suite
         run: |
-          sudo apt-get install -y age > /dev/null
+          sudo apt-get install -y age sqlite3 > /dev/null
           bash deploy/scripts/tests/backup-restore.test.sh
 
       - name: portal-api deploy disk-guard suite

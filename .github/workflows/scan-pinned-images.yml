@@ -40,6 +40,7 @@ on:
       # Re-scan on any compose change so new pins get scanned immediately
       - 'deploy/docker-compose.yml'
       - 'docker-compose.dev.yml'
+      - 'deploy/crawl4ai/**'      # the crawl4ai target is built from here
       - 'deploy/docker-compose.gpu.yml'
       - 'klai-portal/backend/app/core/config.py'
       - '.github/workflows/scan-pinned-images.yml'
@@ -173,12 +174,27 @@ jobs:
           version: v0.76.2
           cache: true
 
+      # The crawler is built on the host and never pushed, so this job builds
+      # deploy/crawl4ai and scans that build from the local Docker daemon.
+      # Scanning the upstream FROM image instead counted the build checkout
+      # our Dockerfile deletes: 302 of its 308 findings came from a stale
+      # SBOM inside it.
+      - name: Build the image we deploy
+        if: ${{ !matrix.target.stale && matrix.target.build != '' }}
+        env:
+          IMAGE: ${{ matrix.target.image }}
+          CONTEXT: ${{ matrix.target.build }}
+        run: docker build -t "$IMAGE" "$CONTEXT"
+
       # WARN tier of SPEC-CI-TRIVY-POLICY-001: never fails on findings. A
       # failed scan fails the job before any upload, so that image's alerts
       # stay as they were instead of closing.
       - name: Trivy scan
         if: ${{ !matrix.target.stale }}
-        run: sh scripts/trivy-scan-image.sh '${{ matrix.target.image }}' "$RUNNER_TEMP/scan.json"
+        env:
+          IMAGE: ${{ matrix.target.image }}
+          IMAGE_SRC: ${{ matrix.target.build != '' && 'docker' || 'remote' }}
+        run: sh scripts/trivy-scan-image.sh "$IMAGE" "$RUNNER_TEMP/scan.json" "$IMAGE_SRC"
 
       # Prints nothing about the findings; EPSS is fetched here in batches
       # for this image's ids. --check-images re-reads the evidence of a VEX

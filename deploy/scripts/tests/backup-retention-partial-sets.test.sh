@@ -52,13 +52,22 @@ if [[ "$all" == *" INFO persistence" ]]; then echo 'rdb_last_bgsave_status:ok'; 
 if [[ "$all" == *" INFO keyspace" ]]; then printf '# Keyspace\ndb0:keys=3,expires=0,avg_ttl=0\n'; exit 0; fi
 if [[ "$all" == *" GRAPH.LIST" ]]; then exit 0; fi
 if [[ "$all" == *"/stats"* ]]; then echo '{"indexes":{}}'; exit 0; fi
+if [[ "$all" == *"/vaultwarden backup" ]]; then echo "Backup to '/data/db_20260717_020000.sqlite3' was successful"; exit 0; fi
 # pg_dumpall writes to stdout; STUB_EMPTY_DUMP_USER makes one dump come out empty.
 if [[ "$all" == *pg_dumpall* ]]; then
     [[ -n "${STUB_EMPTY_DUMP_USER:-}" && "$all" == *"-U $STUB_EMPTY_DUMP_USER"* ]] || echo '-- dump'
     exit 0
 fi
 # `docker cp` and `docker compose cp`: the destination is the last argument.
-if [[ " $all " == *" cp "* ]]; then echo stub >"${@: -1}"; exit 0; fi
+if [[ " $all " == *" cp "* ]]; then
+  # A destination of "-" is a stream on stdout; the tar stub below passes it on.
+  if [[ "${@: -1}" == - ]]; then
+    echo stub
+  else
+    echo stub >"${@: -1}"
+  fi
+  exit 0
+fi
 if [[ "$1" == "run" ]]; then
     # tar, mongodump, the Garage snapshot tar and the Qdrant snapshot download
     # run in a throwaway container with the backup directory mounted: create
@@ -83,6 +92,9 @@ STUB
 for stub in sleep rsync age curl tar; do
     printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/bin/$stub"
 done
+# backup.sh unpacks a `docker cp ... -` stream with `tar -xOf -`.
+printf '#!/usr/bin/env bash\n[[ "$*" == "-xOf -" ]] && exec cat\nexit 0\n' >"$TMP/bin/tar"
+printf '#!/usr/bin/env bash\necho ok\n' >"$TMP/bin/sqlite3"
 chmod +x "$TMP/bin"/*
 
 run_backup() { # run_backup <date>: exit code in $rc, log in $TMP/out

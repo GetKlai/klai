@@ -1,7 +1,11 @@
 #!/bin/sh
 # Scan one third-party image for the triage in scripts/triage-image-findings.py.
 #
-# Usage: scripts/trivy-scan-image.sh <image> <output.json>
+# Usage: scripts/trivy-scan-image.sh <image> <output.json> [remote|docker]
+#
+# The image source defaults to `remote` (pull from the registry). `docker`
+# scans an image in the local Docker daemon: the crawler image is built from
+# deploy/crawl4ai in the job because it is built on the host and never pushed.
 #
 # JSON, not SARIF: the triage needs the package inventory (--list-all-pkgs) to
 # tell a stale SBOM inside the image from the packages it really installed, and
@@ -19,6 +23,7 @@ set -eu
 
 image=$1
 out=$2
+src=${3:-remote}
 
 for attempt in 1 2; do
     if trivy image \
@@ -27,7 +32,7 @@ for attempt in 1 2; do
         --output "$out" \
         --severity CRITICAL,HIGH \
         --scanners vuln \
-        --image-src remote \
+        --image-src "$src" \
         --timeout 6m \
         --skip-version-check \
         --exit-code 0 \

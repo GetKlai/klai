@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import subprocess
@@ -107,6 +108,11 @@ SCAN_JOB_KEY = ".github/workflows/scan-pinned-images.yml:scan"
 # Same filter the workflow's jq used before this script existed.
 EXCLUDED_IMAGE = re.compile(r"^(ghcr\.io/getklai/[^@]+$|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)")
 CRAWL4AI_IMAGE = re.compile(r"^ghcr\.io/getklai/crawl4ai:")
+# The crawler image is built on the host and never pushed, so the scan builds
+# deploy/crawl4ai itself and scans that build from the local Docker daemon.
+# Scanning the upstream FROM image instead counted the build checkout our
+# Dockerfile deletes (302 of its 308 findings on 2026-11-24).
+CRAWL4AI_BUILD = {"image": "klai-scan/crawl4ai:build", "build": "deploy/crawl4ai"}
 ROUTE_LINE = re.compile(r"^\s*reverse_proxy\s+(.*)$", re.M)
 TOOL_FILES = {"scripts/triage-image-findings.py", "scripts/validate-vex.sh", "deploy/image-exposure.json"}
 
@@ -168,13 +174,22 @@ def image_refs(composes, settings_text=""):
     return refs
 
 
-def targets(composes, crawl4ai_base, settings_text=""):
-    groups = {}
+def context_hash(repo, build):
+    """sha256 over the files of a build context, so a change to the crawler's
+    Dockerfile or patch counts as a changed pin for the gate."""
+    root = Path(repo) / build
+    digest = hashlib.sha256()
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        digest.update(str(path.relative_to(root)).encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()
+
+
+def targets(composes, settings_text="", repo="."):
+    groups, builds = {}, {}
     for source, owner, kind, image in image_refs(composes, settings_text):
         if CRAWL4AI_IMAGE.search(image):
-            # Built on the server and never pushed; its Dockerfile adds no
-            # packages, so the FROM image carries the same package set.
-            image = crawl4ai_base
+            image = CRAWL4AI_BUILD["image"]
+            builds[image] = CRAWL4AI_BUILD["build"]
         if EXCLUDED_IMAGE.search(image):
             continue
         groups.setdefault(image, []).append((source, owner, kind))
@@ -189,6 +204,8 @@ def targets(composes, crawl4ai_base, settings_text=""):
             "key": key,
             "services": sorted({f"{s}/{o}" for s, o, _ in members}),
             "image": image,
+            "build": builds.get(image, ""),
+            "context": context_hash(repo, builds[image]) if image in builds else "",
             "category": "pinned-service-" + re.sub(r"[^A-Za-z0-9_.-]", "_", key),
         })
     return sorted(out, key=lambda t: t["key"])
@@ -257,13 +274,6 @@ def unrecognised_renovate_pins(renovate, files, recognised):
                         lineno = text.count("\n", 0, m.start()) + 1
                         errors.append(f"{path}:{lineno} is an image pin to Renovate that the scan targets do not include")
     return errors
-
-
-def crawl4ai_base(dockerfile_text):
-    for line in dockerfile_text.splitlines():
-        if line.startswith("FROM "):
-            return line[5:]
-    return ""
 
 
 def stale_categories(alerts, current):
@@ -704,7 +714,9 @@ def stale_sbom_layers(report):
     On 2026-11-24 an upstream image shipped its project SBOM at
     tmp/project/sbom/sbom.cdx.json in a layer with no installed package; 144
     of its 270 components contradicted the installed versions and its 305
-    findings were 302 of that day's alerts. A vendor SBOM is written by the
+    findings were 302 of that day's alerts. Our build of that image now
+    deletes the checkout, but nothing stops another upstream image from
+    shipping the same kind of leftover, which is what this rule is for. A vendor SBOM is written by the
     step that installs what it lists (Bitnami's .spdx-<component>.spdx under
     opt/bitnami/, pip's pip/_vendor/bom.cdx.json next to pip's own
     dist-info), so its layer holds installed packages and it is kept even
@@ -954,8 +966,8 @@ def architecture_notes(target_list, classes, vex, deploy, dev, now, current):
 
 
 def changed_targets(base, head):
-    base_images = {t["image"] for t in base}
-    changed = [t for t in head if t["image"] not in base_images]
+    base_images = {(t["image"], t.get("context", "")) for t in base}
+    changed = [t for t in head if (t["image"], t.get("context", "")) not in base_images]
     services = {s for t in changed for s in t["services"]}
     counterparts = [t for t in base if services & set(t["services"])]
     return {"head": changed, "base": counterparts}
@@ -1015,7 +1027,7 @@ def main(argv=None):
         c.add_argument("--gpu")
         c.add_argument("--settings", default=SETTINGS_FILE)
         if crawl:
-            c.add_argument("--crawl4ai-dockerfile", default="deploy/crawl4ai/Dockerfile")
+            c.add_argument("--context-root", default=".", help="where the build contexts (deploy/crawl4ai) are checked out")
 
     c = sub.add_parser("targets")
     compose_args(c, crawl=True)
@@ -1069,8 +1081,7 @@ def _slurp(path):
 
 
 def _cmd_targets(a):
-    base = crawl4ai_base(Path(a.crawl4ai_dockerfile).read_text())
-    print(json.dumps(targets(_composes(a), base, _settings(a))))
+    print(json.dumps(targets(_composes(a), _settings(a), a.context_root)))
     return 0
 
 
@@ -1164,7 +1175,7 @@ def _cmd_validate(a):
     deploy, dev = composes["deploy"], composes["dev"]
     vex, cfg = load(a.vex), load(a.exposure)
     settings = _settings(a)
-    target_list = targets(composes, crawl4ai_base(Path(a.crawl4ai_dockerfile).read_text()), settings)
+    target_list = targets(composes, settings, a.context_root)
     errors = validate_vex(vex, deploy, dev, today(), current_images(target_list), image_file_contains if a.check_images else None)
     errors += validate_exposure(cfg, deploy, find_route_mentions(a.repo), composes.get("gpu"))
     errors += [f"{a.vex}: {e}" for e in identifier_mentions(vex)]

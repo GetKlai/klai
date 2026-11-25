@@ -69,19 +69,24 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "$BASE_REF"
-          mkdir -p base head
+          mkdir -p base/ctx head
           for f in deploy/docker-compose.yml docker-compose.dev.yml deploy/docker-compose.gpu.yml \
-                   deploy/crawl4ai/Dockerfile klai-portal/backend/app/core/config.py; do
+                   klai-portal/backend/app/core/config.py; do
             name=$(basename "$f")
             git show "FETCH_HEAD:$f" > "base/$name"
             cp "$f" "head/$name"
           done
+          # The crawler is a build target: the base side gets the base
+          # branch's build context, so a change to it counts as a changed pin.
+          git archive FETCH_HEAD deploy/crawl4ai | tar -x -C base/ctx
           for side in base head; do
+            ctx=.
+            [ "$side" = head ] || ctx=base/ctx
             yq -o=json "$side/docker-compose.yml" > "$side/deploy.json"
             yq -o=json "$side/docker-compose.dev.yml" > "$side/dev.json"
             yq -o=json "$side/docker-compose.gpu.yml" > "$side/gpu.json"
             python3 scripts/triage-image-findings.py targets --deploy "$side/deploy.json" --dev "$side/dev.json" \
-              --gpu "$side/gpu.json" --settings "$side/config.py" --crawl4ai-dockerfile "$side/Dockerfile" > "$side/targets.json"
+              --gpu "$side/gpu.json" --settings "$side/config.py" --context-root "$ctx" > "$side/targets.json"
           done
           python3 scripts/triage-image-findings.py changed --base base/targets.json --head head/targets.json > changed.json
           echo "Changed image pins: $(jq '.head | length' changed.json) (the pull request's diff names them)."
@@ -113,7 +118,18 @@ jobs:
             mkdir -p "$RUNNER_TEMP/scans/$side" "$RUNNER_TEMP/out-$side"
             for key in $(jq -r --arg s "$side" '.[$s][].key' changed.json); do
               image=$(jq -r --arg s "$side" --arg k "$key" '.[$s][] | select(.key == $k) | .image' changed.json)
-              if ! sh scripts/trivy-scan-image.sh "$image" "$RUNNER_TEMP/scans/$side/$key.json" > /dev/null; then
+              build=$(jq -r --arg s "$side" --arg k "$key" '.[$s][] | select(.key == $k) | .build // ""' changed.json)
+              src=remote
+              if [ -n "$build" ]; then
+                # Built, never pushed: build this side's context and scan it
+                # from the local daemon, under a tag per side.
+                ctx=.
+                [ "$side" = head ] || ctx=base/ctx
+                image="${image%:*}:$side"
+                docker build -q -t "$image" "$ctx/$build" > /dev/null
+                src=docker
+              fi
+              if ! sh scripts/trivy-scan-image.sh "$image" "$RUNNER_TEMP/scans/$side/$key.json" "$src" > /dev/null; then
                 [ "$side" = base ] || exit 1
                 echo "::notice::A pin this pull request replaces could not be scanned; the default branch's open alerts stand in for it."
                 continue

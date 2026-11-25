@@ -47,7 +47,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 | `cadvisor` | Container metrics. The registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after a bump. |
 | `alloy` | Log and metric collection. Config format stable on minor bumps. |
 | `grafana` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
-| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | Error tracking. All three share the same image (different commands). |
+| `glitchtip-web`, `glitchtip-migrate` | Error tracking. Both share the same image (different commands). Since 7.0 the web process also runs the task worker and the scheduler and upstream refuses a separate worker, so none is defined. Before a major bump, read the upstream CHANGELOG for removed `bin/` scripts and retired environment variables: 7.0 ignores the old retention variable names, which then fall back to the default and delete older data. |
 
 ### Inference + AI
 
