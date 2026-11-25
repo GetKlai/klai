@@ -44,7 +44,7 @@
 #   notes               — free-form remarks, mandatory for overrides
 
 version: 1
-last_reviewed: 2026-11-24
+last_reviewed: 2026-11-25
 
 mounts:
 
@@ -293,29 +293,38 @@ mounts:
     kind: named
     host: grafana-data
     container_path: /var/lib/grafana
-    image: grafana/grafana:13.0.3
+    image: grafana/grafana:13.3.1
     category: data
     data_path_source: upstream docs (GF_PATHS_DATA default)
     pii: false
-    backup: missing
-    backup_method: none
-    gap: backup.sh has no step for grafana-data; the entry claimed tar until 2026-11-24.
+    backup: sqlite
+    backup_method: sqlite-online-backup
+    backup_step: backup_grafana
     retention: manual
     retention_enforced_by: n/a
-    notes: Dashboards + alert rules + user prefs. Small, worth backing up.
+    notes: |
+      grafana.db (rollback journal): service accounts and tokens, users,
+      preferences, silences, annotations, dashboards made in the UI; the
+      provisioned dashboards, alert rules and data sources come from
+      deploy/grafana/provisioning. backup_grafana takes a consistent copy with
+      the SQLite online backup API into grafana-db.sqlite3. plugins/ (about
+      800 MB) is not backed up: Grafana reinstalls it at every start
+      (GF_INSTALL_PLUGINS plus its default preinstall list). unified-search is
+      a rebuilt index, png/pdf/csv are render output. Restore:
+      docs/runbooks/backup-restore.md.
 
   glitchtip-web:
     service: glitchtip-web
     kind: named
     host: glitchtip-data
     container_path: /code/uploads
-    image: glitchtip/glitchtip:6.2.0
+    image: glitchtip/glitchtip:7.0.0
     category: data
     data_path_source: upstream docs (app MEDIA_ROOT)
     pii: true
-    backup: missing
-    backup_method: none
-    gap: backup.sh has no step for glitchtip-data; the entry claimed tar until 2026-11-24.
+    backup: tar
+    backup_method: docker-run-tar
+    backup_step: backup_glitchtip_uploads
     retention: max_age_days:90
     retention_enforced_by: TBD (not yet implemented)
     notes: |
@@ -398,21 +407,23 @@ mounts:
     kind: named
     host: calnode-data
     container_path: /data
-    image: ghcr.io/calnode/calnode:0.9.0
+    image: ghcr.io/calnode/calnode:0.14.0
     category: data
     data_path_source: compose DATABASE_URL=sqlite:///data/calnode.db
     pii: true
-    backup: missing
-    backup_method: none
-    gap: backup.sh has no step for calnode-data and Litestream is not configured.
+    backup: sqlite
+    backup_method: sqlite-online-backup
+    backup_step: backup_calnode
     retention: manual
     retention_enforced_by: n/a
     notes: |
-      Calnode SQLite DB: bookings, event types, and the encrypted SMTP and
-      calendar credentials. PII because a booking carries the booker's name
-      and email. Backup is not claimed: backup.sh does not archive this
-      volume yet, and Calnode's own Litestream integration is not configured.
-      Losing this volume loses the bookings, not the booking page.
+      Calnode SQLite DB (WAL mode): bookings, event types, and the encrypted
+      SMTP and calendar credentials. PII because a booking carries the
+      booker's name and email. Calnode's own Litestream integration is not
+      configured; backup_calnode takes a consistent copy with the SQLite
+      online backup API into calnode-db.sqlite3. The credentials decrypt only
+      with CALNODE_ENCRYPTION_KEY from the deploy secrets. Restore:
+      docs/runbooks/backup-restore.md.
 
   crm-postgres:
     service: crm-postgres
@@ -616,14 +627,15 @@ mounts:
     category: data
     data_path_source: upstream docs (Caddy XDG_DATA_HOME default)
     pii: false
-    backup: missing
-    backup_method: none
-    gap: backup.sh has no step for caddy-data; the entry claimed tar until 2026-11-24.
+    backup: tar
+    backup_method: docker-run-tar
+    backup_step: backup_caddy_data
     retention: manual
     retention_enforced_by: n/a
     notes: |
-      Let's Encrypt TLS certificates. Technically regenerable via ACME but
-      cert issuance has rate limits — a restore saves a rate-limit window.
+      TLS certificates, their keys and the ACME account. Regenerable via ACME
+      only one host name at a time within Let's Encrypt's rate limits, so it
+      is not counted as rebuildable; archived by backup_caddy_data.
 
   caddy-config:
     service: caddy
@@ -711,14 +723,16 @@ mounts:
     data_path_source: app-specific (portal-api writes dynamic tenant Caddy snippets here)
     verified: true
     pii: false
-    backup: missing
-    backup_method: none
-    gap: backup.sh has no step for caddy-tenants; the entry claimed tar until 2026-11-24.
+    backup: tar
+    backup_method: docker-run-tar
+    backup_step: backup_caddy_tenants
     retention: manual
     retention_enforced_by: n/a
     notes: |
       Dynamically-provisioned per-tenant Caddy configs. Portal-api writes,
-      Caddy reads. Also mounted by docs-app and portal-api.
+      Caddy reads. Also mounted by docs-app and portal-api. Written once at
+      provisioning and never regenerated, so not rebuildable; archived by
+      backup_caddy_tenants.
 
   caddy-tenants-portal:
     service: portal-api

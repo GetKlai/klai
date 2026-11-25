@@ -98,7 +98,7 @@ for line in open(sys.argv[1]):
     print(e["artifact"], e["outcome"])' "$case_dir/logs/auto-rollback.log" 2> /dev/null | paste -sd, -
 }
 
-ALL_ARTIFACTS="postgres gitea mongodb redis vexa_redis meilisearch qdrant falkordb garage_meta garage_data firecrawl_postgres listmonk_postgres crm_postgres fider_postgres umami_postgres crm_storage listmonk_uploads scribe_audio vaultwarden_db vaultwarden_files research_uploads"
+ALL_ARTIFACTS="postgres gitea mongodb redis vexa_redis meilisearch qdrant falkordb garage_meta garage_data firecrawl_postgres listmonk_postgres crm_postgres fider_postgres umami_postgres crm_storage listmonk_uploads scribe_audio vaultwarden_db vaultwarden_files grafana_db calnode_db caddy_data caddy_tenants glitchtip_uploads research_uploads"
 
 echo "backup-restore.sh"
 
@@ -106,7 +106,7 @@ echo "backup-restore.sh"
 new_case complete
 run_restore "$set_dir"
 check "complete set -> exit 0" 0 "$rc"
-check "  all 21 artifacts restored" "backup restore: 21 ok, 0 failed, 0 skipped" "$(tail -n 1 "$case_dir/out")"
+check "  all 26 artifacts restored" "backup restore: 26 ok, 0 failed, 0 skipped" "$(tail -n 1 "$case_dir/out")"
 check "  every artifact has its own ok line" "$ALL_ARTIFACTS" "$(sed -n 's/^ok   \([a-z_]*\):.*/\1/p' "$case_dir/out" | paste -sd' ' -)"
 check "  postgres: rows of the dump equal the rows restored" 1 "$(count '^ok   postgres: 3 tables with as many rows as the dump holds')"
 check "  every throwaway container is on --network none, labelled, limited" 0 "$(grep 'docker run -d' "$case_dir/fake/calls" | grep -vc -- '--network none --label klai.adhoc=datastore-restore --memory 6g --cpus 2' || true)"
@@ -124,7 +124,7 @@ run_restore "$set_dir"
 check "a cut dump and a cut tar -> exit 1" 1 "$rc"
 check "  the dump is named" 1 "$(count '^FAIL crm_postgres: crm-postgres-all.sql differs from the checksum recorded at backup time')"
 check "  the tar is named" 1 "$(count '^FAIL gitea: gitea-repos.tar.gz differs from the checksum recorded at backup time')"
-check "  the other 19 are restored and reported" "backup restore: 19 ok, 2 failed, 0 skipped" "$(tail -n 1 "$case_dir/out")"
+check "  the other 24 are restored and reported" "backup restore: 24 ok, 2 failed, 0 skipped" "$(tail -n 1 "$case_dir/out")"
 
 # A copy whose checksum was re-recorded still fails on what it holds.
 new_case damaged_but_recorded
@@ -152,6 +152,13 @@ sqlite3 "$set_dir/vaultwarden-db.sqlite3" 'DROP TABLE ciphers;'
 rerecord vaultwarden-db.sqlite3
 run_restore "$set_dir" vaultwarden_db
 check "a vault copy without its ciphers table -> exit 1, named" "1 1" "$rc $(count '^FAIL vaultwarden_db: tables missing: ciphers$')"
+
+# Each copy is held to its own product's tables, not the vault's.
+new_case grafana_table_gone
+sqlite3 "$set_dir/grafana-db.sqlite3" 'DROP TABLE dashboard;'
+rerecord grafana-db.sqlite3
+run_restore "$set_dir" grafana_db
+check "a Grafana copy without its dashboard table -> exit 1, named" "1 1" "$rc $(count '^FAIL grafana_db: tables missing: dashboard$')"
 
 new_case vault_damaged
 # Every table root after the first page, overwritten: the file still opens.
@@ -185,7 +192,7 @@ new_case skipped
 rm "$set_dir/crm-storage.tar.gz"
 sed -i.bak '/crm-storage/d' "$set_dir/backup-facts.txt"
 run_restore "$set_dir"
-check "an artifact backup.sh recorded nothing for -> skipped, exit 0" "0 backup restore: 20 ok, 0 failed, 1 skipped" "$rc $(tail -n 1 "$case_dir/out")"
+check "an artifact backup.sh recorded nothing for -> skipped, exit 0" "0 backup restore: 25 ok, 0 failed, 1 skipped" "$rc $(tail -n 1 "$case_dir/out")"
 run_restore "$set_dir" crm_storage
 check "  the same artifact asked for by name -> exit 1" "1 1" "$rc $(count '^FAIL crm_storage: crm-storage.tar.gz is missing')"
 
@@ -211,17 +218,17 @@ done
 # As encrypt_artifacts does: the research uploads directory as a tar stream.
 tar -czf - -C "$set_dir" research-uploads | age -r "$recipient" > "$case_dir/offsite/research-uploads.tar.gz.age"
 run_restore --identity "$case_dir/key.txt" "$case_dir/offsite"
-check "the .age set with the right identity -> exit 0, 21 restored" "0 backup restore: 21 ok, 0 failed, 0 skipped" "$rc $(tail -n 1 "$case_dir/out")"
+check "the .age set with the right identity -> exit 0, 26 restored" "0 backup restore: 26 ok, 0 failed, 0 skipped" "$rc $(tail -n 1 "$case_dir/out")"
 check "  the identity is not printed" 0 "$(grep -c 'AGE-SECRET-KEY' "$case_dir/out" || true)"
 check "  no decrypted copy is left behind" "" "$(find "$case_dir" -name 'postgres-all.sql' -not -path "$set_dir/*")"
 run_restore --identity "$case_dir/other-key.txt" "$case_dir/offsite"
 check "a wrong identity -> exit 1, nothing restored" "1 0" "$rc $(count '^ok ')"
-check "  every artifact names the failed decrypt" 21 "$(count '^FAIL [a-z_]*: decrypting .* failed')"
+check "  every artifact names the failed decrypt" 26 "$(count '^FAIL [a-z_]*: decrypting .* failed')"
 run_restore "$case_dir/offsite"
 check ".age files without --identity -> exit 2" "2 1" "$rc $(count 'FAIL set: .* --identity <file> is required')"
 head -c 50 "$case_dir/offsite/crm-postgres-all.sql.age" > "$case_dir/offsite/x" && mv "$case_dir/offsite/x" "$case_dir/offsite/crm-postgres-all.sql.age"
 run_restore --identity "$case_dir/key.txt" "$case_dir/offsite"
-check "one cut .age file -> named, the other 20 restored" "1 1 backup restore" "$rc $(count '^FAIL crm_postgres: decrypting') $(tail -n 1 "$case_dir/out" | cut -d: -f1)"
+check "one cut .age file -> named, the other 25 restored" "1 1 backup restore" "$rc $(count '^FAIL crm_postgres: decrypting') $(tail -n 1 "$case_dir/out" | cut -d: -f1)"
 
 # --- (d) the rehearsal: a restored fact that differs from the recorded one ----
 echo
@@ -233,13 +240,13 @@ rm "$case_dir/backups/2026-11-13/.backup-complete"
 run_rehearsal
 check "newest complete set (not the unfinished newer one) -> exit 0" 0 "$rc"
 check "  one ok event per artifact" "$(echo "$ALL_ARTIFACTS" | tr ' ' '\n' | sed 's/$/ ok/' | paste -sd, -)" "$(events)"
-check "  it was the 12th" 21 "$(grep -c '"set":"2026-11-12"' "$case_dir/logs/auto-rollback.log")"
+check "  it was the 12th" 26 "$(grep -c '"set":"2026-11-12"' "$case_dir/logs/auto-rollback.log")"
 
 new_case rehearsal_fact_mismatch
 sed -i.bak 's/^facts redis count keys .*/facts redis count keys 9999/' "$set_dir/backup-facts.txt"
 run_rehearsal
 check "a recorded key count the restore does not reach -> exit 1" 1 "$rc"
-check "  redis is failed with the numbers, the other 20 are ok" "1 20" "$(grep -c '"artifact":"redis","set":"2026-11-12","detail":"[^"]*9999' "$case_dir/logs/auto-rollback.log") $(grep -c '"outcome":"ok"' "$case_dir/logs/auto-rollback.log")"
+check "  redis is failed with the numbers, the other 25 are ok" "1 25" "$(grep -c '"artifact":"redis","set":"2026-11-12","detail":"[^"]*9999' "$case_dir/logs/auto-rollback.log") $(grep -c '"outcome":"ok"' "$case_dir/logs/auto-rollback.log")"
 
 new_case rehearsal_rows_missing
 touch "$case_dir/fake/pg_drops_row"
