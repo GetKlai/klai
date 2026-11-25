@@ -267,5 +267,16 @@ fx cancelled-midway jobs.102 <<'JSON'
 JSON
 run_case cancelled-midway failed 1 "run 102: (no failing job recorded)" "$SHA"
 
+# 14. The first E2E run after D was cancelled while it waited in the
+#     concurrency group (no job ever started); the run that displaced it passed.
+newcase e2e-displaced
+deploys_done e2e-displaced runs_commit
+fx e2e-displaced e2e <<JSON
+[{"databaseId":202,"status":"completed","conclusion":"success","event":"workflow_run","createdAt":"2026-01-10T10:09:00Z","updatedAt":"2026-01-10T10:20:00Z","headSha":"$SHA"},
+ {"databaseId":201,"status":"completed","conclusion":"cancelled","event":"workflow_run","createdAt":"2026-01-10T10:08:10Z","updatedAt":"2026-01-10T10:09:01Z","headSha":"$SHA"}]
+JSON
+job_at e2e-displaced 202 2026-01-10T10:10:00Z
+run_case e2e-displaced live-and-proven 0 "run 202 (workflow_run) started its job" "$SHA"
+
 ((fails == 0)) || { echo "$fails case(s) failed"; exit 1; }
 echo "all ship-verdict cases passed"
