@@ -181,6 +181,44 @@
         }
       ],
       "expires": "2027-05-25"
+    },
+    {
+      "id": "firecrawl-pnpm-cache-tar",
+      "services": [
+        "deploy/firecrawl-api"
+      ],
+      "component": {
+        "path": "root/.cache/node/corepack/v1/pnpm/11.4.0/dist/node_modules/tar/package.json",
+        "purl": "pkg:npm/tar"
+      },
+      "justification": "vulnerable_code_not_in_execute_path",
+      "reason": "The tar copy sits inside pnpm's corepack download cache, which is only used to install packages; the image starts its harness with --start-docker, which skips the install step and starts every role with plain node, so pnpm and its tar never run.",
+      "evidence": [
+        "Image config of ghcr.io/firecrawl/firecrawl:2.11.831 and 2.11.860: Entrypoint docker-entrypoint.sh (node's, which only execs its arguments), Cmd `node dist/src/harness.js --start-docker`, WorkingDir /app.",
+        "/app/dist/src/harness.js: `pnpm install` and `pnpm build` run only when the first argument is neither --start-built nor --start-docker, and with --start-docker each role is started as `node <roleEntry> <role>` instead of `pnpm <script>`.",
+        "Apart from test files under dist/src/__tests__, which the image never runs, harness.js (and its source map) is the only file under /app/dist that names pnpm or corepack.",
+        "deploy/docker-compose.yml firecrawl-api: no entrypoint or command override (checked by the condition below). The path names the cached pnpm version, so a newer cache in a later image is a new component and its findings come back."
+      ],
+      "conditions": [
+        {
+          "service": "deploy/firecrawl-api",
+          "entrypoint_unchanged": true
+        }
+      ],
+      "verified_against": [
+        "ghcr.io/firecrawl/firecrawl:2.11.831"
+      ],
+      "image_checks": [
+        {
+          "path": "/app/dist/src/harness.js",
+          "contains": "process.argv[2] !== \"--start-docker\") {"
+        },
+        {
+          "path": "/app/dist/src/harness.js",
+          "contains": "? `node ${shellEscape(roleEntry)} ${role}`"
+        }
+      ],
+      "expires": "2027-05-25"
     }
   ]
 }
