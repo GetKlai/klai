@@ -338,11 +338,18 @@ rs_sqlite() {
 # rs_path <file name>: where the plain file is, decrypting an .age copy into
 # the artifact's work directory. The staging copy of research-uploads is a directory.
 rs_path() {
-  local f="$1" err
+  local f="$1" err gz=""
   if (( ENCRYPTED )); then
-    [[ -e "$SET_DIR/$f.age" ]] || { echo "$f.age is missing from the set"; return 1; }
-    err="$(age -d -i "$IDENTITY" -o "$AW/$f" "$SET_DIR/$f.age" 2>&1)" \
-      || { rm -f "$AW/$f"; echo "decrypting $f.age failed: $(tail -n 1 <<< "$err")"; return 1; }
+    # SQL dumps are gzipped before encryption since 2026-11-26; a set from
+    # before that date holds them uncompressed.
+    [[ ! -e "$SET_DIR/$f.gz.age" ]] || gz=.gz
+    [[ -e "$SET_DIR/$f$gz.age" ]] || { echo "$f.age is missing from the set"; return 1; }
+    err="$(age -d -i "$IDENTITY" -o "$AW/$f$gz" "$SET_DIR/$f$gz.age" 2>&1)" \
+      || { rm -f "$AW/$f$gz"; echo "decrypting $f$gz.age failed: $(tail -n 1 <<< "$err")"; return 1; }
+    if [[ -n "$gz" ]]; then
+      err="$(gunzip "$AW/$f.gz" 2>&1)" \
+        || { rm -f "$AW/$f" "$AW/$f.gz"; echo "unpacking $f.gz failed: $(tail -n 1 <<< "$err")"; return 1; }
+    fi
     echo "$AW/$f"
   elif [[ -e "$SET_DIR/$f" ]]; then
     echo "$SET_DIR/$f"
@@ -355,7 +362,8 @@ rs_path() {
 
 # rs_present <file name pattern>: the set holds it, in either form.
 rs_present() {
-  compgen -G "$SET_DIR/$1" > /dev/null || compgen -G "$SET_DIR/$1.age" > /dev/null || [[ -d "$SET_DIR/${1%.tar.gz}" ]]
+  compgen -G "$SET_DIR/$1" > /dev/null || compgen -G "$SET_DIR/$1.age" > /dev/null \
+    || compgen -G "$SET_DIR/$1.gz.age" > /dev/null || [[ -d "$SET_DIR/${1%.tar.gz}" ]]
 }
 
 rs_artifact() {

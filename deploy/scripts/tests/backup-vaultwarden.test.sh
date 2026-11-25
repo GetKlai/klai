@@ -60,7 +60,7 @@ fi
 FAKE
 cat > "$bin/age" <<'FAKE'
 #!/usr/bin/env bash
-cat "${!#}"
+if [[ -f "${!#}" ]]; then cat "${!#}"; else cat; fi
 FAKE
 cat > "$bin/rsync" <<'FAKE'
 #!/usr/bin/env bash
@@ -143,7 +143,7 @@ for broken in backup_fails integrity_bad tar_fails stopped; do
   run_vault
   check "$broken -> the step fails, so the run ends red" "failed steps: Vaultwarden: SQLite copy and key files" "$(grep '^failed steps' "$case_dir/out")"
   check "  nothing of it stays in the set" "" "$(in_set)"
-  check "  nothing of it is shipped, the rest still is" "postgres-all.sql.age" "$(grep -v '^$' "$case_dir/fake/shipped" | paste -sd' ' -)"
+  check "  nothing of it is shipped, the rest still is" "postgres-all.sql.gz.age" "$(grep -v '^$' "$case_dir/fake/shipped" | paste -sd' ' -)"
 done
 
 new_case no_key

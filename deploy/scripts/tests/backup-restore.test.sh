@@ -211,12 +211,26 @@ new_case encrypted
 age-keygen -o "$case_dir/key.txt" 2> /dev/null
 age-keygen -o "$case_dir/other-key.txt" 2> /dev/null
 recipient="$(age-keygen -y "$case_dir/key.txt")"
-mkdir "$case_dir/offsite"
-for f in "$set_dir"/*.sql "$set_dir"/*.tar.gz "$set_dir"/*.rdb "$set_dir"/*.archive "$set_dir"/*.snapshot "$set_dir"/*.sqlite3 "$set_dir"/backup-facts.txt; do
-  age -r "$recipient" "$f" > "$case_dir/offsite/$(basename "$f").age"
-done
-# As encrypt_artifacts does: the research uploads directory as a tar stream.
-tar -czf - -C "$set_dir" research-uploads | age -r "$recipient" > "$case_dir/offsite/research-uploads.tar.gz.age"
+mkdir "$case_dir/offsite" "$case_dir/agebin"
+# The off-site copy is made by backup.sh's own encrypt_artifacts, so this case
+# proves the restore reads what the backup writes. Its two recipients are
+# fixed, so a wrapper around age swaps them for the throwaway key.
+printf '#!/usr/bin/env bash\nshift 4\nexec %q -r %q "$@"\n' "$(command -v age)" "$recipient" > "$case_dir/agebin/age"
+chmod +x "$case_dir/agebin/age"
+(
+  export PATH="$case_dir/agebin:$PATH" BACKUP_DIR="$set_dir"
+  # shellcheck source=/dev/null
+  source "$script_dir/backup.sh"
+  trap - ERR EXIT
+  ARTIFACTS=("$set_dir"/*.sql "$set_dir"/*.tar.gz "$set_dir"/*.rdb "$set_dir"/*.archive "$set_dir"/*.snapshot "$set_dir"/*.sqlite3)
+  encrypt_artifacts && mv "$ENCRYPT_DIR"/* "$case_dir/offsite/"
+) || { echo "FAIL: backup.sh encrypt_artifacts did not produce the off-site set" >&2; exit 1; }
+# A 13.5 GB database dump took 1.0 GB gzipped (measured 2026-11-25), so the SQL
+# dumps go off-site compressed; everything else is compressed already.
+check "every SQL dump is gzipped before encryption" "6 0" "$(find "$case_dir/offsite" -name '*.sql.gz.age' | wc -l | tr -d ' ') $(find "$case_dir/offsite" -name '*.sql.age' | wc -l | tr -d ' ')"
+# A set from before 2026-11-26 holds its dumps uncompressed and must still restore.
+rm "$case_dir/offsite/umami-postgres-all.sql.gz.age"
+age -r "$recipient" "$set_dir/umami-postgres-all.sql" > "$case_dir/offsite/umami-postgres-all.sql.age"
 run_restore --identity "$case_dir/key.txt" "$case_dir/offsite"
 check "the .age set with the right identity -> exit 0, 26 restored" "0 backup restore: 26 ok, 0 failed, 0 skipped" "$rc $(tail -n 1 "$case_dir/out")"
 check "  the identity is not printed" 0 "$(grep -c 'AGE-SECRET-KEY' "$case_dir/out" || true)"
@@ -226,7 +240,7 @@ check "a wrong identity -> exit 1, nothing restored" "1 0" "$rc $(count '^ok ')"
 check "  every artifact names the failed decrypt" 26 "$(count '^FAIL [a-z_]*: decrypting .* failed')"
 run_restore "$case_dir/offsite"
 check ".age files without --identity -> exit 2" "2 1" "$rc $(count 'FAIL set: .* --identity <file> is required')"
-head -c 50 "$case_dir/offsite/crm-postgres-all.sql.age" > "$case_dir/offsite/x" && mv "$case_dir/offsite/x" "$case_dir/offsite/crm-postgres-all.sql.age"
+head -c 50 "$case_dir/offsite/crm-postgres-all.sql.gz.age" > "$case_dir/offsite/x" && mv "$case_dir/offsite/x" "$case_dir/offsite/crm-postgres-all.sql.gz.age"
 run_restore --identity "$case_dir/key.txt" "$case_dir/offsite"
 check "one cut .age file -> named, the other 25 restored" "1 1 backup restore" "$rc $(count '^FAIL crm_postgres: decrypting') $(tail -n 1 "$case_dir/out" | cut -d: -f1)"
 

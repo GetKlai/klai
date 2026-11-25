@@ -71,7 +71,7 @@ fi
 FAKE
 cat > "$bin/age" <<'FAKE'
 #!/usr/bin/env bash
-cat "${!#}"
+if [[ -f "${!#}" ]]; then cat "${!#}"; else cat; fi
 FAKE
 cat > "$bin/rsync" <<'FAKE'
 #!/usr/bin/env bash
@@ -151,7 +151,7 @@ check "  and the bookings are only in the WAL" 0 "$( (cd "$case_dir" && cp fake/
 run_one "Calnode: SQLite online copy" backup_calnode
 check "a good night -> the step passes" "failed steps: none" "$(grep '^failed steps' "$case_dir/out")"
 check "  the copy is in the set, no partial left" "calnode-db.sqlite3" "$(in_set calnode)"
-check "  it is shipped, encrypted" "backup-facts.txt.age calnode-db.sqlite3.age postgres-all.sql.age" "$(shipped)"
+check "  it is shipped, encrypted" "backup-facts.txt.age calnode-db.sqlite3.age postgres-all.sql.gz.age" "$(shipped)"
 check "  the copy alone holds every booking that was in the WAL" 37 "$("$real_sqlite3" "$set_dir/calnode-db.sqlite3" 'select count(*) from bookings;')"
 check "  readable by its owner only" 600 "$(mode "$set_dir/calnode-db.sqlite3")"
 check "  the helper has no network" 1 "$(grep -c '^docker run --rm --network none .*--entrypoint python3' "$case_dir/fake/calls")"
@@ -164,7 +164,7 @@ for broken in stopped run_fails integrity_bad; do
   run_one "Calnode: SQLite online copy" backup_calnode
   check "$broken -> the SQLite step fails, so the run ends red" "failed steps: Calnode: SQLite online copy" "$(grep '^failed steps' "$case_dir/out")"
   check "  nothing of it stays in the set" "" "$(in_set calnode)"
-  check "  nothing of it is shipped, the rest still is" "postgres-all.sql.age" "$(shipped)"
+  check "  nothing of it is shipped, the rest still is" "postgres-all.sql.gz.age" "$(shipped)"
 done
 
 new_case tar_ok
@@ -173,7 +173,7 @@ check "a good night -> the tar step passes" "failed steps: none" "$(grep '^faile
 check "  the tar is in the set, no partial left" "caddy-tenants.tar.gz" "$(in_set caddy)"
 check "  it holds every site block" "./chat-example-a.caddyfile ./docs-example-b.caddyfile" \
   "$(tar -tzf "$set_dir/caddy-tenants.tar.gz" | grep -v '/$' | sort | paste -sd' ' -)"
-check "  it is shipped, encrypted" "backup-facts.txt.age caddy-tenants.tar.gz.age postgres-all.sql.age" "$(shipped)"
+check "  it is shipped, encrypted" "backup-facts.txt.age caddy-tenants.tar.gz.age postgres-all.sql.gz.age" "$(shipped)"
 check "  readable by its owner only" 600 "$(mode "$set_dir/caddy-tenants.tar.gz")"
 check "  the volume is mounted read-only" 1 "$(grep -c -- '--volumes-from klai-core-caddy-1:ro' "$case_dir/fake/calls")"
 check "  listing recorded for the restore" 3 "$(grep -c '^file caddy-tenants.tar.gz ' "$set_dir/backup-facts.txt")"
@@ -184,7 +184,7 @@ for broken in stopped run_fails; do
   run_one "Caddy: tar per-tenant site blocks" backup_caddy_tenants
   check "$broken -> the tar step fails, so the run ends red" "failed steps: Caddy: tar per-tenant site blocks" "$(grep '^failed steps' "$case_dir/out")"
   check "  nothing of it stays in the set" "" "$(in_set caddy)"
-  check "  nothing of it is shipped, the rest still is" "postgres-all.sql.age" "$(shipped)"
+  check "  nothing of it is shipped, the rest still is" "postgres-all.sql.gz.age" "$(shipped)"
 done
 
 echo
