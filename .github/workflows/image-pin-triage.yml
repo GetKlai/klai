@@ -1,0 +1,170 @@
+name: Image pin triage
+
+# A pull request that changes an external image pin (Renovate's included, and
+# whatever the syntax: an `image:` key, an image in an environment value, a
+# portal image setting) must not add a finding that is in the CISA KEV catalog
+# on an image that is not internal. It scans only the changed pins, with the
+# same Trivy flags and the same triage as scan-pinned-images.yml, and compares
+# each with the image it replaces and with the default branch's open alerts,
+# so a KEV finding the old pin already had does not block the bump, even when
+# the old tag has disappeared upstream.
+#
+# Fails closed: the validator fails when Renovate treats a line in a stack
+# file as an image pin that the target derivation does not produce, and when
+# a VEX statement's image pin moved and its evidence cannot be re-checked.
+#
+# Reached through the unfiltered quality.yml (workflow_call, path filter
+# `image_pins`), which aggregates it into the one required `quality` check.
+# `checked` is exported only at the end of a complete run; quality.yml fails
+# when the filter selected this workflow and it did not export it, so a
+# skipped job cannot pass for a checked one. A change that touches the
+# selected paths but no pin runs only the validator and the tests.
+#
+# This repository is public: the log and the failure message say neither which
+# finding nor which of several changed pins failed. The detail is uploaded to
+# code scanning for the pull request's ref. With a single changed pin, a red
+# gate does say that this incoming version has a known-exploited finding; that
+# version is not running yet, and the runbook states this trade.
+
+on:
+  workflow_call:
+    outputs:
+      checked:
+        description: '"true" when the validator, the tests and every changed pin were checked'
+        value: ${{ jobs.triage.outputs.checked }}
+
+permissions:
+  contents: read
+  # Uploads the changed pins' triaged findings for the pull request's ref and
+  # reads the default branch's open alerts.
+  security-events: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      checked: ${{ steps.done.outputs.checked }}
+    steps:
+      # The default checkout of a pull request is the merge of its head into
+      # the base, which is what main will contain once it lands.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # --check-images: a VEX statement whose image pin moved is re-verified
+      # by reading its evidence from the new image; without machine-checkable
+      # evidence it fails here until someone re-verifies it.
+      - name: Tests and validator
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts/tests/test_triage_image_findings.py
+          ./scripts/validate-vex.sh --check-images
+
+      - name: Find changed pins
+        id: plan
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          mkdir -p base/ctx head
+          for f in deploy/docker-compose.yml docker-compose.dev.yml deploy/docker-compose.gpu.yml \
+                   klai-portal/backend/app/core/config.py; do
+            name=$(basename "$f")
+            git show "FETCH_HEAD:$f" > "base/$name"
+            cp "$f" "head/$name"
+          done
+          # The crawler is a build target: the base side gets the base
+          # branch's build context, so a change to it counts as a changed pin.
+          git archive FETCH_HEAD deploy/crawl4ai | tar -x -C base/ctx
+          for side in base head; do
+            ctx=.
+            [ "$side" = head ] || ctx=base/ctx
+            yq -o=json "$side/docker-compose.yml" > "$side/deploy.json"
+            yq -o=json "$side/docker-compose.dev.yml" > "$side/dev.json"
+            yq -o=json "$side/docker-compose.gpu.yml" > "$side/gpu.json"
+            python3 scripts/triage-image-findings.py targets --deploy "$side/deploy.json" --dev "$side/dev.json" \
+              --gpu "$side/gpu.json" --settings "$side/config.py" --context-root "$ctx" > "$side/targets.json"
+          done
+          python3 scripts/triage-image-findings.py changed --base base/targets.json --head head/targets.json > changed.json
+          echo "Changed image pins: $(jq '.head | length' changed.json) (the pull request's diff names them)."
+          echo "count=$(jq '.head | length' changed.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Trivy
+        if: steps.plan.outputs.count != '0'
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
+        with:
+          version: v0.76.2
+          cache: true
+
+      # Logs only that it ran and how long it took: the findings stay in files
+      # on this runner and reach the pull request's code-scanning view below.
+      # A base pin that can no longer be pulled is skipped; the default
+      # branch's open alerts stand in for it.
+      - name: Scan and triage the changed pins
+        if: steps.plan.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          python3 scripts/triage-image-findings.py kev --out "$RUNNER_TEMP/kev.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&tool_name=Trivy&ref=refs/heads/main&per_page=100" \
+            > "$RUNNER_TEMP/main-alerts.json"
+          for side in head base; do
+            mkdir -p "$RUNNER_TEMP/scans/$side" "$RUNNER_TEMP/out-$side"
+            for key in $(jq -r --arg s "$side" '.[$s][].key' changed.json); do
+              image=$(jq -r --arg s "$side" --arg k "$key" '.[$s][] | select(.key == $k) | .image' changed.json)
+              build=$(jq -r --arg s "$side" --arg k "$key" '.[$s][] | select(.key == $k) | .build // ""' changed.json)
+              src=remote
+              if [ -n "$build" ]; then
+                # Built, never pushed: build this side's context and scan it
+                # from the local daemon, under a tag per side.
+                ctx=.
+                [ "$side" = head ] || ctx=base/ctx
+                image="${image%:*}:$side"
+                docker build -q -t "$image" "$ctx/$build" > /dev/null
+                src=docker
+              fi
+              if ! sh scripts/trivy-scan-image.sh "$image" "$RUNNER_TEMP/scans/$side/$key.json" "$src" > /dev/null; then
+                [ "$side" = base ] || exit 1
+                echo "::notice::A pin this pull request replaces could not be scanned; the default branch's open alerts stand in for it."
+                continue
+              fi
+              python3 scripts/triage-image-findings.py triage --scan "$RUNNER_TEMP/scans/$side/$key.json" \
+                --targets "$side/targets.json" --key "$key" --kev "$RUNNER_TEMP/kev.json" \
+                --deploy "$side/deploy.json" --dev "$side/dev.json" --gpu "$side/gpu.json" \
+                --check-images --out-dir "$RUNNER_TEMP/out-$side"
+            done
+          done
+          # One SARIF per changed head pin, each with its own category, so the
+          # detail is visible in code scanning for this pull request's ref.
+          mkdir -p "$RUNNER_TEMP/sarif"
+          for key in $(jq -r '.head[].key' changed.json); do
+            trivy convert --format sarif --output "$RUNNER_TEMP/sarif/$key.raw.sarif" "$RUNNER_TEMP/out-head/$key.triaged.json"
+            jq --arg c "pin-triage-$key/" '.runs[].automationDetails = {id: $c}' \
+              "$RUNNER_TEMP/sarif/$key.raw.sarif" > "$RUNNER_TEMP/sarif/$key.sarif"
+            rm "$RUNNER_TEMP/sarif/$key.raw.sarif"
+          done
+          echo "Scanned and triaged the changed pins in $(( $(date +%s) - start ))s."
+
+      - name: Upload the changed pins' findings to code scanning
+        if: steps.plan.outputs.count != '0'
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+        with:
+          sarif_file: ${{ runner.temp }}/sarif
+
+      # Generic message; which pin and which finding is only in code scanning
+      # for this pull request.
+      - name: Fail on a known-exploited finding the change adds
+        if: steps.plan.outputs.count != '0'
+        run: |
+          python3 scripts/triage-image-findings.py gate --base "$RUNNER_TEMP/out-base" --head "$RUNNER_TEMP/out-head" \
+            --main-alerts "$RUNNER_TEMP/main-alerts.json"
+
+      - name: Mark as checked
+        id: done
+        run: echo "checked=true" >> "$GITHUB_OUTPUT"

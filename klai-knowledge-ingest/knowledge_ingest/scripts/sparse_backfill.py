@@ -41,6 +41,7 @@ from qdrant_client.models import (
 
 from knowledge_ingest import sparse_embedder
 from knowledge_ingest.config import settings
+from knowledge_ingest.embedder import EmbeddingUnavailable
 from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.qdrant_store import COLLECTION, get_client
 
@@ -123,11 +124,14 @@ async def backfill_sparse(
                 (p.payload or {}).get("text_enriched") or (p.payload or {}).get("text") or ""
                 for p in points
             ]
-            sparse = await sparse_embedder.embed_sparse_batch(texts)
+            try:
+                sparse = await sparse_embedder.embed_sparse_batch(texts)
+            except (EmbeddingUnavailable, sparse_embedder.SparseEmbeddingRejected):
+                logger.warning("sparse_backfill_sidecar_unavailable", exc_info=True)
+                sparse = []
             updates = [
                 PointVectors(id=p.id, vector={"vector_sparse": sv})
-                for p, sv in zip(points, sparse, strict=True)
-                if sv is not None
+                for p, sv in zip(points, sparse, strict=False)
             ]
             if updates:
                 try:

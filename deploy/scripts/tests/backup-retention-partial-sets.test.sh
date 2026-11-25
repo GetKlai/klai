@@ -43,6 +43,8 @@ if [[ "$all" == *".Config.Env"* && "$all" == *"klai-core-qdrant-1"* ]]; then
     echo 'QDRANT__SERVICE__API_KEY=test-only'; exit 0
 fi
 if [[ "$all" == *".State.Running"* ]]; then echo 'true'; exit 0; fi
+# The image the SQLite copies run in is read off the portal-api container.
+if [[ "$all" == *"{{.Image}}"* ]]; then echo 'sha256:test-only'; exit 0; fi
 # backup.sh waits for each BGSAVE to finish: LASTSAVE must move, and the save
 # must report ok, or the step fails before retention can run.
 if [[ "$all" == *" LASTSAVE" ]]; then date +%s%N; exit 0; fi
@@ -52,13 +54,22 @@ if [[ "$all" == *" INFO persistence" ]]; then echo 'rdb_last_bgsave_status:ok'; 
 if [[ "$all" == *" INFO keyspace" ]]; then printf '# Keyspace\ndb0:keys=3,expires=0,avg_ttl=0\n'; exit 0; fi
 if [[ "$all" == *" GRAPH.LIST" ]]; then exit 0; fi
 if [[ "$all" == *"/stats"* ]]; then echo '{"indexes":{}}'; exit 0; fi
+if [[ "$all" == *"/vaultwarden backup" ]]; then echo "Backup to '/data/db_20260717_020000.sqlite3' was successful"; exit 0; fi
 # pg_dumpall writes to stdout; STUB_EMPTY_DUMP_USER makes one dump come out empty.
 if [[ "$all" == *pg_dumpall* ]]; then
     [[ -n "${STUB_EMPTY_DUMP_USER:-}" && "$all" == *"-U $STUB_EMPTY_DUMP_USER"* ]] || echo '-- dump'
     exit 0
 fi
 # `docker cp` and `docker compose cp`: the destination is the last argument.
-if [[ " $all " == *" cp "* ]]; then echo stub >"${@: -1}"; exit 0; fi
+if [[ " $all " == *" cp "* ]]; then
+  # A destination of "-" is a stream on stdout; the tar stub below passes it on.
+  if [[ "${@: -1}" == - ]]; then
+    echo stub
+  else
+    echo stub >"${@: -1}"
+  fi
+  exit 0
+fi
 if [[ "$1" == "run" ]]; then
     # tar, mongodump, the Garage snapshot tar and the Qdrant snapshot download
     # run in a throwaway container with the backup directory mounted: create
@@ -69,8 +80,9 @@ if [[ "$1" == "run" ]]; then
     if [[ -n "${dir:-}" && "$all" =~ /(backup|out)/([A-Za-z0-9._-]+) ]]; then
         echo stub >"$dir/${BASH_REMATCH[2]}"
     fi
-    # The Qdrant API calls answer in JSON.
+    # The Qdrant API calls answer in JSON; the SQLite copy is streamed on stdout.
     case "$all" in
+        *"--entrypoint python3"*) echo stub ;;
         *curlimages/curl*" -o "*) ;;
         *"/points/count"*) echo '{"result":{"count":3}}' ;;
         *"-X POST"*) echo '{"result":{"name":"snap-1"}}' ;;
@@ -83,6 +95,9 @@ STUB
 for stub in sleep rsync age curl tar; do
     printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/bin/$stub"
 done
+# backup.sh unpacks a `docker cp ... -` stream with `tar -xOf -`.
+printf '#!/usr/bin/env bash\n[[ "$*" == "-xOf -" ]] && exec cat\nexit 0\n' >"$TMP/bin/tar"
+printf '#!/usr/bin/env bash\necho ok\n' >"$TMP/bin/sqlite3"
 chmod +x "$TMP/bin"/*
 
 run_backup() { # run_backup <date>: exit code in $rc, log in $TMP/out

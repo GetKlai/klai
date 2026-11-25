@@ -294,7 +294,7 @@ async def test_ingest_from_gitea_task_fetches_latest_content():
         registered_tasks: dict = {}
 
         class _MockApp:
-            def task(self, queue=None, retry=None):
+            def task(self, **_kwargs):
                 def decorator(fn):
                     registered_tasks["ingest_from_gitea"] = fn
                     return fn
@@ -305,6 +305,7 @@ async def test_ingest_from_gitea_task_fetches_latest_content():
         register_ingest_tasks(app)
 
         await registered_tasks["ingest_from_gitea"](
+            MagicMock(),
             org_id="org1",
             kb_slug="kb",
             path="docs/page.md",

@@ -16,6 +16,7 @@ import gzip
 import io
 import os
 import random
+import sqlite3
 import sys
 import tarfile
 
@@ -70,9 +71,30 @@ def tarball(name, files):
 
 
 for name in ("gitea-repos.tar.gz", "garage-meta.tar.gz", "garage-data.tar.gz", "crm-storage.tar.gz",
-             "listmonk-uploads.tar.gz", "scribe-audio.tar.gz"):
+             "listmonk-uploads.tar.gz", "scribe-audio.tar.gz", "vaultwarden-files.tar.gz",
+             "caddy-data.tar.gz", "caddy-tenants.tar.gz", "glitchtip-uploads.tar.gz"):
     stem = name.split(".")[0]
     tarball(name, {f"./{stem}/file-{i}.bin": rng.randint(20, 200) for i in range(rng.randint(3, 8))})
+
+# The tables backup-restore.sh requires of each SQLite copy, with invented rows;
+# the first table also carries the generator header.
+sqlite_copies = {
+    "vaultwarden-db.sqlite3": ("__diesel_schema_migrations", "users", "devices", "ciphers", "folders",
+                               "organizations", "users_organizations"),
+    "grafana-db.sqlite3": ("migration_log", "org", "user", "dashboard", "data_source", "alert_rule", "api_key"),
+    "calnode-db.sqlite3": ("goose_db_version", "users", "event_types", "bookings", "availability_rules",
+                           "calendar_connections"),
+}
+for name, tables in sqlite_copies.items():
+    db = sqlite3.connect(os.path.join(out, name))
+    for n, table in enumerate(tables):
+        db.execute(f'CREATE TABLE "{table}" (uuid TEXT PRIMARY KEY, label TEXT)')
+        if n == 0:
+            db.execute(f'INSERT INTO "{table}" VALUES (?, ?)', ("header", header))
+        for i in range(rng.randint(1, 6)):
+            db.execute(f'INSERT INTO "{table}" VALUES (?, ?)', (f"{table}-{i}", f"user{i}@example.com"))
+    db.commit()
+    db.close()
 
 research = os.path.join(out, "research-uploads")
 for i in range(rng.randint(3, 6)):

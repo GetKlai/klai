@@ -71,6 +71,10 @@ on:
       # Rolls back what was deployed since the last green E2E run. It ends red
       # after every rollback, and its rollback-report artifact sets the label.
       - Auto-rollback
+      # Red when the weekly image scan leaves findings that need action, or
+      # broke. The issue stays generic; the detail is only on the
+      # code-scanning tab, which this public repository does not expose.
+      - Scan pinned external images
     types: [completed]
 
     # Deliberately NOT watched, so the open-issue list stays a list of real

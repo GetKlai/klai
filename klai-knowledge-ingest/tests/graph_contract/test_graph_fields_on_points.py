@@ -19,7 +19,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import structlog
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 
 from knowledge_ingest import contextual, enrichment_tasks, pg_store, qdrant_store, rebuild_tasks
 from knowledge_ingest import graph as graph_module
@@ -61,13 +69,9 @@ async def store(graph_helpers: Contract, tenant_rows, monkeypatch, real_procrast
             name: VectorParams(size=2, distance=Distance.COSINE)
             for name in ("vector_chunk", "vector_questions")
         },
+        sparse_vectors_config={"vector_sparse": SparseVectorParams()},
     )
     monkeypatch.setattr(qdrant_store, "get_client", lambda: client)
-    monkeypatch.setattr(
-        enrichment_tasks.sparse_embedder,
-        "embed_sparse_batch",
-        AsyncMock(side_effect=lambda t: [None] * len(t)),
-    )
     app = _App()
     enrichment_tasks._register_tasks(app)
     org_id = graph_helpers.group_id
@@ -77,7 +81,15 @@ async def store(graph_helpers: Contract, tenant_rows, monkeypatch, real_procrast
         artifact = await insert({"document_text": _TEXT}, active=True)
         for product in ("enrichment", "graph"):
             await set_product_state(conn, artifact, product, "pending")
-        await qdrant_store.upsert_chunks(org_id, "docs", "page", [_TEXT], [[0.1, 0.2]], artifact)
+        await qdrant_store.upsert_chunks(
+            org_id,
+            "docs",
+            "page",
+            [_TEXT],
+            [[0.1, 0.2]],
+            [SparseVector(indices=[1], values=[1.0])],
+            artifact,
+        )
         return artifact
 
     async def graph(artifact: str) -> None:

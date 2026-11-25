@@ -19,7 +19,7 @@ import sys
 
 import asyncpg
 
-from knowledge_ingest import embedder, enrichment, qdrant_store
+from knowledge_ingest import embedder, enrichment, qdrant_store, sparse_embedder
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import _parse_dsn
 from knowledge_ingest.operations import guard_cli, kb_operation
@@ -138,6 +138,7 @@ async def migrate(dry_run: bool, batch_size: int) -> None:
                     enriched_chunks=enriched_chunks,
                     chunk_vectors=chunk_vectors,
                     question_vectors=question_vectors,
+                    sparse_vectors=await sparse_embedder.embed_sparse_batch(enriched_texts),
                     artifact_id=artifact_id,
                     extra_payload=extra_payload,
                     user_id=user_id,

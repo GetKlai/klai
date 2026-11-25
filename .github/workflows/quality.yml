@@ -39,6 +39,7 @@ jobs:
       caddy: ${{ steps.filter.outputs.caddy }}
       whisper_server: ${{ steps.filter.outputs.whisper_server }}
       bge_m3_sparse: ${{ steps.filter.outputs.bge_m3_sparse }}
+      image_pins: ${{ steps.filter.outputs.image_pins }}
       dockerfiles_files: ${{ steps.filter.outputs.dockerfiles_files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -161,6 +162,27 @@ jobs:
             bge_m3_sparse:
               - 'deploy/bge-m3-sparse/**'
               - '.github/workflows/bge-m3-sparse.yml'
+            # Pins, and everything the triage of a pin reads. Scans run only
+            # when a pin changed; otherwise this is tests and a validator.
+            image_pins:
+              - 'deploy/docker-compose.yml'
+              - 'docker-compose.dev.yml'
+              - 'deploy/docker-compose.gpu.yml'
+              - 'klai-portal/backend/app/core/config.py'
+              - 'renovate.json5'
+              - 'deploy/crawl4ai/**'
+              - 'deploy/image-exposure.json'
+              - 'deploy/caddy/Caddyfile'
+              - 'klai-portal/backend/app/services/provisioning/infrastructure.py'
+              - 'klai-docs/lib/caddy.ts'
+              - '.vex/**'
+              - 'scripts/triage-image-findings.py'
+              - 'scripts/tests/test_triage_image_findings.py'
+              - 'scripts/trivy-scan-image.sh'
+              - 'scripts/validate-vex.sh'
+              - 'scripts/require-image-scans.py'
+              - '.github/workflows/image-pin-triage.yml'
+              - '.github/workflows/quality.yml'
             # Every Dockerfile; scripts/require-image-scans.py checks that each
             # changed one was scanned.
             dockerfiles:
@@ -281,6 +303,11 @@ jobs:
     uses: ./.github/workflows/bge-m3-sparse.yml
     secrets: inherit
 
+  image-pin-triage:
+    needs: changes
+    if: needs.changes.outputs.image_pins == 'true'
+    uses: ./.github/workflows/image-pin-triage.yml
+
   quality:
     name: quality
     if: always()
@@ -304,6 +331,7 @@ jobs:
       - caddy
       - whisper-server
       - bge-m3-sparse
+      - image-pin-triage
     runs-on: ubuntu-latest
     steps:
       - name: Require every affected workflow to pass
@@ -341,9 +369,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         if: always()
 
-      - name: Require an image scan for every changed Dockerfile
+      - name: Require an image scan for every changed Dockerfile and image pin
         if: always()
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           CHANGED_DOCKERFILES: ${{ needs.changes.outputs.dockerfiles_files }}
+          IMAGE_PINS_SELECTED: ${{ needs.changes.outputs.image_pins }}
         run: python3 scripts/require-image-scans.py

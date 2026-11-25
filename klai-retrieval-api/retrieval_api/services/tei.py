@@ -6,7 +6,9 @@ Do NOT confuse with Infinity (port 7998), which is the separate reranker service
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 import httpx
 from qdrant_client.models import SparseVector
@@ -14,6 +16,31 @@ from qdrant_client.models import SparseVector
 from retrieval_api.config import settings
 
 logger = logging.getLogger(__name__)
+
+# A restart of the dense service drops connections (on 2026-11-23 a search got
+# "Server disconnected" as it came back) or answers 5xx. A search cannot wait
+# out a whole restart (its health check failed for 2 and 4 minutes on
+# 2026-11-22 and 2026-11-23): the widget gives /retrieve 10 s and retrieval_ms
+# p95 was 4.6 s over the 7 days to 2026-11-24. So the attempts that fail to
+# connect and the waits between them share one 3 s deadline; when it has
+# passed the search answers 503 embedding_unavailable. Once connected, reading
+# the vector keeps the long timeout, as before: that is a slow service, not a
+# missing one.
+_RETRY_BUDGET_S = 3.0
+_FIRST_DELAY_S = 0.25
+_MAX_DELAY_S = 1.0
+_READ_TIMEOUT_S = 120.0
+_MAX_CONNECT_TIMEOUT_S = 1.0
+
+
+class EmbeddingUnavailable(RuntimeError):
+    """The dense embedding service did not answer within the retry budget."""
+
+
+def _transient(exc: httpx.HTTPError) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, httpx.TransportError) and not isinstance(exc, httpx.ReadTimeout)
 
 
 def _embedding_payload(text_or_texts: str | list[str]) -> dict[str, object]:
@@ -26,9 +53,30 @@ def _embedding_payload(text_or_texts: str | list[str]) -> dict[str, object]:
 async def embed_single(text: str) -> list[float]:
     """Embed a single text string via the Infinity /v1/embeddings endpoint.
 
-    Returns a dense float vector.
+    Returns a dense float vector. A dropped connection or a 5xx is retried
+    with growing waits until ``_RETRY_BUDGET_S`` has passed in total, connect
+    timeouts included; then it raises :class:`EmbeddingUnavailable`. A read
+    timeout and a 4xx are not retried.
     """
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    deadline = time.monotonic() + _RETRY_BUDGET_S
+    delay = _FIRST_DELAY_S
+    while True:
+        connect = min(_MAX_CONNECT_TIMEOUT_S, max(deadline - time.monotonic(), 0.05))
+        try:
+            return await _embed_once(text, connect)
+        except httpx.HTTPError as exc:
+            if not _transient(exc):
+                raise
+            if time.monotonic() + delay >= deadline:
+                logger.warning("dense_embedding_unavailable", exc_info=True)
+                raise EmbeddingUnavailable(type(exc).__name__) from exc
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, _MAX_DELAY_S)
+
+
+async def _embed_once(text: str, connect_timeout: float) -> list[float]:
+    timeout = httpx.Timeout(_READ_TIMEOUT_S, connect=connect_timeout)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             f"{settings.tei_url}/v1/embeddings",
             json=_embedding_payload(text),

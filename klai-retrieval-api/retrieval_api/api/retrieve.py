@@ -55,7 +55,7 @@ from retrieval_api.services.evidence_pack import (
 )
 from retrieval_api.services.features import extract_features
 from retrieval_api.services.router import fetch_source_catalog, route_to_sources
-from retrieval_api.services.tei import embed_single, embed_sparse
+from retrieval_api.services.tei import EmbeddingUnavailable, embed_single, embed_sparse
 from retrieval_api.services.telemetry import write_shadow
 from retrieval_api.services.tenant_telemetry import get_canonical_level, resolve_effective_level
 from retrieval_api.tracing import RetrievalTrace
@@ -293,6 +293,8 @@ async def _retrieve_sub_queries(
             merged_chunks.append(chunk)
 
     if failures == len(sub_queries):
+        if dense_down := next((r for r in results if isinstance(r, EmbeddingUnavailable)), None):
+            raise dense_down
         raise HTTPException(status_code=502, detail="all sub-query retrievals failed")
 
     covered_bands = [sub.confidence_band for sub in sub_results if sub.confidence_band is not None]

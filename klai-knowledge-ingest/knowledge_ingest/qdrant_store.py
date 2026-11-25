@@ -39,7 +39,6 @@ from qdrant_client.models import (  # noqa: E402
     VectorParams,
 )
 
-from knowledge_ingest import sparse_embedder  # noqa: E402
 from knowledge_ingest.config import settings  # noqa: E402
 from knowledge_ingest.embedder import EMBED_DIM  # noqa: E402
 from knowledge_ingest.utils.content_fingerprint import compute_minhash  # noqa: E402
@@ -257,7 +256,18 @@ async def _replace_points(
     if the other upserted before that snapshot, and both cannot have, so one
     writer's points always survive. The cost is that both may survive until
     the next write of the document.
+
+    Every point carries ``vector_sparse``: the collection is hybrid, and a point
+    without it is found by the dense leg only, for good (filling it in later is
+    a rewrite of stored data). So a point without one is refused here, the one
+    place points are written, before anything is read or deleted.
     """
+    for point in points:
+        if not isinstance(point.vector, dict) or point.vector.get("vector_sparse") is None:
+            raise ValueError(
+                f"refusing to write point {point.id} without a sparse vector; "
+                "the existing points are left as they are"
+            )
     stale_ids: list = []
     offset = None
     while True:
@@ -284,6 +294,7 @@ async def upsert_chunks(
     path: str,
     chunks: list[str],
     vectors: list[list[float]],
+    sparse_vectors: list[SparseVector],
     artifact_id: str,
     extra_payload: dict | None = None,
     user_id: str | None = None,
@@ -294,11 +305,10 @@ async def upsert_chunks(
     parent_chunk_ids: list[int | None] | None = None,
     heading_paths: list[str] | None = None,
 ) -> None:
-    """Upsert raw chunks (before enrichment). Writes vector_chunk and, when the
-    sparse sidecar answers, vector_sparse: no LLM is involved, so every chunk is
-    hybrid-searchable from its first write. A sidecar failure leaves a chunk
-    dense-only (logged by the embedder) and the sparse backfill repairs it.
-    Backward compatible: called by the ingest pipeline before enrichment runs.
+    """Upsert raw chunks (before enrichment) with vector_chunk and vector_sparse:
+    no LLM is involved, so every chunk is hybrid-searchable from its first write.
+    The caller embeds both before it records the version, so an unavailable
+    sidecar fails the ingest before anything is written, as a dense failure does.
 
     taxonomy_node_ids: list of matched node ids, [] = no match, absent field = no taxonomy on KB.
     tags: list of free-form tags to store on chunks.
@@ -310,8 +320,6 @@ async def upsert_chunks(
     client = get_client()
 
     _assert_vectors_writable(vectors, what="upsert_chunks")
-
-    sparse_vectors = await sparse_embedder.embed_sparse_batch(chunks)
 
     base_payload = {
         "org_id": org_id,
@@ -346,9 +354,7 @@ async def upsert_chunks(
             pid = parent_chunk_ids[i]
             if pid is not None:
                 payload["parent_chunk_id"] = int(pid)
-        named_vectors: dict = {"vector_chunk": vector}
-        if sparse is not None:
-            named_vectors["vector_sparse"] = sparse
+        named_vectors = {"vector_chunk": vector, "vector_sparse": sparse}
         points.append(PointStruct(id=str(uuid.uuid4()), vector=named_vectors, payload=payload))
     await _replace_points(
         client,
@@ -368,7 +374,7 @@ async def upsert_enriched_chunks(
     enriched_chunks: list,  # list[enrichment.EnrichedChunk]
     chunk_vectors: list[list[float]],
     question_vectors: list[list[float] | None],
-    sparse_vectors: list[SparseVector | None] | None = None,
+    sparse_vectors: list[SparseVector],
     artifact_id: str = "",
     extra_payload: dict | None = None,
     user_id: str | None = None,
@@ -386,8 +392,8 @@ async def upsert_enriched_chunks(
     document. Only the points with ``chunk_index`` in
     ``[chunk_offset, chunk_offset + len(enriched_chunks))`` are replaced, and the
     batch keeps its position in the document; the other points stay as they are.
-    vector_chunk is always populated; vector_questions is profile-dependent;
-    vector_sparse is populated when the sparse sidecar is available.
+    vector_chunk and vector_sparse are always populated; vector_questions is
+    profile-dependent.
 
     Metadata fields (taxonomy_node_ids, tags, content_label, visibility, etc.)
     are passed entirely via extra_payload — no separate parameters needed here.
@@ -431,19 +437,13 @@ async def upsert_enriched_chunks(
         base_payload["user_id"] = user_id
     base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
-    # Default sparse_vectors to all None if not provided
-    if sparse_vectors is None:
-        sparse_vectors = [None] * len(enriched_chunks)
-
     points = []
     for i, (ec, chunk_vec, q_vec, sparse_vec) in enumerate(
         zip(enriched_chunks, chunk_vectors, question_vectors, sparse_vectors, strict=False)
     ):
-        vectors: dict = {"vector_chunk": chunk_vec}
+        vectors: dict = {"vector_chunk": chunk_vec, "vector_sparse": sparse_vec}
         if q_vec is not None:
             vectors["vector_questions"] = q_vec
-        if sparse_vec is not None:
-            vectors["vector_sparse"] = sparse_vec
 
         chunk_payload = {
             **base_payload,

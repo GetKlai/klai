@@ -26,7 +26,8 @@
 #   postgres gitea mongodb redis vexa_redis meilisearch qdrant falkordb
 #   garage_meta garage_data firecrawl_postgres listmonk_postgres crm_postgres
 #   fider_postgres umami_postgres crm_storage listmonk_uploads scribe_audio
-#   research_uploads
+#   vaultwarden_db vaultwarden_files grafana_db calnode_db caddy_data
+#   caddy_tenants glitchtip_uploads research_uploads
 #
 # The fact an artifact must reproduce (backup-facts.txt, written by backup.sh,
 # is part of every set):
@@ -41,6 +42,9 @@
 #   tar artifacts         the member count and the hash of the sorted member
 #                         names recorded at backup time, and as many files in
 #                         the restored volume
+#   vaultwarden_db,       the copy opens in a scratch directory, passes
+#   grafana_db,           integrity_check and holds that product's own core
+#   calnode_db            tables; no server is started on it
 # and for every file its recorded checksum, so a truncated or damaged copy is
 # named before an engine is started. A fact that cannot be compared (no
 # recorded line, no table in a dump) is a failure.
@@ -76,6 +80,13 @@ umami_postgres      pg      umami-postgres-all.sql       umami-postgres
 crm_storage         tar     crm-storage.tar.gz           -
 listmonk_uploads    tar     listmonk-uploads.tar.gz      -
 scribe_audio        tar     scribe-audio.tar.gz          -
+vaultwarden_db      sqlite  vaultwarden-db.sqlite3       -
+vaultwarden_files   tar     vaultwarden-files.tar.gz     -
+grafana_db          sqlite  grafana-db.sqlite3           -
+calnode_db          sqlite  calnode-db.sqlite3           -
+caddy_data          tar     caddy-data.tar.gz            -
+caddy_tenants       tar     caddy-tenants.tar.gz         -
+glitchtip_uploads   tar     glitchtip-uploads.tar.gz     -
 research_uploads    tar     research-uploads.tar.gz      -
 '
 
@@ -295,6 +306,35 @@ rs_tar() {
   echo "$want_n files and the member listing as recorded; restored into throwaway volume $vol"
 }
 
+# rs_sqlite_tables <artifact>: core tables of that product, a copy without
+# which is not one its server can start on. Vaultwarden: every database since
+# its first two schema steps of 2018 (upstream migrations/sqlite). Grafana and
+# Calnode: read from sqlite_master on core-01, 2026-11-25, names only.
+rs_sqlite_tables() {
+  case "$1" in
+    vaultwarden_db) echo "__diesel_schema_migrations users devices ciphers folders organizations users_organizations" ;;
+    grafana_db) echo "migration_log org user dashboard data_source alert_rule api_key" ;;
+    calnode_db) echo "goose_db_version users event_types bookings availability_rules calendar_connections" ;;
+  esac
+}
+
+# rs_sqlite <artifact> <file>: the copy, put in a scratch directory, opens
+# read-only, passes integrity_check and holds those tables. Nothing is started
+# on it: a second Vaultwarden would be one more place the team's credentials
+# are served from, and the database itself is what a restore puts back.
+rs_sqlite() {
+  local a="$1" db="$AW/scratch/db.sqlite3" check tables t missing=()
+  command -v sqlite3 > /dev/null || { echo "sqlite3 is not installed"; return 1; }
+  mkdir -p "$AW/scratch" && cp "$2" "$db" || return 1
+  check="$(sqlite3 -readonly "$db" 'PRAGMA integrity_check;' 2>&1)"
+  [[ "$check" == ok ]] || { echo "integrity_check: $(head -n 3 <<< "$check" | paste -sd';' -)"; return 1; }
+  tables="$(sqlite3 -readonly "$db" "select name from sqlite_master where type = 'table';" 2>&1)" \
+    || { echo "the tables cannot be listed: $tables"; return 1; }
+  for t in $(rs_sqlite_tables "$a"); do grep -qx "$t" <<< "$tables" || missing+=("$t"); done
+  (( ${#missing[@]} == 0 )) || { echo "tables missing: ${missing[*]}"; return 1; }
+  echo "integrity_check ok, $(wc -l <<< "$tables" | tr -d ' ') tables with the server's own among them; opened in a scratch directory, no server started"
+}
+
 # rs_path <file name>: where the plain file is, decrypting an .age copy into
 # the artifact's work directory. The staging copy of research-uploads is a directory.
 rs_path() {
@@ -341,6 +381,7 @@ rs_artifact() {
     meili) rs_snapshot "$a" meilisearch "$svc" "${paths[@]}" ;;
     qdrant) rs_snapshot "$a" qdrant "$svc" "${paths[@]}" ;;
     tar) rs_tar "$a" "${paths[0]}" "$file" ;;
+    sqlite) rs_sqlite "$a" "${paths[0]}" ;;
   esac
 }
 
