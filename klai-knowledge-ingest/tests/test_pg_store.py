@@ -666,3 +666,16 @@ async def test_connector_source_ref_lookup_is_fully_tenant_scoped() -> None:
     for column in ("org_id", "kb_slug", "source_connector_id", "source_ref"):
         assert column in sql
     assert params == ["org-1", "prices", "connector-1", "json-feed:connector-1:group-a"]
+
+
+@pytest.mark.asyncio
+async def test_failed_version_does_not_count_as_a_usable_connector_artifact():
+    """The crawler skips an unchanged page only while its version has searchable text."""
+    conn = _make_conn()
+    conn.fetchval = AsyncMock(return_value=False)
+
+    await pg_store.has_active_connector_artifact_for_url(
+        conn, org_id="org", kb_slug="kb", connector_id="conn-1", url="https://example.net/"
+    )
+
+    assert "index_status <> 'failed'" in conn.fetchval.call_args[0][0]

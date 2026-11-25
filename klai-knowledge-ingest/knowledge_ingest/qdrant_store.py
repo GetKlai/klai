@@ -13,6 +13,7 @@ import time
 import uuid
 import warnings
 
+import httpx
 import structlog
 
 # Qdrant client warns about API key over HTTP; safe inside Docker network
@@ -47,6 +48,56 @@ logger = structlog.get_logger()
 
 COLLECTION = "klai_knowledge"
 
+# Measured against the production vector store (2026-11-25): a kept-alive
+# connection was still open after 3.0 s idle and closed by the server after
+# 4.5 s, 5.5 s and 8.0 s idle. httpx 0.28.1 keeps an idle connection for 5.0 s,
+# so a call landing between 4.5 s and 5.0 s was sent on a connection the server
+# had already closed. 2.0 s stays clearly below the 3.0 s the server was seen
+# to hold. qdrant-client builds its httpx client from ``limits`` only when
+# passed to it, but then ignores them for a custom transport, so the limits
+# live on the transport below (the other values are httpx's own defaults).
+_KEEPALIVE_EXPIRY_SECONDS = 2.0
+
+# The failures of a request whose connection died before any response came
+# back: the server closed it ("server disconnected"), reset it, or the socket
+# broke while writing. Timeouts and connect errors are deliberately absent.
+_DROPPED_CONNECTION_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
+
+
+class _RetryDroppedConnectionTransport(httpx.AsyncBaseTransport):
+    """Send a request again, once, when its connection dropped before a response.
+
+    qdrant-client wraps every httpx error in ``ResponseHandlingException``, so
+    this has to sit below it. Only a dropped connection is retried: a response
+    the server did send (4xx/5xx) never reaches this code as an exception.
+
+    Replaying is safe for every request this service sends. The unit is one
+    HTTP request: a scroll or query only reads, and an upsert or a delete by
+    point id leaves the same points whether it ran once or twice. The ids of
+    the points of a document are fixed (``_replace_points`` builds them before
+    its first request), so a repeated upsert overwrites its own points and
+    cannot leave a second set.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self._inner = inner
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return await self._inner.handle_async_request(request)
+        except _DROPPED_CONNECTION_ERRORS as exc:
+            logger.warning(
+                "qdrant_request_retried_dropped_connection",
+                error_type=type(exc).__name__,
+                method=request.method,
+                path=request.url.path,
+            )
+            return await self._inner.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
 _client: AsyncQdrantClient | None = None
 
 
@@ -56,6 +107,15 @@ def get_client() -> AsyncQdrantClient:
         _client = AsyncQdrantClient(
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key or None,
+            transport=_RetryDroppedConnectionTransport(
+                httpx.AsyncHTTPTransport(
+                    limits=httpx.Limits(
+                        max_connections=100,
+                        max_keepalive_connections=20,
+                        keepalive_expiry=_KEEPALIVE_EXPIRY_SECONDS,
+                    )
+                )
+            ),
         )
     return _client
 
