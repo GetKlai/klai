@@ -142,6 +142,45 @@
         }
       ],
       "expires": "2027-05-24"
+    },
+    {
+      "id": "mongo-gosu-stdlib",
+      "services": [
+        "deploy/mongodb",
+        "dev/mongodb"
+      ],
+      "component": {
+        "path": "usr/local/bin/gosu",
+        "purl": "pkg:golang/stdlib"
+      },
+      "justification": "vulnerable_code_not_in_execute_path",
+      "reason": "gosu only drops from root to the mongodb user once at container start (setuid and exec); it never calls the Go standard-library packages the scanner flags, such as net/http, crypto/tls or archive/tar.",
+      "evidence": [
+        "The mongo image starts through docker-entrypoint.sh, whose only gosu call is `exec gosu mongodb \"$BASH_SOURCE\" \"$@\"` (docker-library/mongo, docker-entrypoint.sh); checked on mongo:9.0.8, where the image's Entrypoint is docker-entrypoint.sh and its Cmd is mongod.",
+        "Neither compose file overrides the entrypoint or command of mongodb, and its healthcheck runs mongosh, not gosu (checked by the conditions below).",
+        "gosu's SECURITY.md: CVEs in Go interfaces gosu never invokes (net/http, archive/tar, encoding/xml, ...) do not apply; govulncheck is the arbiter.",
+        "Scope is the stdlib module inside that one binary; findings in gosu's own dependencies stay on the tab."
+      ],
+      "conditions": [
+        {
+          "service": "deploy/mongodb",
+          "entrypoint_unchanged": true
+        },
+        {
+          "service": "dev/mongodb",
+          "entrypoint_unchanged": true
+        }
+      ],
+      "verified_against": [
+        "mongo:9.0.8"
+      ],
+      "image_checks": [
+        {
+          "path": "/usr/local/bin/docker-entrypoint.sh",
+          "contains": "exec gosu mongodb \"$BASH_SOURCE\" \"$@\""
+        }
+      ],
+      "expires": "2027-05-25"
     }
   ]
 }
