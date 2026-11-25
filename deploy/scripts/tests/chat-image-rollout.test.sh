@@ -305,9 +305,13 @@ STUB
 cat > "$tmp/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
-  ps) cat "$FX/ps" ;;
+  # As on core-01: ps knows the containers but not the reference they were
+  # created from, which only their config holds.
+  ps) awk '{ print "id-" $1 }' "$FX/ps" ;;
   compose) cat "$FX/overrides" 2>/dev/null || exit 1 ;;
-  inspect) cat "$FX/inspect-${*: -1}" 2>/dev/null || exit 1 ;;
+  inspect)
+    if [[ "$*" == *".Config.Image"* ]]; then cat "$FX/ps"
+    else cat "$FX/inspect-${*: -1}" 2>/dev/null || exit 1; fi ;;
 esac
 STUB
 chmod +x "$tmp/bin/docker"
