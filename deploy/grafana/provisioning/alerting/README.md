@@ -21,7 +21,7 @@ into Grafana at startup or after `docker compose up -d grafana` (recreate).
 | `librechat-rules.yaml` | LibreChat chat.health_failed spike | OBS-001-R15 |
 | `ingest-rules.yaml` | Knowledge-ingest error rate spike | OBS-001-R16 |
 | `auto-rollback-rules.yaml` | Deploy rolled back or rollback failed (mail), weekly rollback rehearsal missing | SPEC-INFRA-AUTO-ROLLBACK-001 |
-| `gpu01-rules.yaml` | gpu-01 deploy rolled back or rollback failed, no healthy deploy heartbeat for 2 hours | SPEC-INFRA-AUTO-ROLLBACK-001 |
+| `gpu01-rules.yaml` | gpu-01 deploy rolled back or rollback failed, a GPU service recreated or still off the GPU, no healthy deploy heartbeat for 2 hours | SPEC-INFRA-AUTO-ROLLBACK-001 |
 | `heartbeat-rules.yaml` | Synthetic always-fires rule → heartbeat-kuma webhook every 5 min | OBS-001-R22 |
 
 > Rule-file names above marked "OBS-001" are added by SPEC-OBS-001 and land in

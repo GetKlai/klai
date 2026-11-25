@@ -9,7 +9,11 @@
 # rollback_failed | refused, gate = the step that failed, e.g. probe:infinity
 # or candidate_probe:tei; after rollback_failed every later run repeats the
 # line with gate unresolved:<gate> until a person clears the host, so the
-# rule keeps firing) and
+# rule keeps firing), gpu_repair (outcome repaired | repair_failed: every run
+# checks that each healthy GPU-backed service has a process on the card and
+# recreates one that has none, gate off_card:<service>; a repair that did not
+# hold repeats repair_failed with gate unresolved:off_card:<service> every run
+# until a person clears the host; the rollback rule fires on both) and
 # gpu_deploy (deployed | up_to_date | skipped_bad_rev | deferred, the healthy
 # heartbeat, or failed | validation_failed | pull_failed | disabled, which are
 # not; the
@@ -42,7 +46,7 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: |
-                _time:15m service:gpu-deploy event:auto_rollback
+                _time:15m service:gpu-deploy event:in(auto_rollback, gpu_repair)
                   | stats by (outcome, gate, rev) count() as n
               queryType: stats
           - refId: reduce
@@ -79,14 +83,23 @@ groups:
           service_group: gpu-01
           alert_type: auto_rollback
         annotations:
-          summary: '{{ if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: gpu-01 revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ else if eq $labels.outcome "refused" }}Refused before touching anything: gpu-01 revision {{ $labels.rev }} failed its candidate check (gate {{ $labels.gate }}){{ else }}Rolled back automatically: gpu-01 revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ end }}'
+          summary: '{{ if eq $labels.outcome "repair_failed" }}REPAIR FAILED, human needed now: a gpu-01 service is still not on the GPU (gate {{ $labels.gate }}){{ else if eq $labels.outcome "repaired" }}Repaired automatically: a gpu-01 service was healthy but not on the GPU and was recreated (gate {{ $labels.gate }}){{ else if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: gpu-01 revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ else if eq $labels.outcome "refused" }}Refused before touching anything: gpu-01 revision {{ $labels.rev }} failed its candidate check (gate {{ $labels.gate }}){{ else }}Rolled back automatically: gpu-01 revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ end }}'
           runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/gpu-01-setup.md#automatische-deploy-sinds-2026-11-24'
           description: |
             Revision: {{ $labels.rev }}
             Failed gate: {{ $labels.gate }}
             Outcome: {{ $labels.outcome }}
 
-            {{ if eq $labels.outcome "rollback_failed" }}The previous images did not pass their health check or probe either, so
+            {{ if eq $labels.outcome "repair_failed" }}A GPU-backed service was healthy but had no process on the GPU, so it
+            answered from the CPU, slowly. It was recreated once and is still not on
+            the GPU or failed its probe (gate card_check:... means the GPU itself
+            could not be read). Search, sparse vectors, the reranker or
+            transcription may be slow or timing out right now. Every later run
+            repeats this (gate unresolved:...) and changes nothing until a person
+            has fixed gpu-01 and removed /opt/klai/.gpu-broken there.{{ else if eq $labels.outcome "repaired" }}A GPU-backed service was healthy but had no process on the GPU, so it
+            answered from the CPU, slowly. gpu-01 recreated it, it is on the GPU
+            again and passed its probe. Nothing is broken now; find out why it
+            fell off (the runbook section on the GPU check).{{ else if eq $labels.outcome "rollback_failed" }}The previous images did not pass their health check or probe either, so
             embeddings, the reranker, sparse vectors or transcription may be down
             right now. Every later run repeats this (gate unresolved:...) and
             changes nothing until a person has fixed gpu-01 and removed
