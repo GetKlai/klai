@@ -942,8 +942,11 @@ with tempfile.TemporaryDirectory() as tmp:
 # 02:00 and the tool is exactly the bytes already running. The helper runs on
 # --network none with the service's volumes mounted read-write: a WAL reader
 # takes locks and writes its read mark into the -shm file, which a read-only
-# mount refuses. mode=ro keeps the database itself untouched, and nothing is
-# written into the volume. The output is created 0600 before data lands, made
+# mount refuses. mode=ro keeps the database itself untouched. The one thing the
+# helper can leave behind is an empty -wal and a -shm next to a WAL database
+# whose service has no connection open at that moment; SQLite gives both the
+# database's owner and mode, so the service opens them as its own (measured as
+# root on a volume owned by another user). The output is created 0600 before data lands, made
 # under .partial and recorded only after integrity_check passes, so a failure
 # ships nothing and fails the step. A stopped service is a failure: a night
 # without this copy must not look green.
