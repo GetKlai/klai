@@ -41,4 +41,9 @@ RUN python /tmp/apply_hook_isolation_patch.py && rm /tmp/apply_hook_isolation_pa
 # packages, and 302 of the image's 308 Trivy findings came from that file,
 # not from anything installed.
 RUN rm -rf /tmp/project /tmp/install.sh
+# PyJWT is raised above the version the base image installs (2.10.1, pulled
+# in by mcp, which accepts >=2.10.1, and imported by the server's auth.py) to
+# the newest release of the 2.x line. Remove this line once the base image
+# ships 2.15.1 or later.
+RUN python -m pip install --no-cache-dir 'PyJWT==2.15.1'
 USER appuser
