@@ -16,7 +16,9 @@ available in retrieval responses and evidence packs.
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import structlog
@@ -213,17 +215,41 @@ def _extract_content(data: dict) -> str:
     return content
 
 
+# A valid JSON escape (kept as is) or a lone backslash (doubled). The valid
+# escapes are listed first so the second backslash of an escaped pair is consumed with
+# the first and is not mistaken for a lone one.
+_JSON_ESCAPE_OR_LONE_BACKSLASH = re.compile(r'\\(?:[\\"/bfnrt]|u[0-9a-fA-F]{4})|\\')
+
+
+def _loads_repairing_backslashes(content: str) -> Any:
+    """``json.loads``, retried once with lone backslashes doubled.
+
+    A model quoting a Windows path writes a drive path with one backslash, which is
+    invalid JSON and fails identically on every retry. The repair runs only
+    after the strict parse failed, so a valid response is never altered.
+    """
+    try:
+        return json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        repaired = _JSON_ESCAPE_OR_LONE_BACKSLASH.sub(
+            lambda m: m.group(0) if len(m.group(0)) > 1 else "\\\\", content
+        )
+        if repaired == content:
+            raise
+        return json.loads(repaired)
+
+
 def _try_parse_result(content: str) -> EnrichmentResult | None:
     """
     Attempt to parse a JSON string into an EnrichmentResult.
 
     Returns None when the JSON is structurally valid but is missing the required
     context_prefix / questions fields (the salvage path applies).
-    Raises EnrichmentError for genuine JSON syntax errors (transport problem —
-    Procrastinate should retry the whole job).
+    Raises EnrichmentError for JSON that stays unparseable after the lone-backslash
+    repair (Procrastinate retries the whole job).
     """
     try:
-        parsed = json.loads(content)
+        parsed = _loads_repairing_backslashes(content)
     except (json.JSONDecodeError, ValueError) as exc:
         raise EnrichmentError(f"Unparseable JSON in LLM response: {exc}") from exc
 
@@ -353,7 +379,7 @@ async def enrich_chunk(
     # a second LLM call is gone, and context_prefix/questions are loose fields the
     # model rarely omits. ``content`` is valid JSON here (else _try_parse_result raised).
     try:
-        raw_parsed = json.loads(content)
+        raw_parsed = _loads_repairing_backslashes(content)
     except (json.JSONDecodeError, ValueError):
         raw_parsed = {}
 

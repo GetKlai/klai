@@ -1701,7 +1701,11 @@ async def run_crawl_job(
                             outage.append(result)
                         except Exception as exc:
                             logger.warning(
-                                "crawl_page_failed", url=url, job_id=job_id, error=str(exc)
+                                "crawl_page_failed",
+                                url=url,
+                                job_id=job_id,
+                                error=str(exc),
+                                error_type=type(exc).__name__,
                             )
                             pages_failed += 1
 

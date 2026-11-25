@@ -381,3 +381,35 @@ async def test_an_answer_of_the_length_a_table_page_needs_is_not_cut_off():
         )
 
     assert len(result.questions) == 6
+
+
+@pytest.mark.parametrize(
+    "raw, expected_prefix",
+    [
+        # drive letter followed by a lone backslash, invalid JSON as the model wrote it
+        (
+            '{"context_prefix": "Open C:\\Users\\Docs first", "questions": ["q"]}',
+            "Open C:\\Users\\Docs first",
+        ),
+        # already valid escapes (escaped backslash, quote, newline, unicode) are untouched
+        (
+            '{"context_prefix": "a\\\\b \\"q\\" line\\nnext \\u00e9", "questions": ["q"]}',
+            'a\\b "q" line\nnext \u00e9',
+        ),
+    ],
+)
+def test_lone_backslash_response_parses_and_valid_escapes_are_unchanged(raw, expected_prefix):
+    from knowledge_ingest.enrichment import _try_parse_result
+
+    result = _try_parse_result(raw)
+
+    assert result is not None
+    assert result.context_prefix == expected_prefix
+    assert result.questions == ["q"]
+
+
+def test_response_still_unparseable_after_backslash_repair_raises_as_before():
+    from knowledge_ingest.enrichment import EnrichmentError, _try_parse_result
+
+    with pytest.raises(EnrichmentError, match="Unparseable JSON"):
+        _try_parse_result('{"context_prefix": "C:\\Tools", "questions": [')

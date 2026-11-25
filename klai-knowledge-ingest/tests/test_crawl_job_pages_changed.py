@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from knowledge_ingest import link_graph
@@ -122,3 +123,67 @@ async def test_crawl_counts_ingested_pages_and_retired_stale_pages_but_not_uncha
 
     purge.assert_awaited_once()
     assert _changed_increments(conn) == 3
+
+
+@pytest.mark.asyncio
+async def test_failed_page_log_names_the_exception_type_when_the_message_is_empty() -> None:
+    import structlog.testing
+
+    conn = _mock_conn()
+    page = _result("https://example.com/a", "Installing the desk phone takes three steps.")
+    outcomes = [{"url": page.url, "reason_code": "success", "status_code": 200}]
+
+    pg = MagicMock()
+    pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
+    pg.get_active_document_texts = AsyncMock(return_value={})
+    pg.get_crawled_page_stored = AsyncMock(return_value=None)
+    pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
+    pg.upsert_crawled_page = AsyncMock()
+    pg.update_crawled_page_simhash = AsyncMock()
+    pg.upsert_page_links = AsyncMock()
+    pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
+    pg.list_document_heads = AsyncMock(return_value=[])
+    pg.list_connector_paths_pending_purge = AsyncMock(return_value=[])
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch("knowledge_ingest.adapters.crawler._update_job", new_callable=AsyncMock),
+        patch("knowledge_ingest.adapters.crawler.pg_store", pg),
+        patch(
+            "knowledge_ingest.adapters.crawler.document_purge.purge_documents",
+            new_callable=AsyncMock,
+            return_value=(0, 0),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler.crawl_site",
+            new_callable=AsyncMock,
+            return_value=([page], outcomes),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler._enqueue_taxonomy_backfill_after_crawl",
+            new_callable=AsyncMock,
+        ),
+        patch.object(link_graph, "get_outbound_urls", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_anchor_texts", new_callable=AsyncMock, return_value=[]),
+        patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0),
+        patch(
+            "knowledge_ingest.routes.ingest.ingest_document",
+            side_effect=httpx.RemoteProtocolError(""),
+        ),
+    ):
+        from knowledge_ingest.adapters.crawler import run_crawl_job
+
+        await run_crawl_job(
+            connection_factory=connection_factory_for(conn),
+            job_id="job-1",
+            org_id="org-1",
+            kb_slug="docs",
+            start_url="https://example.com/a",
+            max_depth=1,
+            rate_limit=100.0,
+            connector_id="conn-1",
+        )
+
+    failed = [e for e in logs if e["event"] == "crawl_page_failed"]
+    assert [(e["error"], e["error_type"]) for e in failed] == [("", "RemoteProtocolError")]

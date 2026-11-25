@@ -1715,7 +1715,12 @@ async def has_active_connector_artifact_for_url(
     connector_id: str,
     url: str,
 ) -> bool:
-    """Return whether an active connector artifact still represents ``url``."""
+    """Return whether a usable active connector artifact still represents ``url``.
+
+    A version whose index_status is ``failed`` has no searchable text, so it does
+    not count: the crawler's unchanged-page skips must let the page be ingested
+    again instead of leaving it without points.
+    """
     return bool(
         await conn.fetchval(
             """
@@ -1725,6 +1730,7 @@ async def has_active_connector_artifact_for_url(
               WHERE org_id = $1
                 AND kb_slug = $2
                 AND belief_time_end = $5
+                AND index_status <> 'failed'
                 AND extra IS NOT NULL
                 AND extra::jsonb->>'source_connector_id' = $3
                 AND (
