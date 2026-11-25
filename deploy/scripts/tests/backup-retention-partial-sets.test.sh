@@ -98,6 +98,16 @@ done
 # backup.sh unpacks a `docker cp ... -` stream with `tar -xOf -`.
 printf '#!/usr/bin/env bash\n[[ "$*" == "-xOf -" ]] && exec cat\nexit 0\n' >"$TMP/bin/tar"
 printf '#!/usr/bin/env bash\necho ok\n' >"$TMP/bin/sqlite3"
+# The off-site box: two earlier months of day-sets plus tonight's, so a clean
+# night has sets past retention to remove.
+cat >"$TMP/bin/ssh" <<STUB
+#!/usr/bin/env bash
+case "\${*: -1}" in
+    "ls -1 "*"/$MARKER") ;;
+    "ls -1 "*) printf '2026-05-%02d\n' \$(seq 1 28); printf '2026-06-%02d\n' \$(seq 1 28); echo "\$BACKUP_DATE" ;;
+    "rm -r "*) echo "\${*: -1}" >>"$TMP/offsite-removed" ;;
+esac
+STUB
 chmod +x "$TMP/bin"/*
 
 run_backup() { # run_backup <date>: exit code in $rc, log in $TMP/out
@@ -119,6 +129,14 @@ run_backup 2026-07-17
 # the retention assertions below could not be observed.
 if [ "$rc" -ne 0 ] || ! grep -q "Local cleanup" "$TMP/out"; then
     echo "SKIP-GUARD: the run did not complete cleanly; this test cannot observe the window" >&2
+    sed 's/^/  /' "$TMP/out" >&2
+    exit 1
+fi
+
+# The same clean night thins the off-site box; the rule itself is covered by
+# backup-offsite-retention.test.sh.
+if ! grep -q "backups/core-01/2026-05-02 " "$TMP/offsite-removed" 2>/dev/null; then
+    echo "FAIL: a clean night did not remove the off-site sets past retention" >&2
     sed 's/^/  /' "$TMP/out" >&2
     exit 1
 fi

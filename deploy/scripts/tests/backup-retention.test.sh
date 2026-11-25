@@ -40,7 +40,12 @@ cat >"$TMP/bin/rsync" <<'STUB'
 #!/usr/bin/env bash
 exit 1
 STUB
-chmod +x "$TMP/bin/docker" "$TMP/bin/sleep" "$TMP/bin/rsync"
+# Any call to the off-site box leaves a trace: a failed night must make none.
+cat >"$TMP/bin/ssh" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >>"$TMP/ssh-calls"
+STUB
+chmod +x "$TMP/bin/docker" "$TMP/bin/sleep" "$TMP/bin/rsync" "$TMP/bin/ssh"
 
 set +e
 PATH="$TMP/bin:$PATH" \
@@ -61,6 +66,12 @@ fi
 if [ ! -f "$BACKUP_ROOT/2026-07-01/complete" ]; then
     echo "FAIL: failed backup ran local retention and evicted the oldest complete backup" >&2
     sed 's/^/  /' "$TMP/out" >&2
+    exit 1
+fi
+
+if [ -e "$TMP/ssh-calls" ]; then
+    echo "FAIL: failed backup reached the off-site box, where retention removes sets" >&2
+    sed 's/^/  /' "$TMP/ssh-calls" >&2
     exit 1
 fi
 
