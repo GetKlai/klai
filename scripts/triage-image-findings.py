@@ -9,6 +9,7 @@ code-scanning tab and why; the full Trivy result stays a workflow artifact.
 A finding is DROPPED when
   - its package comes from an SBOM file inside the image that the image's own
     installed packages contradict (see stale_sbom_layers), or
+  - its package is a header-only kernel package (see KERNEL_HEADER_PACKAGES), or
   - a statement in .vex/unused-components.json says the component is present
     but never executed for this service (see vex_match).
 Everything else is KEPT when any clause of RULE holds (see keep_reasons):
@@ -799,6 +800,15 @@ def keep_reasons(vuln, exposure, feeds, now):
     return reasons, overdue
 
 
+# Packages that install only the kernel's userspace header files (paths under
+# /usr/include, no binary, library or module). Scanners attribute every advisory
+# of the `linux` source package to them. The vulnerable code is the kernel the
+# host runs, never anything in the image, so even a KEV or high-EPSS row is
+# noise here; the real control is the host kernel update (automatic reboot into
+# patched kernels). Evidence per name: docs/runbooks/trivy-policy.md.
+KERNEL_HEADER_PACKAGES = {"linux-libc-dev", "linux-headers", "kernel-headers"}
+
+
 def triage(report, target, classes, feeds, vex, deploy, dev, now, current=None, check_image=None):
     exposure, exposure_reasons = image_exposure(target, classes)
     usable, skipped = [], []
@@ -809,7 +819,7 @@ def triage(report, target, classes, feeds, vex, deploy, dev, now, current=None, 
         else:
             usable.append(stmt)
     out = json.loads(json.dumps(report))
-    kept, dropped, applied, vex_rows = [], {"stale-sbom": 0, "vex": 0, "rule": 0}, set(), []
+    kept, dropped, applied, vex_rows = [], {"kernel-headers": 0, "stale-sbom": 0, "vex": 0, "rule": 0}, set(), []
     total = 0
     stale, no_cve = stale_sbom_layers(out), 0
     for result in out.get("Results") or []:
@@ -820,6 +830,9 @@ def triage(report, target, classes, feeds, vex, deploy, dev, now, current=None, 
             no_cve += cve is None
             ident = vuln.get("PkgIdentifier") or {}
             exploited = cve in feeds["kev"] or feeds["epss"].get(cve, 0.0) >= EPSS_THRESHOLD
+            if result.get("Class") == "os-pkgs" and vuln.get("PkgName") in KERNEL_HEADER_PACKAGES:
+                dropped["kernel-headers"] += 1
+                continue
             in_stale = ident.get("BOMRef") and not vuln.get("PkgPath") and (vuln.get("Layer") or {}).get("DiffID") in stale
             if in_stale and result.get("Class") == "lang-pkgs" and not exploited:
                 dropped["stale-sbom"] += 1
