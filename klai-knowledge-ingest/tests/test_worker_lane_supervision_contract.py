@@ -5,6 +5,10 @@ builds the worker through ``App._worker``, none of which is public API. This
 test runs a real Worker on procrastinate's InMemoryConnector, so a bump that
 renames or changes them turns it red instead of leaving /health wrong.
 
+This is the code half of a bump; the schema half is
+tests/test_procrastinate_migrations_applied.py, which turns red while the
+new version ships a SQL migration that no Alembic revision applies.
+
 The production failure it reproduces (22-25 Sep 2026): a side task hit
 PoolTimeout, ``_monitor_side_tasks`` called ``stop()`` and the lane stayed
 dead until the next deploy.

@@ -179,7 +179,8 @@ groups:
           description: |
             The weekly Rollback rehearsal workflow (rollback-rehearsal.yml) writes
             an event:rollback_rehearsal outcome:ok line when a bad image was rolled
-            back and the good one serves again. None reached VictoriaLogs in 8 days.
+            back, the good one serves again, and an already-red round on the
+            canary blocked without touching it. None reached VictoriaLogs in 8 days.
 
             Check, in order:
               1. gh run list --workflow rollback-rehearsal.yml --limit 5

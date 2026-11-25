@@ -38,6 +38,9 @@ on:
       - Build and push klai-knowledge-mcp
       # Images that are not a Python service but still ship
       - Build Klai LibreChat image
+      # Its weekly rebuild goes red when it built OS fixes the pinned image
+      # lacks; this issue is what says the compose pin has to move.
+      - Build Klai presidio-analyzer image
       - Build and push caddy-hetzner
       - Build and push whisper-server
       - Build and push klai-docker-authz
@@ -158,6 +161,8 @@ jobs:
             // exactly as it was before; the failure is still reported.
             const ROLLBACK_LABELS = {
               rolled_back: { name: 'auto-rollback', color: 'fbca04', description: 'Deploy failed and the previous version was put back automatically' },
+              // Auto-rollback rolled back, but skipped a service whose newer version is live.
+              rolled_back_partial: { name: 'auto-rollback', color: 'fbca04', description: 'Deploy failed and the previous version was put back automatically' },
               rollback_failed: { name: 'rollback-failed', color: 'b60205', description: 'Deploy failed and the automatic rollback failed too: a human is needed now' },
               e2e_already_red: { name: 'e2e-already-red', color: 'e99695', description: 'E2E prod-tenant stayed red after an earlier rollback, so Auto-rollback did not roll back the later deploys' },
               not_started: { name: 'deploy-not-started', color: 'c5def5', description: 'The sync refused before any file changed (disk headroom or a snapshot that failed); nothing to roll back' },
@@ -208,9 +213,11 @@ jobs:
                 report.outcome === 'rollback_failed'
                   ? '**Automatic rollback failed. Production may be broken: a human is needed now.**'
                   : report.outcome === 'e2e_already_red'
-                    ? '**E2E was already red, nothing rolled back.** The E2E run after an earlier rollback was red too, and every deploy in this window came more than 15 minutes after it, so they are not blamed. Fix what keeps E2E red (open the red run below); until it is green again, a deploy that breaks a customer path is caught only by its own deploy gates.'
+                    ? '**E2E was already red, nothing rolled back.** The E2E run after an earlier clean rollback was red too, and every deploy since then began to serve after it completed, so they are not blamed. Fix what keeps E2E red (open the red run below); until it is green again, a deploy that breaks a customer path is caught only by its own deploy gates.'
                   : report.outcome === 'not_started'
                     ? '**Not started.** The sync refused before it replaced a single file; the host runs what it ran and the next sync tries again.'
+                    : report.outcome === 'rolled_back_partial'
+                      ? '**Rolled back automatically, with a service skipped.** A newer version of that service is live (see `Skipped`), so the E2E run after this rollback is no proof that E2E is red on its own.'
                     : report.outcome === 'shadow_failed'
                       ? '**Shadow failed.** The new data store image failed on a copy of its data, so the sync stopped before it changed anything; the live store is untouched and a revert PR excludes the version.'
                       : '**Rolled back automatically.** The previous version is serving again; the failing version is still on `main`.',
@@ -225,6 +232,7 @@ jobs:
                 ...(report.outcome === 'e2e_already_red'
                   ? [`- E2E red after the last rollback: \`${flat(report.red_after)}\` (run ${flat(report.red_run)}: ${run.repository.html_url}/actions/runs/${flat(report.red_run)})`]
                   : []),
+                ...(report.skipped ? [`- Skipped: \`${flat(report.skipped)}\``] : []),
                 `- Log on core-01: \`${flat(report.log)}\``,
               );
             }

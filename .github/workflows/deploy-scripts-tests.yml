@@ -198,6 +198,11 @@ jobs:
       - name: e2e-rollback-evidence suite
         run: bash deploy/scripts/tests/e2e-rollback-evidence.test.sh
 
+      # The window end of a round and the name of its post-rollback run: a
+      # clean name after a partial or failed rollback is false evidence.
+      - name: auto-rollback round decisions suite
+        run: bash deploy/scripts/tests/auto-rollback-round.test.sh
+
       # Its data half: a restore that drops the wrong database, or restores past
       # the 30-minute window, loses customer writes.
       - name: datastore rollback suite

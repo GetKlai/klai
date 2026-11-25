@@ -655,6 +655,22 @@
     },
     {
       description:
+        'solid-js (klai-widget): pinned below 2 — the v2 runtime needs a \
+        different toolchain, not a version bump. vite-plugin-solid 2.11.x \
+        (peer solid-js ^1.7.2) is replaced by @solidjs/vite-plugin 3.x, which \
+        needs @solidjs/web and @solidjs/babel-plugin next to solid-js ^2, and \
+        @solidjs/testing-library 0.8.x still declares solid-js ^1 (its 1.0 \
+        line is rc). PR #2466 failed renovate/artifacts for exactly that \
+        (ERESOLVE, babel-preset-solid peer solid-js ^1.9.16) and sat red from \
+        2026-11-20. Lift when the widget is migrated: delete this entry and \
+        its line in scripts/version-drift-holds.txt, whose review-by date \
+        turns the drift check red again if nobody has looked.',
+      matchManagers: ['npm'],
+      matchPackageNames: ['solid-js'],
+      allowedVersions: '<2.0.0',
+    },
+    {
+      description:
         'python (docker base): pinned below 3.14 — spacy 3.8.14 in \
         klai-connector publishes wheels for cp312/cp313 only, so a 3.14 base \
         image cannot install the dependency tree at all. Lift when spacy \
@@ -811,15 +827,6 @@
     // has a ceiling above is refused, because a second allowedVersions rule
     // replaces the first instead of adding to it.
     // ---------------------------------------------------------------------
-    {
-      description:
-        'Rolled back on core-01: Renovate must not propose these exact versions of glitchtip/glitchtip \
-        again; later releases still flow. Renovate never proposes a downgrade, so \
-        this entry can go once deploy/docker-compose.yml runs a newer version.',
-      matchDepNames: ['glitchtip/glitchtip'],
-      // 7.0.0: failed gate compose-up-verification on compose, run https://github.com/GetKlai/klai/actions/runs/43294644746, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
-      allowedVersions: '!/^v?(7\\.0\\.0)$/',
-    },
     // End of the rolled-back versions: scripts/renovate-revert-after-rollback.py inserts above this line.
   ],
 }
