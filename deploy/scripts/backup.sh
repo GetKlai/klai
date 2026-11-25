@@ -1086,8 +1086,16 @@ encrypt_artifacts() {
   # The facts travel with the set they describe.
   [[ ! -s "${BACKUP_DIR}/${FACTS_FILE}" ]] || ARTIFACTS+=("${BACKUP_DIR}/${FACTS_FILE}")
   for artifact in "${ARTIFACTS[@]}"; do
-    age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" "${artifact}" \
-      > "${ENCRYPT_DIR}/$(basename "${artifact}").age" || return 1
+    # age does not compress and rsync -z only compresses in transit, so a SQL
+    # dump sat on the box at full size: 13.5 GB for the main database on
+    # 2026-11-25, 1.0 GB gzipped. The other artifacts are compressed already.
+    if [[ "${artifact}" == *.sql ]]; then
+      gzip -c "${artifact}" | age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" \
+        > "${ENCRYPT_DIR}/$(basename "${artifact}").gz.age" || return 1
+    else
+      age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" "${artifact}" \
+        > "${ENCRYPT_DIR}/$(basename "${artifact}").age" || return 1
+    fi
   done
 
   if [[ -d "${BACKUP_DIR}/research-uploads" ]]; then

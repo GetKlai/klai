@@ -7,13 +7,13 @@ The nightly backup (`deploy/scripts/backup.sh`) leaves a day-set in two places: 
 ## 1. Get a day-set
 
 - Last seven days: use the complete day-set directory in the local backup directory (it holds a `.backup-complete` marker).
-- Older, or when the local disk is gone: fetch the day-set directory from the off-site box. It holds one `.age` file per artifact, plus `backup-facts.txt.age`. The private infrastructure repository describes how to reach the box.
+- Older, or when the local disk is gone: fetch the day-set directory from the off-site box. It holds one `.age` file per artifact, plus `backup-facts.txt.age`; since 2026-11-26 the SQL dumps are gzipped before encryption and named `.sql.gz.age`. The private infrastructure repository describes how to reach the box.
 
-Fetch into an empty directory on a host with room for about three times the set.
+Fetch into an empty directory on a host with room for about three times the set, plus the unpacked database dump, which is about thirteen times its gzipped size (13.5 GB against 1.0 GB on 2026-11-25).
 
 ## 2. Decrypt (off-site sets only)
 
-You need an age identity file for one of the two backup recipients. Keep it outside any repository and off the server; pass it by path and do not copy it into the set directory. `backup-restore.sh` decrypts each artifact itself when it finds `.age` files and `--identity <file>`:
+You need an age identity file for one of the two backup recipients. Keep it outside any repository and off the server; pass it by path and do not copy it into the set directory. `backup-restore.sh` decrypts each artifact itself when it finds `.age` files and `--identity <file>`, and unpacks a gzipped dump:
 
 ```
 backup-restore.sh --identity <identity file> <set directory>
