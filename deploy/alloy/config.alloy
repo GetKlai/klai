@@ -98,6 +98,23 @@ loki.source.file "auto_rollback" {
   forward_to = [loki.process.extract_level.receiver]
 }
 
+// The GPU host's deploy-gpu.sh writes one JSON line per run there; that host
+// runs no Alloy, so core-01's fetch-gpu-deploy-log.sh copies new lines here.
+// Grafana alerts on event:auto_rollback and on a missing healthy heartbeat
+// (deploy/grafana/provisioning/alerting/gpu01-rules.yaml).
+local.file_match "gpu_deploy" {
+  path_targets = [{
+    __path__ = "/opt/klai/logs/gpu-deploy.log",
+    service  = "gpu-deploy",
+    host     = "gpu-01",
+  }]
+}
+
+loki.source.file "gpu_deploy" {
+  targets    = local.file_match.gpu_deploy.targets
+  forward_to = [loki.process.extract_level.receiver]
+}
+
 // ─── Extract log level from JSON ────────────────────────────────────────────
 
 loki.process "extract_level" {

@@ -1,12 +1,13 @@
 name: Build and scan bge-m3-sparse
 
-# deploy/bge-m3-sparse is built on gpu-01 and was never built or scanned in CI,
-# so a base-image or dependency change reached the server unchecked. This
-# workflow builds the image on a pull request that touches it and runs the same
-# STRICT-tier Trivy scan as the other service images.
+# deploy/bge-m3-sparse was never built or scanned in CI, so a base-image or
+# dependency change went unchecked. This workflow builds the image on a pull
+# request that touches it and runs the same STRICT-tier Trivy scan as the
+# other service images.
 #
 # Nothing is pushed: the image is built into the runner's Docker daemon and
-# scanned there, because gpu-01 builds its own copy and nothing pulls this one.
+# scanned there. Production does not run this build; the GPU host's image is
+# managed in the private infrastructure repository.
 # The model weights are downloaded at run time (HF_HOME=/models), not at build
 # time, so the build only installs the CUDA PyTorch wheels (several GB).
 #

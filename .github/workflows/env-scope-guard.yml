@@ -16,7 +16,6 @@ on:
   pull_request:
     paths:
       - 'deploy/docker-compose.yml'
-      - 'deploy/docker-compose.gpu.yml'
       - 'deploy/check-env-file-scope.py'
       - 'deploy/tests/test_check_env_file_scope.py'
       - '.github/workflows/env-scope-guard.yml'
@@ -25,7 +24,6 @@ on:
     branches: [main]
     paths:
       - 'deploy/docker-compose.yml'
-      - 'deploy/docker-compose.gpu.yml'
       - 'deploy/check-env-file-scope.py'
       - 'deploy/tests/test_check_env_file_scope.py'
 
@@ -43,8 +41,4 @@ jobs:
 
       - name: Forbid bare env_file&#58; .env in deploy compose files
         run: |
-          files=(deploy/docker-compose.yml)
-          if [[ -f deploy/docker-compose.gpu.yml ]]; then
-            files+=(deploy/docker-compose.gpu.yml)
-          fi
-          python3 -B deploy/check-env-file-scope.py "${files[@]}"
+          python3 -B deploy/check-env-file-scope.py deploy/docker-compose.yml

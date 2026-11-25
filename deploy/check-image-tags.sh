@@ -32,9 +32,7 @@
 
 set -eu
 
-# The gpu workflow calls this script on gpu-compose changes, so it has to
-# actually read that file.
-FILES="deploy/docker-compose.yml deploy/docker-compose.gpu.yml"
+FILES="deploy/docker-compose.yml"
 FAIL=0
 
 for F in $FILES; do

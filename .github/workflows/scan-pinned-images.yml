@@ -41,7 +41,6 @@ on:
       - 'deploy/docker-compose.yml'
       - 'docker-compose.dev.yml'
       - 'deploy/crawl4ai/**'      # the crawl4ai target is built from here
-      - 'deploy/docker-compose.gpu.yml'
       - 'klai-portal/backend/app/core/config.py'
       - '.github/workflows/scan-pinned-images.yml'
       - 'scripts/triage-image-findings.py'
@@ -86,9 +85,8 @@ jobs:
           mkdir -p inputs
           yq -o=json deploy/docker-compose.yml > inputs/deploy.json
           yq -o=json docker-compose.dev.yml > inputs/dev.json
-          yq -o=json deploy/docker-compose.gpu.yml > inputs/gpu.json
           python3 scripts/triage-image-findings.py targets \
-            --deploy inputs/deploy.json --dev inputs/dev.json --gpu inputs/gpu.json > inputs/targets.json
+            --deploy inputs/deploy.json --dev inputs/dev.json > inputs/targets.json
 
           # Categories this scan job uploaded once and no target uploads now
           # (a renamed key, a removed service). Their alerts never close on
@@ -116,7 +114,6 @@ jobs:
           path: |
             inputs/deploy.json
             inputs/dev.json
-            inputs/gpu.json
             inputs/targets.json
             inputs/stale.json
           retention-days: 30
@@ -205,7 +202,7 @@ jobs:
           python3 scripts/triage-image-findings.py triage \
             --scan "$RUNNER_TEMP/scan.json" \
             --targets inputs/targets.json --key '${{ matrix.target.key }}' \
-            --kev inputs/kev.json --deploy inputs/deploy.json --dev inputs/dev.json --gpu inputs/gpu.json \
+            --kev inputs/kev.json --deploy inputs/deploy.json --dev inputs/dev.json \
             --check-images --out-dir "$RUNNER_TEMP/triage"
           cp "$RUNNER_TEMP/triage/${{ matrix.target.key }}.triaged.json" "$RUNNER_TEMP/upload.json"
 
@@ -268,7 +265,7 @@ jobs:
           status=0
           python3 scripts/triage-image-findings.py report --alerts "$RUNNER_TEMP/alerts.json" \
             --targets inputs/targets.json --kev inputs/kev.json \
-            --deploy inputs/deploy.json --dev inputs/dev.json --gpu inputs/gpu.json \
+            --deploy inputs/deploy.json --dev inputs/dev.json \
             --markdown summary.md || status=$?
           cat summary.md >> "$GITHUB_STEP_SUMMARY"
           exit "$status"

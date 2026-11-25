@@ -141,8 +141,8 @@ sudo bash scripts/harden-docker-user.sh
 `docker-compose.yml` is the source of truth for the services and their image
 versions. The groups below are what it defines; the architecture overview in
 [`docs/architecture/platform.md`](../docs/architecture/platform.md) has the
-full map. GPU-bound inference runs from a second file, `docker-compose.gpu.yml`
-(see the note after the table).
+full map. GPU-bound inference runs on a separate host (see the note after the
+table).
 
 | Group | Services | Purpose |
 |-------|----------|---------|
@@ -157,9 +157,11 @@ full map. GPU-bound inference runs from a second file, `docker-compose.gpu.yml`
 | Observability | **Grafana**, **VictoriaMetrics**, **VictoriaLogs**, **Grafana Alloy**, **cAdvisor**, **GlitchTip** | Dashboards, metrics, logs, collection, error tracking |
 | Applications | **CRM**, **Umami**, **Fider**, **listmonk**, **Vaultwarden**, **Calnode** | Third-party applications the stack also hosts |
 
-Embeddings, the reranker, sparse vectors and speech-to-text run from
-`docker-compose.gpu.yml` on a separate GPU host that the main stack reaches
-over a tunnel. The speech-to-text service there is the Vexa transcription
+Embeddings, the reranker, sparse vectors and speech-to-text run on a separate
+GPU host that the main stack reaches over a tunnel. Its compose file is not in
+this repository: Klai's production copy lives in the private infrastructure
+repository, and a self-hoster points `TEI_URL`, `SPARSE_SIDECAR_URL`,
+`INFINITY_RERANKER_URL` and `WHISPER_SERVER_URL` at their own endpoints. The speech-to-text service there is the Vexa transcription
 service (faster-whisper workers behind a balancer); the `whisper-server`
 reference image is published but is not part of this stack. Ollama is in the
 compose file but no LiteLLM model or fallback uses it.

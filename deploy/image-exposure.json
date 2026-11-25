@@ -4,7 +4,7 @@
     "exposed is DERIVED: every reverse_proxy upstream in route_sources (and the images runtime routes serve) and every port published on all host interfaces.",
     "reachable is DERIVED: a service that shares a compose network with an exposed or content-consuming one, one hop behind it.",
     "content_consumers and internal are what the configuration cannot tell; each needs a reason. Derived classes win over internal.",
-    "Names: a compose service of deploy/docker-compose.yml, '<service>.<VAR>' for an image pinned in an environment value, 'gpu/<service>' for deploy/docker-compose.gpu.yml.",
+    "Names: a compose service of deploy/docker-compose.yml, '<service>.<VAR>' for an image pinned in an environment value.",
     "A scanned service in none of these is treated as exposed and named in the scan summary.",
     "A tracked file that mentions reverse_proxy must be in route_sources or not_route_sources, or the scan stops.",
     "Runbook: docs/runbooks/trivy-policy.md, section 'The code-scanning tab for third-party images'."

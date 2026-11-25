@@ -12,7 +12,7 @@ The compose files are the source of truth for what runs and for which image vers
 |---|---|---|
 | `deploy/docker-compose.yml` (project `klai-core`) | core-01 | The production stack and the self-hosting template (`deploy/docker-compose.yml:1`) |
 | `deploy/docker-compose.override.yml` | core-01 | One override: `retrieval-api` runs under the local tag that CI sets before `compose up` (`deploy/docker-compose.override.yml:1-4`) |
-| `deploy/docker-compose.gpu.yml` | gpu-01 | Embeddings, reranker, sparse vectors and transcription. Public CI only validates it (`.github/workflows/validate-gpu-compose.yml:40-49`) |
+| none in this repository | gpu-01 | Embeddings, reranker, sparse vectors and transcription. The compose file, its image pins and the deploy live in the private infrastructure repository; until 2026-11-24 a copy here (`deploy/docker-compose.gpu.yml`) was validated by CI but never applied, and had drifted from production, so it was removed |
 | `docker-compose.dev.yml` | a developer machine | Local development: postgres, redis, mongodb, meilisearch, litellm |
 
 The per-tenant LibreChat containers are in no compose file: portal-api creates them at provisioning time through the Docker socket proxy chain (`klai-portal/backend/app/services/provisioning/orchestrator.py:5,228-236`). Everything on the core host shares one reverse proxy, Caddy, which terminates TLS for the wildcard domain; "published" below means reachable through a route in `deploy/caddy/Caddyfile`. Services without a route are reachable only from other containers.
@@ -69,10 +69,10 @@ pgvector is in the Postgres image name only; the ingest code does not use it for
 | firecrawl-api (2463) | core-01 | Crawler used by the workspace LibreChat (`klai-portal/backend/app/services/provisioning/generators.py:338-339`) |
 | ollama (690) | core-01 | Runs, but no model alias or fallback in LiteLLM uses it (`deploy/litellm/config.yaml:363-366`) |
 | librechat-getklai (616) | core-01 | The one workspace LibreChat container kept in compose; Klai builds the image from upstream with patches (`deploy/librechat/Dockerfile.klai:23`) |
-| tei, infinity, bge-m3-sparse | gpu-01 | Dense embeddings (BGE-M3), reranker (`bge-reranker-v2-m3`), sparse embeddings (`deploy/docker-compose.gpu.yml:11,37,69`) |
-| transcription-worker-1, transcription-worker-2, transcription-api | gpu-01 | faster-whisper `large-v3-turbo` on CUDA, behind an nginx least-connections balancer with an OpenAI-compatible `/v1/audio/transcriptions` (`deploy/docker-compose.gpu.yml:110,146,181`) |
+| tei, infinity, bge-m3-sparse | gpu-01 | Dense embeddings (BGE-M3), reranker (`bge-reranker-v2-m3`), sparse embeddings; the consumers' side is `klai-retrieval-api/retrieval_api/services/tei.py:31`, `klai-retrieval-api/retrieval_api/services/reranker.py:48` and `deploy/bge-m3-sparse/main.py:67` |
+| transcription-worker-1, transcription-worker-2, transcription-api | gpu-01 | faster-whisper `large-v3-turbo` on CUDA, behind an nginx least-connections balancer with an OpenAI-compatible `/v1/audio/transcriptions` (`klai-scribe/scribe-api/app/services/providers.py:172`) |
 
-Every gpu-01 service binds to loopback and is reached from core-01 over a tunnel (`deploy/docker-compose.gpu.yml:3`). The tunnel and the host itself are operated from the private infrastructure repository. Consumers address the tunnel endpoint through configuration (`klai-retrieval-api/retrieval_api/config.py:15-17`, `klai-scribe/scribe-api/app/core/config.py:40`).
+Every gpu-01 service binds to loopback and is reached from core-01 over a tunnel. The services, the tunnel and the host itself are operated from the private infrastructure repository. Consumers address the tunnel endpoint through configuration (`klai-retrieval-api/retrieval_api/config.py:15-17`, `klai-scribe/scribe-api/app/core/config.py:40`).
 
 ### Identity, meetings, observability, applications, supporting
 
@@ -223,7 +223,7 @@ Anchors: aliases `deploy/litellm/config.yaml:38,76,105,137,268,300,319`; fallbac
 
 **Routing.** The routing strategy is `simple-shuffle` (`deploy/litellm/config.yaml:340`). The callback `custom_router.token_router` re-routes only requests for `klai-primary`: tool-call history or a long last user message goes to `klai-large`, web-search content or a very long context goes to `klai-fast` (`deploy/litellm/custom_router.py:1-15,182-214`). The other callbacks, in order, are `klai_mistral_pool`, `custom_router.token_router`, `klai_pii_observe`, `klai_pii_enforce` and `klai_prompt_cache` (`deploy/litellm/config.yaml:385-400`). PII enforcement applies to every org by default (`deploy/docker-compose.yml:492,519`).
 
-**Self-hosted and external.** Embeddings (dense BGE-M3 on TEI, a sparse sidecar), the reranker (`bge-reranker-v2-m3` on Infinity) and transcription (faster-whisper) run on gpu-01. PII detection runs on core-01. Every generation alias is the external Mistral API (`deploy/litellm/config.yaml:38-300`, `deploy/docker-compose.gpu.yml:11-181`).
+**Self-hosted and external.** Embeddings (dense BGE-M3 on TEI, a sparse sidecar), the reranker (`bge-reranker-v2-m3` on Infinity) and transcription (faster-whisper) run on gpu-01. PII detection runs on core-01. Every generation alias is the external Mistral API (`deploy/litellm/config.yaml:38-300`).
 
 **The privacy principle in configuration.** Data stays in the EU and no model call goes to a provider outside the EU. In configuration that means: the production model list contains Mistral deployments and the self-hosted BGE-M3 and nothing else; no alias has a deployment on another provider's API; LibreChat's own OpenAI, Google and Anthropic endpoints are disabled (`deploy/librechat/librechat.yaml:170-175`); and the tenant LibreChat's only model endpoint is "Klai AI", which points at the portal's partner endpoint and not at a provider (`deploy/librechat/librechat.yaml:176-195`). The local development config `dev/litellm-config.yaml:8-27` uses other providers' models and never runs in production. The principle applies to the model operator, not to hosting: an EU provider's API counts, and full self-hosting remains an option for when its cost makes sense (that decision is in [evolution.md](evolution.md)).
 

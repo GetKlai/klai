@@ -26,7 +26,6 @@ from pathlib import Path
 DEPLOY_COMPOSE = [
     "deploy/docker-compose.yml",
     "deploy/docker-compose.override.yml",
-    "deploy/docker-compose.gpu.yml",
 ]
 DEV_COMPOSE = ["docker-compose.dev.yml"]
 

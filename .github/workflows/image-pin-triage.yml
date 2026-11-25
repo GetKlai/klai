@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "$BASE_REF"
           mkdir -p base/ctx head
-          for f in deploy/docker-compose.yml docker-compose.dev.yml deploy/docker-compose.gpu.yml \
+          for f in deploy/docker-compose.yml docker-compose.dev.yml \
                    klai-portal/backend/app/core/config.py; do
             name=$(basename "$f")
             git show "FETCH_HEAD:$f" > "base/$name"
@@ -84,9 +84,8 @@ jobs:
             [ "$side" = head ] || ctx=base/ctx
             yq -o=json "$side/docker-compose.yml" > "$side/deploy.json"
             yq -o=json "$side/docker-compose.dev.yml" > "$side/dev.json"
-            yq -o=json "$side/docker-compose.gpu.yml" > "$side/gpu.json"
             python3 scripts/triage-image-findings.py targets --deploy "$side/deploy.json" --dev "$side/dev.json" \
-              --gpu "$side/gpu.json" --settings "$side/config.py" --context-root "$ctx" > "$side/targets.json"
+              --settings "$side/config.py" --context-root "$ctx" > "$side/targets.json"
           done
           python3 scripts/triage-image-findings.py changed --base base/targets.json --head head/targets.json > changed.json
           echo "Changed image pins: $(jq '.head | length' changed.json) (the pull request's diff names them)."
@@ -136,7 +135,7 @@ jobs:
               fi
               python3 scripts/triage-image-findings.py triage --scan "$RUNNER_TEMP/scans/$side/$key.json" \
                 --targets "$side/targets.json" --key "$key" --kev "$RUNNER_TEMP/kev.json" \
-                --deploy "$side/deploy.json" --dev "$side/dev.json" --gpu "$side/gpu.json" \
+                --deploy "$side/deploy.json" --dev "$side/dev.json" \
                 --check-images --out-dir "$RUNNER_TEMP/out-$side"
             done
           done

@@ -1034,16 +1034,17 @@ Defined in `deploy/litellm/config.yaml`:
 
 ### 6.2 Services called directly
 
-Defined in `deploy/docker-compose.gpu.yml` (the GPU host); the core-01 services
+Run on the GPU host, whose compose file lives in the private infrastructure
+repository; the core-01 services
 reach them at the docker bridge gateway address given by `TEI_URL` and
 `SPARSE_SIDECAR_URL` (`deploy/docker-compose.yml:2208-2209`).
 
 | Role | Compose service | Image or model | Port | Used by |
 |---|---|---|---|---|
-| Dense embeddings | `tei` (`deploy/docker-compose.gpu.yml:11`) | TEI 1.9, BAAI/bge-m3 | 7997 | ingest, retrieval, LiteLLM `klai-bge-m3`, the graph embedder |
-| Sparse embeddings | `bge-m3-sparse` (`:69`, built from `deploy/bge-m3-sparse`) | BGE-M3 lexical weights through FlagEmbedding, `POST /embed_sparse_batch` (`deploy/bge-m3-sparse/main.py:67`) | 8001 | ingest, retrieval (query side) |
-| Reranker | `infinity` (`:37`) | infinity 0.0.77, BAAI/bge-reranker-v2-m3 | 7998 | retrieval-api; ingest does not call it |
-| Transcription | `transcription-worker-1`, `-2` (`:110,146`) behind an nginx `transcription-api` (`:181`) | vexaai/transcription-service 0.10.6, large-v3-turbo | 8000 | scribe-api |
+| Dense embeddings | `tei` | TEI, BAAI/bge-m3 | 7997 | ingest, retrieval, LiteLLM `klai-bge-m3`, the graph embedder |
+| Sparse embeddings | `bge-m3-sparse` (service code in `deploy/bge-m3-sparse`) | BGE-M3 lexical weights through FlagEmbedding, `POST /embed_sparse_batch` (`deploy/bge-m3-sparse/main.py:67`) | 8001 | ingest, retrieval (query side) |
+| Reranker | `infinity` | Infinity, BAAI/bge-reranker-v2-m3 | 7998 | retrieval-api; ingest does not call it |
+| Transcription | `transcription-worker-1`, `-2` behind an nginx `transcription-api` | Vexa transcription-service, large-v3-turbo | 8000 | scribe-api |
 
 On core-01 (`deploy/docker-compose.yml`): `docling-serve` v1.38.2 (`:1577`,
 internal network only, single-use results off, removal delay 86400 s),

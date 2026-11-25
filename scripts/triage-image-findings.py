@@ -998,7 +998,7 @@ def introduced_kev(base_summaries, head_summaries, main_ids=None):
 # --- CLI --------------------------------------------------------------------
 
 
-STACK_FILES = ("deploy/docker-compose.yml", "docker-compose.dev.yml", "deploy/docker-compose.gpu.yml")
+STACK_FILES = ("deploy/docker-compose.yml", "docker-compose.dev.yml")
 SETTINGS_FILE = "klai-portal/backend/app/core/config.py"
 
 

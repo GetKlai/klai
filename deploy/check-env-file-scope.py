@@ -171,7 +171,6 @@ def find_violations(path: Path) -> list[int]:
 def main(argv: list[str]) -> int:
     paths = [Path(value) for value in argv] or [
         Path("deploy/docker-compose.yml"),
-        Path("deploy/docker-compose.gpu.yml"),
     ]
     failed = False
 
