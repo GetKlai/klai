@@ -136,7 +136,7 @@ run_one() {
 in_set() { (cd "$set_dir" && find . -name "$1*" | sed 's|^\./||' | sort | paste -sd' ' -); }
 shipped() { grep -v '^$' "$case_dir/fake/shipped" | paste -sd' ' - || true; }
 mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode)[-3:])' "$1"; }
-volume() { (cd "$case_dir/fake/vol/klai-core-calnode-1/data" && ls | paste -sd' ' -); }
+volume() { (cd "$case_dir/fake/vol/klai-core-calnode-1/data" && find . -mindepth 1 | sed 's|^\./||' | sort | paste -sd' ' -); }
 
 echo "backup.sh service volumes"
 

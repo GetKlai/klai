@@ -43,6 +43,8 @@ if [[ "$all" == *".Config.Env"* && "$all" == *"klai-core-qdrant-1"* ]]; then
     echo 'QDRANT__SERVICE__API_KEY=test-only'; exit 0
 fi
 if [[ "$all" == *".State.Running"* ]]; then echo 'true'; exit 0; fi
+# The image the SQLite copies run in is read off the portal-api container.
+if [[ "$all" == *"{{.Image}}"* ]]; then echo 'sha256:test-only'; exit 0; fi
 # backup.sh waits for each BGSAVE to finish: LASTSAVE must move, and the save
 # must report ok, or the step fails before retention can run.
 if [[ "$all" == *" LASTSAVE" ]]; then date +%s%N; exit 0; fi
@@ -78,8 +80,9 @@ if [[ "$1" == "run" ]]; then
     if [[ -n "${dir:-}" && "$all" =~ /(backup|out)/([A-Za-z0-9._-]+) ]]; then
         echo stub >"$dir/${BASH_REMATCH[2]}"
     fi
-    # The Qdrant API calls answer in JSON.
+    # The Qdrant API calls answer in JSON; the SQLite copy is streamed on stdout.
     case "$all" in
+        *"--entrypoint python3"*) echo stub ;;
         *curlimages/curl*" -o "*) ;;
         *"/points/count"*) echo '{"result":{"count":3}}' ;;
         *"-X POST"*) echo '{"result":{"name":"snap-1"}}' ;;
