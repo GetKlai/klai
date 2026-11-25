@@ -22,11 +22,12 @@ SCRIPT = ROOT / "scripts" / "require-image-scans.py"
 RETRIEVAL = "klai-retrieval-api/Dockerfile"
 
 
-def run(changed, needs):
+def run(changed, needs, pins_selected=""):
     env = {
         **os.environ,
         "CHANGED_DOCKERFILES": json.dumps(changed) if changed is not None else "",
         "NEEDS_JSON": json.dumps(needs),
+        "IMAGE_PINS_SELECTED": pins_selected,
     }
     done = subprocess.run([sys.executable, "-I", str(SCRIPT)], env=env, capture_output=True, text=True, check=False)
     return done.returncode, done.stdout
@@ -78,6 +79,28 @@ class RequireImageScans(unittest.TestCase):
         code, out = run(["deploy/crawl4ai/Dockerfile"], {"changes": job("success")})
         self.assertEqual(code, 0)
         self.assertIn("deploy/crawl4ai/Dockerfile", out)
+
+
+class RequirePinTriage(unittest.TestCase):
+    """A pull request that selects image-pin-triage must have run it to the end."""
+
+    def pin(self, result, checked=None):
+        outputs = {} if checked is None else {"checked": checked}
+        return {"changes": job("success"), "image-pin-triage": {"result": result, "outputs": outputs}}
+
+    def test_selected_and_checked_passes(self):
+        self.assertEqual(run([], self.pin("success", "true"), "true")[0], 0)
+
+    def test_selected_and_skipped_fails(self):
+        code, out = run([], self.pin("skipped"), "true")
+        self.assertEqual(code, 1)
+        self.assertIn("image-pin-triage", out)
+
+    def test_selected_and_passed_without_exporting_checked_fails(self):
+        self.assertEqual(run([], self.pin("success"), "true")[0], 1)
+
+    def test_not_selected_and_skipped_passes(self):
+        self.assertEqual(run([], self.pin("skipped"), "false")[0], 0)
 
 
 class MappingCoversTheRepository(unittest.TestCase):

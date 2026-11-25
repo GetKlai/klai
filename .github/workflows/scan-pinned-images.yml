@@ -1,14 +1,38 @@
 name: Scan pinned external images
 
-# Weekly CVE scan of every external Docker image pinned in our compose files.
-# Complements Trivy scans during our own image builds by covering the 25+
-# external images (redis, mongo, grafana, zitadel, …) that we don't build
-# ourselves. Results go to the Security tab; no PR gate — this is a
-# notification surface, not a blocker.
+# Daily CVE scan of every external image the stack can start: `image:` keys in
+# the three compose files, images pinned in environment values (the meeting
+# bot, the tenant chat image and its per-tenant overrides) and the portal's
+# image setting defaults. Complements Trivy scans during our own image builds.
+#
+# Daily, not weekly: a vulnerability that enters the CISA KEV catalog shows up
+# here within a day instead of up to seven. A full run took 18 runner minutes
+# and 5 minutes wall clock on 2026-11-24 (39 jobs, the longest 1.7 minutes).
+#
+# The code-scanning tab is the action list, not the scanner's raw output. On
+# 2026-11-24 it held 1,275 open alerts and nobody acted on any of them, so each
+# image's result now goes through scripts/triage-image-findings.py before it is
+# uploaded: findings from a stale SBOM inside the image and components covered
+# by .vex/unused-components.json are dropped, and of the rest only what is in
+# the CISA KEV catalog, has EPSS >= 0.1, is critical on an exposed or
+# content-consuming image, or is an overdue fixable critical is uploaded.
+#
+# This repository is public, and so are its logs, step summaries and
+# artifacts. Nothing in them lets a reader tell a kept finding or which image
+# has one: no vulnerability id, package version or per-image count. The detail
+# exists only in the code-scanning tab. Raw scan results, triage output and
+# OpenVEX documents stay on the runner, and the report job counts what the tab
+# holds through the API, so no per-image result travels as an artifact.
+#
+# Not a pull-request gate: pushes are never blocked. The run ends red with a
+# generic message when a KEV finding remains on an image that runs in
+# production, which ci-failure-notice.yml reports as its usual issue;
+# image-pin-triage.yml is the gate for pull requests that change a pin.
+# Runbook: docs/runbooks/trivy-policy.md.
 
 on:
   schedule:
-    - cron: '0 7 * * 1'  # Monday 07:00 CET — runs AFTER Renovate (05:00)
+    - cron: '0 7 * * *'  # daily 07:00 UTC
   workflow_dispatch:      # Manual trigger for ad-hoc scans
   push:
     branches: [main]
@@ -17,7 +41,13 @@ on:
       - 'deploy/docker-compose.yml'
       - 'docker-compose.dev.yml'
       - 'deploy/crawl4ai/**'      # the crawl4ai target is built from here
+      - 'deploy/docker-compose.gpu.yml'
+      - 'klai-portal/backend/app/core/config.py'
       - '.github/workflows/scan-pinned-images.yml'
+      - 'scripts/triage-image-findings.py'
+      - 'scripts/trivy-scan-image.sh'
+      - 'deploy/image-exposure.json'
+      - '.vex/**'
 
 permissions:
   contents: read
@@ -33,6 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.parse.outputs.targets }}
+      uploads: ${{ steps.parse.outputs.uploads }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -41,160 +72,203 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Extract external images
+      - name: Extract external images and stale categories
         id: parse
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Extract every external image target from every compose file, then
-          # filter out internal + local builds we scan via per-service
-          # workflows.
-          #
-          # Keep a stable service-derived key for the SARIF category instead
-          # of using the image tag. GitHub correlates code-scanning alerts by
-          # tool/category; if the category contains the old image tag, every
-          # version bump leaves stale alerts behind under the previous
-          # category. We still group exact duplicate images so shared images
-          # like glitchtip are scanned once per run.
-          #
-          # Excluded patterns (with rationale):
-          #   ghcr.io/getklai/* by tag         — our own CI-built images; scanned per service.
-          #                                      Digest-pinned ghcr.io/getklai images
-          #                                      (presidio-analyzer, librechat) ARE scanned
-          #                                      here: their build workflows run no Trivy,
-          #                                      so this was the only scan and they had
-          #                                      been skipped since they moved to GHCR.
-          #   */klai                           — legacy on-server local builds (vexa-*:klai)
-          #   */local                          — legacy on-server local builds (retrieval-api:local)
-          #   *:*-local-YYMMDD-HHMM            — current convention for locally-built tags
-          #                                      per .claude/rules/klai/infra/container-hygiene.md
-          #                                      "Verify image pullable before pinning a tag" rule
-          #                                      (e.g. vexaai/transcription-service:0.10.6-local-260503-0858).
-          #                                      SKIP-tier of SPEC-CI-TRIVY-POLICY-001 REQ-4: these
-          #                                      images do not exist on Docker Hub so a `docker
-          #                                      manifest inspect` always 404s.
-          # crawl4ai is built on core-01 and never pushed, so it cannot be
-          # pulled; the scan job builds deploy/crawl4ai and scans that. Until
-          # 2026-11 this scanned the upstream FROM image instead, which also
-          # counted the build checkout our Dockerfile deletes: 302 of its 308
-          # findings came from a stale SBOM inside it.
-          TARGETS=$(
-            {
-              yq -o=json eval '.services | to_entries | map({"source": "deploy", "service": .key, "image": .value.image})' deploy/docker-compose.yml
-              yq -o=json eval '.services | to_entries | map({"source": "dev", "service": .key, "image": .value.image})' docker-compose.dev.yml
-            } \
-              | jq -sc '
-                  add
-                  | map(select(.image != null and .image != "~"))
-                  | map(if (.image | test("^ghcr\\.io/getklai/crawl4ai:")) then .image = "klai-scan/crawl4ai:build" | .build = "deploy/crawl4ai" else . end)
-                  | map(select(.image | test("^(ghcr\\.io/getklai/[^@]+$|[^:]+:klai$|[^:]+:local$|[^:]+:.*-local-[0-9]{6}-[0-9]{4}$)") | not))
-                  | sort_by(.image)
-                  | group_by(.image)
-                  | map({
-                      key: (map(.source + "_" + .service) | sort | join("__")),
-                      services: (map(.source + "/" + .service) | sort),
-                      image: .[0].image,
-                      build: (.[0].build // "")
-                    })
-                  | sort_by(.key)
-                '
-          )
+          set -euo pipefail
+          # Targets: every external image in both compose files, grouped by
+          # image, with a service-derived key and category (rules and their
+          # reasons in scripts/triage-image-findings.py `targets`). GitHub
+          # correlates alerts by tool and category, so the category must not
+          # contain the image tag.
+          mkdir -p inputs
+          yq -o=json deploy/docker-compose.yml > inputs/deploy.json
+          yq -o=json docker-compose.dev.yml > inputs/dev.json
+          yq -o=json deploy/docker-compose.gpu.yml > inputs/gpu.json
+          python3 scripts/triage-image-findings.py targets \
+            --deploy inputs/deploy.json --dev inputs/dev.json --gpu inputs/gpu.json > inputs/targets.json
+
+          # Categories this scan job uploaded once and no target uploads now
+          # (a renamed key, a removed service). Their alerts never close on
+          # their own; the scan job uploads an empty result for each, which is
+          # GitHub's "re-run the out-of-date configuration" with nothing found.
+          # The alert list stays on this runner; only category names go on.
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&tool_name=Trivy&ref=refs/heads/main&per_page=100" \
+            > "$RUNNER_TEMP/alerts.json"
+          python3 scripts/triage-image-findings.py stale \
+            --alerts "$RUNNER_TEMP/alerts.json" --targets inputs/targets.json > inputs/stale.json
 
           echo "Found targets:"
-          echo "$TARGETS" | jq -r '.[] | "\(.key): \(.image)"'
-          echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
+          jq -r '.[] | "\(.key): \(.image)"' inputs/targets.json
+          echo "Stale categories to close:"
+          jq -r '.[].category' inputs/stale.json
+          echo "targets=$(jq -c 'map(. + {stale: false})' inputs/targets.json)" >> "$GITHUB_OUTPUT"
+          echo "uploads=$(jq -c --slurpfile stale inputs/stale.json 'map(. + {stale: false}) + $stale[0]' inputs/targets.json)" >> "$GITHUB_OUTPUT"
 
+      # Compose (already public in the repository), the target list and the
+      # stale category names: architecture, no findings.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: triage-inputs
+          path: |
+            inputs/deploy.json
+            inputs/dev.json
+            inputs/gpu.json
+            inputs/targets.json
+            inputs/stale.json
+          retention-days: 30
+
+  kev:
+    name: Fetch the KEV catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # One download of the official feed per run, shared with every scan
+      # job. It is CISA's public catalog, so the artifact reveals nothing
+      # about our images. Fails after three attempts instead of reporting
+      # "nothing exploited"; the red run then reaches the failure notice.
+      - name: Fetch
+        run: python3 scripts/triage-image-findings.py kev --out kev.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: kev
+          path: kev.json
+          retention-days: 2
+
+  # Keeps the job id `scan` and the matrix variable `target`: the upload's
+  # analysis key is `<workflow>:<job id>`, and an alert belongs to one tool,
+  # analysis key and category. A new id would orphan every open alert.
+  # Scan, triage and upload happen in one job so the detail never has to
+  # travel between jobs as an artifact.
   scan:
     name: Scan ${{ matrix.target.key }}
-    needs: enumerate
+    needs: [enumerate, kev]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       matrix:
-        target: ${{ fromJSON(needs.enumerate.outputs.targets) }}
+        target: ${{ fromJSON(needs.enumerate.outputs.uploads) }}
       fail-fast: false  # One bad image shouldn't skip the rest
       max-parallel: 6   # Avoid hammering Trivy DB + Docker Hub with 30+ pulls at once
     steps:
-      # Checkout is required so trivy-action can find .trivy.yaml
-      # (`trivy-config:` resolves relative to repo root).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: Sanitize image name for artefact
-        id: safe
-        run: |
-          # SARIF uploads need a unique category per image and a filename
-          # that doesn't contain slashes or colons.
-          SAFE=$(printf '%s' '${{ matrix.target.key }}' | tr -c 'A-Za-z0-9_.-' '_')
-          echo "name=$SAFE" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: triage-inputs
+          path: inputs
 
-      # WARN-tier scan per SPEC-CI-TRIVY-POLICY-001 REQ-3.
-      # `--exit-code 0` keeps this warn-only — Renovate handles upgrade
-      # pressure on the external base-images we pin in compose.
-      #
-      # Direct CLI invocation bypasses an aquasecurity/trivy-action bug
-      # (0.35.0/0.36.0): with `format: sarif` the `severity` filter is
-      # honoured for the SARIF body but NOT for the exit-code. Keeping
-      # the invocation consistent with STRICT-tier scans simplifies
-      # operations.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: kev
+          path: inputs
+
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
         with:
           version: v0.76.2
           cache: true
 
+      # The crawler is built on the host and never pushed, so this job builds
+      # deploy/crawl4ai and scans that build from the local Docker daemon.
+      # Scanning the upstream FROM image instead counted the build checkout
+      # our Dockerfile deletes: 302 of its 308 findings came from a stale
+      # SBOM inside it.
       - name: Build the image we deploy
-        if: matrix.target.build != ''
+        if: ${{ !matrix.target.stale && matrix.target.build != '' }}
         env:
           IMAGE: ${{ matrix.target.image }}
           CONTEXT: ${{ matrix.target.build }}
         run: docker build -t "$IMAGE" "$CONTEXT"
 
+      # WARN tier of SPEC-CI-TRIVY-POLICY-001: never fails on findings. A
+      # failed scan fails the job before any upload, so that image's alerts
+      # stay as they were instead of closing.
       - name: Trivy scan
+        if: ${{ !matrix.target.stale }}
         env:
+          IMAGE: ${{ matrix.target.image }}
           IMAGE_SRC: ${{ matrix.target.build != '' && 'docker' || 'remote' }}
+        run: sh scripts/trivy-scan-image.sh "$IMAGE" "$RUNNER_TEMP/scan.json" "$IMAGE_SRC"
+
+      # Prints nothing about the findings; EPSS is fetched here in batches
+      # for this image's ids. --check-images re-reads the evidence of a VEX
+      # statement from the image when its pin moved since verification.
+      - name: Triage
+        if: ${{ !matrix.target.stale }}
         run: |
-          for attempt in 1 2; do
-            if trivy image \
-              --format sarif \
-              --output trivy-${{ steps.safe.outputs.name }}.sarif \
-              --severity CRITICAL,HIGH \
-              --ignore-unfixed \
-              --scanners vuln \
-              --image-src "$IMAGE_SRC" \
-              --timeout 6m \
-              --skip-version-check \
-              --exit-code 0 \
-              ${{ matrix.target.image }}; then
-              exit 0
-            fi
+          python3 scripts/triage-image-findings.py triage \
+            --scan "$RUNNER_TEMP/scan.json" \
+            --targets inputs/targets.json --key '${{ matrix.target.key }}' \
+            --kev inputs/kev.json --deploy inputs/deploy.json --dev inputs/dev.json --gpu inputs/gpu.json \
+            --check-images --out-dir "$RUNNER_TEMP/triage"
+          cp "$RUNNER_TEMP/triage/${{ matrix.target.key }}.triaged.json" "$RUNNER_TEMP/upload.json"
 
-            if [ "$attempt" -eq 2 ]; then
-              exit 1
-            fi
+      - name: Empty result for a stale category
+        if: ${{ matrix.target.stale }}
+        run: |
+          printf '{"SchemaVersion": 2, "ArtifactName": "%s", "ArtifactType": "container_image", "Results": []}\n' \
+            '${{ matrix.target.category }}' > "$RUNNER_TEMP/upload.json"
 
-            echo "Trivy scan failed on attempt $attempt; retrying after 30s..."
-            sleep 30
-          done
+      - name: Convert to SARIF
+        run: trivy convert --format sarif --output "$RUNNER_TEMP/upload.sarif" "$RUNNER_TEMP/upload.json"
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
-        if: always() && hashFiles(format('trivy-{0}.sarif', steps.safe.outputs.name)) != ''
         with:
-          sarif_file: 'trivy-${{ steps.safe.outputs.name }}.sarif'
-          category: 'pinned-service-${{ steps.safe.outputs.name }}'
+          sarif_file: ${{ runner.temp }}/upload.sarif
+          category: ${{ matrix.target.category }}
+
 
   report:
     name: Report
-    needs: [enumerate, scan]
-    if: always()
+    needs: [enumerate, kev, scan]
+    if: always() && needs.enumerate.result == 'success' && needs.kev.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: triage-inputs
+          path: inputs
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: kev
+          path: inputs
+
+      # Counts what the code-scanning tab now holds for these targets, read
+      # through the API after every upload finished processing. Whole-run
+      # counts only. Fails the run with a generic message when a KEV finding
+      # remains on an image that runs in production; ci-failure-notice.yml
+      # then opens or updates its usual issue for a failed workflow.
       - name: Summarise
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPLOADS: ${{ needs.enumerate.outputs.uploads }}
         run: |
-          echo "## Scan summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Scanned $(echo '${{ needs.enumerate.outputs.targets }}' | jq 'length') pinned external image targets." >> "$GITHUB_STEP_SUMMARY"
-          echo "Individual findings are in the [Security tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning)." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Targets scanned" >> "$GITHUB_STEP_SUMMARY"
-          echo '${{ needs.enumerate.outputs.targets }}' \
-            | jq -r '.[] | (.services | join(", ")) as $services | "- `\($services)` -> `\(.image)`"' \
-            >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/code-scanning/alerts?state=open&tool_name=Trivy&ref=refs/heads/main&per_page=100" \
+            > "$RUNNER_TEMP/alerts.json"
+          {
+            echo "## Scan summary"
+            echo ""
+            echo "Kept findings are on the [code-scanning tab](${{ github.server_url }}/${{ github.repository }}/security/code-scanning); nothing here names one or the image it is on."
+            echo ""
+            echo "Stale categories closed with an empty result: $(jq '[.[] | select(.stale)] | length' <<<"$UPLOADS")"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          python3 scripts/triage-image-findings.py report --alerts "$RUNNER_TEMP/alerts.json" \
+            --targets inputs/targets.json --kev inputs/kev.json \
+            --deploy inputs/deploy.json --dev inputs/dev.json --gpu inputs/gpu.json \
+            --markdown summary.md || status=$?
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

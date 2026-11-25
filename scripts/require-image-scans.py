@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Fail the required `quality` check when a changed Dockerfile was not scanned.
+"""Fail the required `quality` check when a changed Dockerfile was not scanned,
+or a changed image pin was not triaged (image-pin-triage.yml).
 
 Inputs (environment):
   CHANGED_DOCKERFILES  JSON list of Dockerfiles changed by the pull request
                        (paths-filter `dockerfiles_files`; empty means none).
+  IMAGE_PINS_SELECTED  "true" when paths-filter selected `image_pins`.
   NEEDS_JSON           toJSON(needs) of the `quality` job.
 
 Each service image has a job in quality.yml that calls the service workflow.
@@ -79,6 +81,23 @@ def verdict(changed: list[str], needs: dict) -> list[str]:
     return errors
 
 
+def pin_triage_verdict(selected: bool, needs: dict) -> list[str]:
+    """A pull request that changes an image pin must have run image-pin-triage.yml.
+
+    Same reasoning as for Dockerfiles: `skipped` passes the aggregate, so a
+    selected triage that did not export `checked == "true"` must fail here.
+    """
+    if not selected:
+        return []
+    data = needs.get("image-pin-triage") or {}
+    if data.get("result") != "success" or data.get("outputs", {}).get("checked") != "true":
+        return [
+            f"an image pin or its triage inputs changed but the `image-pin-triage` job finished "
+            f"{data.get('result')} without checking the changed pins"
+        ]
+    return []
+
+
 def main() -> int:
     raw = os.environ.get("CHANGED_DOCKERFILES", "").strip()
     # An empty value means paths-filter listed nothing. If the `changes` job
@@ -86,6 +105,7 @@ def main() -> int:
     changed = json.loads(raw) if raw else []
     needs = json.loads(os.environ["NEEDS_JSON"])
     errors = verdict(changed, needs)
+    errors += pin_triage_verdict(os.environ.get("IMAGE_PINS_SELECTED") == "true", needs)
     for message in errors:
         print(f"::error::{message}")
     if not changed:
