@@ -42,9 +42,16 @@ SYNTHETIC_MARKER='KLAI_TENANT_PURPOSE=synthetic'
 
 die() { echo "chat-image-rollout-host: $*" >&2; exit 1; }
 
+# The image comes from each container's config, not from `docker ps`: on the
+# containerd image store (Docker 29 on core-01) ps prints the short image id
+# for a container created from a digest reference, and the first rollout run
+# refused the whole fleet on it (2026-11-25).
 images() {
-  "$DOCKER" ps -a --filter label=klai.managed_by=portal-api-provisioning --filter label=klai.kind=librechat \
-    --format '{{.Label "klai.tenant_slug"}} {{.Image}}'
+  local ids
+  ids="$("$DOCKER" ps -aq --filter label=klai.managed_by=portal-api-provisioning --filter label=klai.kind=librechat)"
+  [[ -z "$ids" ]] && return 0
+  # shellcheck disable=SC2086 # one container id per word
+  "$DOCKER" inspect --format '{{index .Config.Labels "klai.tenant_slug"}} {{.Config.Image}}' $ids
 }
 
 write_state() {
