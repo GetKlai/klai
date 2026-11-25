@@ -133,6 +133,7 @@ jobs:
           # belong here too — the second one covers the window shrinking to 7.
           bash deploy/scripts/tests/backup-retention.test.sh
           bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
+          bash deploy/scripts/tests/backup-offsite-retention.test.sh
           bash deploy/scripts/tests/backup-bgsave-wait.test.sh
           bash deploy/scripts/tests/backup-single-run.test.sh
           # backup-restore.sh is installed with the other scripts; its test

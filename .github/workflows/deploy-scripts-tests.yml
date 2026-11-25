@@ -256,6 +256,11 @@ jobs:
       - name: backup retention partial-set suite
         run: bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
 
+      # The off-site box keeps 30 day-sets and 12 monthly ones; a wrong rule
+      # here removes backups nobody can bring back.
+      - name: backup off-site retention suite
+        run: bash deploy/scripts/tests/backup-offsite-retention.test.sh
+
       # A Redis-protocol dump is copied only after its BGSAVE has finished.
       - name: backup BGSAVE wait suite
         run: bash deploy/scripts/tests/backup-bgsave-wait.test.sh

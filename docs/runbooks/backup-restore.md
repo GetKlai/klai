@@ -2,7 +2,7 @@
 
 > Server paths are relative to the deploy directory of the host named in the step (core-01 or public-01). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands). The private infrastructure repository holds the host, the credentials and where the off-site copy lives.
 
-The nightly backup (`deploy/scripts/backup.sh`) leaves a day-set in two places: the newest sets unencrypted in the local backup directory, and every set encrypted with `age` on the off-site box. `deploy/scripts/backup-restore.sh` restores a set into throwaway containers and volumes and checks each artifact against a fact. It never writes to a live volume or database: putting data back into production is a decision this runbook leaves to you (step 5).
+The nightly backup (`deploy/scripts/backup.sh`) leaves a day-set in two places: the newest sets unencrypted in the local backup directory, and encrypted with `age` on the off-site box, which keeps the newest 30 complete sets and before those the first complete set of each of the 12 most recent months. `deploy/scripts/backup-restore.sh` restores a set into throwaway containers and volumes and checks each artifact against a fact. It never writes to a live volume or database: putting data back into production is a decision this runbook leaves to you (step 5).
 
 ## 1. Get a day-set
 

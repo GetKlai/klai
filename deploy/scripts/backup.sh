@@ -35,8 +35,7 @@ readonly TOTAL_STEPS=26
 # It buys nothing for durability. /opt/klai/backups sits on the same /dev/md2
 # as the data it backs up, so any failure that costs us the databases costs us
 # these copies in the same moment. The retention that answers for durability is
-# the Storage Box, which holds every day-set since 2026-03-27 and is pruned by
-# nobody.
+# the Storage Box, under the rule at OFFSITE_DAILY_SETS below.
 #
 # This was 30 between 2026-03-27 and 2026-09-18, raised at the time for NEN 7510.
 # The offsite copy satisfies that retention on its own and satisfies it better,
@@ -46,6 +45,27 @@ readonly TOTAL_STEPS=26
 # 2026-09-18. Seven days keeps "something broke and we noticed late" a local
 # restore, and hands the rest to the Storage Box.
 readonly LOCAL_RETENTION_DAYS=7
+# What stays on the Storage Box: the newest 30 day-sets, and before those the
+# first set of each of the 12 most recent months, which reaches about thirteen
+# months back. Sets are counted rather than dated against the clock, and only
+# complete ones count, so neither a stretch without backups nor a run of failed
+# nights ages the good sets out. A failed night still uploads what it has, for
+# the same reason local retention counts markers instead of directories.
+#
+# Nothing was removed between 2026-03-27 and 2026-11-25. A day-set grew from
+# 2.6 GB in July to 16 GB in November, and the 1 TB box stood at 977 GB with
+# 236 sets, three nights short of refusing the upload. Under this rule the same
+# sets take about 386 GB. No contract or standard sets the period: the owner
+# chose it on 2026-11-25, and a year is the usual ceiling because data a customer
+# deleted lives on in these sets until the last set holding it goes.
+readonly OFFSITE_DAILY_SETS=30
+readonly OFFSITE_MONTHLY_SETS=12
+readonly OFFSITE_ROOT="backups/core-01"
+# Complete sets carry COMPLETE_MARKER on the box from this date on. Nothing
+# recorded which earlier sets were complete, so those all count as complete;
+# the backup log shows none of the 248 nights before it ending with a failed
+# step.
+readonly OFFSITE_MARKED_SINCE="2026-11-26"
 readonly COMPLETE_MARKER=".backup-complete"
 # What a restore has to reproduce, one line per fact, written while the set is
 # made and encrypted with it. backup-restore.sh compares a restore against it;
@@ -1086,7 +1106,7 @@ upload_encrypted_artifacts() {
     return 0
   fi
 
-  remote_path="backups/core-01/${BACKUP_DATE}"
+  remote_path="${OFFSITE_ROOT}/${BACKUP_DATE}"
   rsync \
     -e "ssh -p 23 -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30" \
     -az --mkpath --stats \
@@ -1135,6 +1155,67 @@ local_retention() {
     | sort | awk -v cut="${oldest_kept}" '$0 < cut' | xargs -r rm -rf
   remaining="$(find "${BACKUP_ROOT}/" -maxdepth 1 -type d -name '20*' | wc -l)"
   log "Local backups retained: ${remaining}"
+}
+
+storagebox_ssh() {
+  ssh -p 23 -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 \
+    "${STORAGEBOX_USER}@${STORAGEBOX_HOST}" "$1"
+}
+
+# offsite_sets_to_delete <marked sets, space-separated>: reads the names under
+# OFFSITE_ROOT on stdin and prints the day-sets that fall outside the retention
+# rule. Names that are not a date are never printed, so anything else an
+# operator parks in that directory is left alone.
+offsite_sets_to_delete() {
+  grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort -u \
+    | awk -v daily="${OFFSITE_DAILY_SETS}" -v monthly="${OFFSITE_MONTHLY_SETS}" \
+      -v marked="$1" -v marked_since="${OFFSITE_MARKED_SINCE}" '
+      BEGIN { count = split(marked, name, " "); for (i = 1; i <= count; i++) complete[name[i]] = 1 }
+      { set[NR] = $0; if ($0 < marked_since || $0 in complete) good[++goods] = NR }
+      END {
+        older = goods - daily
+        if (older < 1) exit
+        # A month is represented by its first complete set, not by a set named
+        # -01: the first set on the box is 2026-03-27.
+        for (g = 1; g <= older; g++) {
+          month = substr(set[good[g]], 1, 7)
+          if (month != previous) { first[++months] = good[g]; previous = month }
+        }
+        for (m = months; m > months - monthly && m >= 1; m--) keep[first[m]] = 1
+        # Everything before the oldest daily set goes unless a month keeps it,
+        # which also reaps the partial sets failed nights left behind.
+        for (i = 1; i < good[older + 1]; i++) if (!(i in keep)) print set[i]
+      }'
+}
+
+offsite_retention() {
+  local listing marked doomed
+
+  if [[ -z "${STORAGEBOX_HOST:-}" || -z "${STORAGEBOX_USER:-}" ]]; then
+    return 0
+  fi
+
+  printf '\n'
+  # Only reached when no step failed, which is what makes this marker true.
+  storagebox_ssh "touch ${OFFSITE_ROOT}/${BACKUP_DATE}/${COMPLETE_MARKER}" || return 1
+  listing="$(storagebox_ssh "ls -1 ${OFFSITE_ROOT}")" || return 1
+  marked="$(storagebox_ssh "ls -1 ${OFFSITE_ROOT}/*/${COMPLETE_MARKER}" \
+    | sed -n "s|^${OFFSITE_ROOT}/\(.*\)/${COMPLETE_MARKER}\$|\1|p" | tr '\n' ' ')" || return 1
+  # Tonight's set was uploaded a moment ago. A listing without it is not the
+  # directory this run wrote to, and removing by it could cost good sets.
+  if ! grep -qx "${BACKUP_DATE}" <<<"${listing}"; then
+    log "Off-site cleanup refused: ${OFFSITE_ROOT} does not list tonight's set ${BACKUP_DATE}"
+    return 1
+  fi
+
+  doomed="$(offsite_sets_to_delete "${marked}" <<<"${listing}")"
+  if [[ -z "${doomed}" ]]; then
+    log "Off-site cleanup: no set is past retention"
+    return 0
+  fi
+
+  log "Off-site cleanup: keeping the newest ${OFFSITE_DAILY_SETS} complete sets and the first complete set of ${OFFSITE_MONTHLY_SETS} earlier months; removing ${doomed//$'\n'/ }"
+  storagebox_ssh "rm -r $(sed "s|^|${OFFSITE_ROOT}/|" <<<"${doomed}" | tr '\n' ' ')"
 }
 
 print_summary() {
@@ -1214,11 +1295,18 @@ main() {
   fi
 
   if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
-    log "Local retention skipped because this backup has failed steps"
+    log "Local and off-site retention skipped because this backup has failed steps"
   else
     CURRENT_STEP="local retention"
     if ! local_retention; then
       log "Local retention failed (non-fatal; backup artifacts were already produced)"
+    fi
+    # Unlike the local one, a failed off-site cleanup turns the run red: the
+    # box fills up otherwise, and a full box refuses the next night's upload.
+    CURRENT_STEP="off-site retention"
+    if ! offsite_retention; then
+      kuma_push down "off-site retention failed; the Storage Box is filling up"
+      FAILED_STEPS+=("off-site retention")
     fi
   fi
 
