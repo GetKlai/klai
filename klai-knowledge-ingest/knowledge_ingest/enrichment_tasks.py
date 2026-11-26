@@ -42,6 +42,7 @@ from knowledge_ingest import (
     queues,
     sparse_embedder,
 )
+from knowledge_ingest.config import settings
 from knowledge_ingest.content_profiles import child_chunk_chars, get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 from knowledge_ingest.derived_state import DONE, FAILED, NOT_APPLICABLE
@@ -481,6 +482,27 @@ class _EnrichmentDeferred(LLMCapacityUnavailable):
     """Capacity failure in _enrich_document; the task re-queues the job."""
 
 
+async def _enrich_interactive(artifact_id: str) -> None:
+    """Enrich for a user who is watching: on a capacity answer from the
+    enrichment model, run once more on the chat-side alias before deferring.
+
+    klai-ingest is one key with no fallback, so a spent key would leave the
+    upload pending for hours; klai-fast has several keys behind it. A second
+    capacity error propagates and the caller defers as for the bulk lane. The
+    first run stores nothing before its capacity error that the second does
+    not redo (the summary is only saved after a successful call).
+    """
+    try:
+        await _load_and_enrich(artifact_id)
+    except _EnrichmentDeferred:
+        logger.info("enrichment_interactive_capacity_failover", artifact_id=artifact_id)
+        token = enrichment.use_model(settings.interactive_llm_model)
+        try:
+            await _load_and_enrich(artifact_id)
+        finally:
+            enrichment.reset_model(token)
+
+
 async def _defer_after_llm_capacity(
     task: Any,
     context: Any,
@@ -488,7 +510,10 @@ async def _defer_after_llm_capacity(
     llm_deferred_since: int | None,
     **task_kwargs: Any,
 ) -> None:
-    """Re-queue an enrichment job that found the klai-ingest key or budget spent.
+    """Re-queue an enrichment job that found its LLM key or budget spent.
+
+    For the bulk lane that is the klai-ingest key or budget; the interactive
+    lane gets here only after the interactive model was spent too.
 
     A fresh job instead of a procrastinate retry, because the deferral window
     has to survive in the job arguments and the new job keeps the full normal
@@ -628,7 +653,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         fields are loaded from PostgreSQL at execution time.
         """
         try:
-            await _load_and_enrich(artifact_id)
+            await _enrich_interactive(artifact_id)
         except _EnrichmentDeferred as exc:
             await _defer_after_llm_capacity(
                 enrich_document_interactive,

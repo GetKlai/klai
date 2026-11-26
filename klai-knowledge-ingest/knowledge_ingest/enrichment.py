@@ -15,6 +15,7 @@ available in retrieval responses and evidence packs.
 """
 
 import asyncio
+import contextvars
 import json
 import re
 from dataclasses import dataclass
@@ -157,6 +158,28 @@ def _strip_frontmatter(text: str) -> str:
     return text[end + 4 :].lstrip()
 
 
+# Set by the interactive enrichment job for its second run, after the
+# enrichment model answered a capacity error. A context variable instead of a
+# ``model`` argument because the two LLM calls of an enrichment (document
+# summary, chunk enrichment) sit behind six signatures from the task down.
+_model_override: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "enrichment_model_override", default=None
+)
+
+
+def use_model(model: str) -> contextvars.Token:
+    """Make this task's enrichment LLM calls use ``model``; undo with ``reset_model``."""
+    return _model_override.set(model)
+
+
+def reset_model(token: contextvars.Token) -> None:
+    _model_override.reset(token)
+
+
+def current_model() -> str:
+    return _model_override.get() or settings.enrichment_model
+
+
 async def _call_llm(prompt: str, path: str) -> dict:
     """
     Execute a single LLM chat completion call via LiteLLM proxy.
@@ -164,7 +187,7 @@ async def _call_llm(prompt: str, path: str) -> dict:
     Raises EnrichmentError for transport/HTTP failures (Procrastinate retries these).
     """
     payload = {
-        "model": settings.enrichment_model,
+        "model": current_model(),
         "messages": [{"role": "user", "content": prompt}],
         # Room for the answer the prompt asks for (one sentence of at most 120
         # tokens and three to five questions). The model stops at the cap, and

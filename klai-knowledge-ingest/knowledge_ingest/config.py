@@ -358,8 +358,9 @@ class Settings(BaseSettings):
     litellm_klai_fast_burst: float = 40.0
     # Model for the few calls made while a user waits on the response (crawl
     # preview / auth-probe selector detection, taxonomy bootstrap proposals,
-    # the portal's /taxonomy/classify). They stay on the chat-side alias;
-    # everything else here is background work on klai-ingest.
+    # the portal's /taxonomy/classify), and the second run of an interactive
+    # enrichment job whose first run met a spent klai-ingest key. They stay on
+    # the chat-side alias; everything else here is background work on klai-ingest.
     interactive_llm_model: str = "klai-fast"
     enrichment_enabled: bool = True  # global kill switch
     # Seconds to wait after the last Gitea save before ingesting into the knowledge layer.

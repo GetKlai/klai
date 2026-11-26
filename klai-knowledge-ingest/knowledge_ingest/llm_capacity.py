@@ -5,7 +5,9 @@ fallback, and a daily ``max_budget`` in ``deploy/litellm/config.yaml``. When
 that key's monthly allowance is spent, or LiteLLM's daily budget is, every
 call fails until a person lifts the limit or the budget window rolls over.
 Retrying within minutes cannot succeed, so the affected jobs are deferred
-instead of failed.
+instead of failed. The one exception is the interactive enrichment job, which
+first runs once more on ``settings.interactive_llm_model`` (several keys) and
+is deferred only if that model is spent too.
 
 What the proxy answers, verified against litellm==1.96.2 (the version pinned
 by ``deploy/docker-compose.yml``) by reading the installed source

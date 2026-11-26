@@ -18,8 +18,8 @@ Two responsibilities:
    Per-document, not per-tenant: a Dutch tenant can have English vendor
    docs in their KB.
 
-2. ``generate_document_summary(text, title, language, …)`` — call klai-ingest
-   via the LiteLLM proxy and return a 1-2-sentence summary capped at the
+2. ``generate_document_summary(text, title, language, …)`` — call the enrichment
+   model (klai-ingest) via the LiteLLM proxy and return a 1-2-sentence summary capped at the
    token budget. A failed call raises ``EnrichmentError``, so a rate limit or
    a spent budget reaches the enrichment job's retry and capacity deferral.
 
@@ -37,7 +37,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
-from knowledge_ingest.enrichment import EnrichmentError
+from knowledge_ingest.enrichment import EnrichmentError, current_model
 from knowledge_ingest.llm_capacity import is_llm_capacity_error
 from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
@@ -178,8 +178,9 @@ async def generate_document_summary(
 ) -> str:
     """Return a 1-2-sentence summary of ``text`` ("" for blank text).
 
-    Calls ``klai-ingest`` via the LiteLLM proxy with a low-temperature prompt
-    in the requested language (auto-detected when ``language`` is None).
+    Calls ``settings.enrichment_model`` (klai-ingest) via the LiteLLM proxy
+    with a low-temperature prompt in the requested language (auto-detected
+    when ``language`` is None).
 
     A failed call raises ``EnrichmentError`` instead of returning "": the
     chunk prompts would then fall back to the document context window (up to
@@ -196,7 +197,7 @@ async def generate_document_summary(
 
     prompt = _build_summary_prompt(text, title, language)
     payload = {
-        "model": settings.enrichment_model,  # klai-ingest
+        "model": current_model(),
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": _SUMMARY_MAX_TOKENS,
         "temperature": 0.2,
