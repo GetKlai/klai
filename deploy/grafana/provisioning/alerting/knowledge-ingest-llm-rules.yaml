@@ -196,3 +196,83 @@ groups:
               4. Failed versions are NOT automatically retried; a new sync of
                  the source document writes a new version once the root cause
                  is fixed.
+
+      # ── R3: background LLM capacity exhausted, enrichment deferred ────
+      # The `klai-ingest` alias has one provider key and no fallback. When
+      # its allowance or LiteLLM's daily budget is spent, each enrichment job
+      # logs `enrichment_deferred_llm_capacity` at info level (so R1 never
+      # sees it) and re-queues itself about an hour later. On 2026-11-26 the
+      # first deferral was at 03:48 UTC and nobody was told for 16 hours
+      # while 349 documents waited. Baseline over 30 days: the event
+      # occurred on 2 days (6,778 and 4,216 lines) and on none of the other
+      # 28, so any occurrence is above the noise: threshold 0, held 15m.
+      # The window is 2 hours because a deferred job retries after 60 to 90
+      # minutes (DEFERRAL_DELAY_SECONDS plus jitter): with one waiting
+      # document a 15-minute window would be empty between two tries.
+      # execErrState Error (not OK): a failed query must not read as
+      # "no deferrals"; no lines at all is healthy, hence noDataState OK.
+      - uid: spec-llm-003-capacity-deferred
+        title: knowledge_ingest_llm_capacity_deferred
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:enrichment_deferred_llm_capacity | stats count() as n'
+              queryType: stats
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        isPaused: false
+        labels:
+          severity: warning
+          spec: SPEC-OBS-001
+          service_group: ingest
+        annotations:
+          summary: 'Documents are waiting: the background LLM key or its daily budget is spent'
+          description: |
+            knowledge-ingest deferred enrichment in the last 2 hours
+            (`enrichment_deferred_llm_capacity`). Documents are
+            waiting because the provider allowance of the background
+            `klai-ingest` key, or LiteLLM's daily budget for it, is spent.
+            Each job re-queues itself about an hour later.
+
+            Count the waiting documents:
+              service:knowledge-ingest AND event:enrichment_deferred_llm_capacity | stats count_uniq(artifact_id) as waiting
+
+            A document is marked failed three days after its first
+            deferral (`DEFERRAL_WINDOW_SECONDS` in `llm_capacity.py`).
+            The fix is to raise the provider allowance, or to wait for the
+            budget window to reset; deferred jobs then resume on their own.

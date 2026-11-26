@@ -7,6 +7,7 @@ must be re-queued for later instead of burning its retries and failing.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from types import SimpleNamespace
@@ -408,3 +409,119 @@ async def test_sweep_queues_one_locked_backfill_per_kb_with_unclassified_documen
         kwargs = configure_call.kwargs
         assert kwargs["lock"] == kwargs["queueing_lock"]
         assert kwargs["lock"].startswith("taxonomy-backfill:org-1:kb-")
+
+
+async def _run_enrichment_lane(lane: str, model_answers: dict[str, tuple[int, str] | None]):
+    """Run one enrichment task through the real LLM calls of ``_enrich_document``.
+
+    ``model_answers`` maps an LLM model name to a capacity answer, or None for
+    success. Returns the task, the ``_finish`` mock and the models the calls asked for.
+    """
+    models: list[str] = []
+
+    def _answer(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        models.append(body["model"])
+        capacity = model_answers[body["model"]]
+        if capacity is not None:
+            return httpx.Response(capacity[0], text=capacity[1])
+        content = '{"context_prefix": "ctx", "questions": ["q?"]}'
+        if body["max_tokens"] != 600:  # the document summary call
+            content = "A short summary."
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    transport = httpx.MockTransport(_answer)
+    real_client = httpx.AsyncClient
+
+    def _client(**kwargs):
+        return real_client(transport=transport, **kwargs)
+
+    limiter = MagicMock(acquire=AsyncMock())
+    app = _FakeApp()
+    enrichment_tasks._register_tasks(app)
+    task = getattr(app, f"enrich_document_{lane}")
+
+    async def _load_and_enrich(artifact_id, batch_offset=0):
+        await enrichment_tasks._enrich_document(
+            org_id="org-1",
+            kb_slug="kb-1",
+            path="docs/a.md",
+            document_text="body",
+            chunks=["body"],
+            title="A",
+            artifact_id=artifact_id,
+            user_id=None,
+            extra_payload={},
+            synthesis_depth=0,
+        )
+
+    context = SimpleNamespace(
+        job=SimpleNamespace(queueing_lock="org-1:kb-1:docs/a.md:a1", attempts=0)
+    )
+    tasks = enrichment_tasks
+    finish = AsyncMock()
+    patches = [
+        patch("knowledge_ingest.enrichment.httpx.AsyncClient", _client),
+        patch("knowledge_ingest.contextual.httpx.AsyncClient", _client),
+        patch("knowledge_ingest.enrichment.shared_klai_fast_limiter", return_value=limiter),
+        patch("knowledge_ingest.contextual.shared_klai_fast_limiter", return_value=limiter),
+        patch("knowledge_ingest.contextual.detect_language", return_value="en"),
+        patch.object(tasks, "_load_and_enrich", _load_and_enrich),
+        patch.object(tasks.embedder, "check_available", AsyncMock()),
+        patch.object(tasks.embedder, "embed", AsyncMock(return_value=[[0.1]])),
+        patch.object(tasks.sparse_embedder, "embed_sparse_batch", AsyncMock(return_value=[None])),
+        patch.object(tasks.cheap_layer, "apply_to_enriched_chunks"),
+        patch.object(tasks.kb_config, "get_kb_aliases", AsyncMock(return_value=[])),
+        patch.object(tasks.kb_config, "get_kb_product_rules", AsyncMock(return_value=[])),
+        patch.object(tasks.kb_config, "get_kb_visibility", AsyncMock(return_value="private")),
+        patch.object(tasks.pg_store, "update_artifact_extra", AsyncMock()),
+        patch.object(tasks.pg_store, "delete_parent_chunks_for_artifact", AsyncMock()),
+        patch.object(tasks.qdrant_store, "upsert_enriched_chunks", AsyncMock()),
+        patch.object(tasks, "tenant_scoped_connection", MagicMock()),
+        patch.object(tasks, "_still_current_for_write", AsyncMock(return_value=True)),
+        patch.object(tasks, "_link_graph_fields", AsyncMock()),
+        patch.object(tasks, "_finish", finish),
+    ]
+    with contextlib.ExitStack() as stack, structlog.testing.capture_logs() as logs:
+        for p in patches:
+            stack.enter_context(p)
+        await task(context, artifact_id="a1")
+    return task, finish, models, logs
+
+
+async def test_interactive_upload_finishes_on_the_interactive_model_when_klai_ingest_is_spent():
+    ingest = enrichment.settings.enrichment_model
+    fast = enrichment.settings.interactive_llm_model
+    task, finish, models, logs = await _run_enrichment_lane(
+        "interactive", {ingest: KEY_FULL, fast: None}
+    )
+
+    finish.assert_awaited_once_with("enrichment", "a1", "done")
+    task.defer_async.assert_not_awaited()
+    # The first run stops at the spent summary call; the second run makes the
+    # summary and the chunk call on the interactive model.
+    assert models == [ingest, fast, fast]
+    failovers = [e for e in logs if e["event"] == "enrichment_interactive_capacity_failover"]
+    assert [(e["log_level"], e["artifact_id"]) for e in failovers] == [("info", "a1")]
+
+
+async def test_interactive_upload_defers_when_the_interactive_model_is_spent_too():
+    ingest = enrichment.settings.enrichment_model
+    fast = enrichment.settings.interactive_llm_model
+    task, finish, models, _logs = await _run_enrichment_lane(
+        "interactive", {ingest: KEY_FULL, fast: BUDGET_CROSSED}
+    )
+
+    finish.assert_not_awaited()
+    task.defer_async.assert_awaited_once()
+    assert models == [ingest, fast]
+
+
+async def test_bulk_enrichment_is_deferred_without_ever_calling_the_interactive_model():
+    ingest = enrichment.settings.enrichment_model
+    fast = enrichment.settings.interactive_llm_model
+    task, finish, models, _logs = await _run_enrichment_lane("bulk", {ingest: KEY_FULL, fast: None})
+
+    finish.assert_not_awaited()
+    task.defer_async.assert_awaited_once()
+    assert models == [ingest]
