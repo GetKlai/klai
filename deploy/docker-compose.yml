@@ -2144,7 +2144,7 @@ services:
   # when the container was recreated during the falkordb:latest -> v4.18.1 pin (5d12587e).
   falkordb:
     logging: *log-rotation
-    image: falkordb/falkordb:6.2.1
+    image: falkordb/falkordb:6.0.4
     restart: unless-stopped
     # Persistence is the RDB snapshot only (save 3600 1 300 100 60 10000), written again
     # on SIGTERM. Docker's default 10 s before SIGKILL left no margin: the background save
