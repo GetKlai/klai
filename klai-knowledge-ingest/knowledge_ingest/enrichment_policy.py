@@ -118,6 +118,19 @@ _NAV_MAX_PROSE_PER_LINK = 40
 # the nearest article at 55.3. Not caught: listings whose items are not
 # link-only lines, such as card layouts.
 _NAV_MAX_TEASER_CHARS = 400
+# A link that shares its line with at least two other links claims prose in
+# proportion to its label, up to the limit above; every other link claims the
+# full 40, as does a link whose label is an image. An index entry stands on its
+# own line, with or without a description after it. A row of links is a row of
+# tags, a breadcrumb or a sentence with references, and a flat 40 for each let
+# a row of tags outweigh a short article. Measured on the stored text of a help
+# article (2026-11-27): 842 characters of prose and 25 links, 13 of them
+# one-word tags on a single line, so 33.7 per link and a navigation page; its
+# links now claim 509. Two hub pages of the same site stay far under their claim
+# (213 against 1466, 132 against 520), as does a notice that an article has
+# moved (319 against 549). 1.6 gives a label of 25 characters the full 40.
+_NAV_MIN_LINKS_IN_ROW = 3
+_NAV_PROSE_PER_LABEL_CHAR = 1.6
 # A line that is one link to another page once list and heading furniture, a
 # list number and emphasis marks are stripped. A target with a fragment is a
 # heading's own anchor (``## [Section](#section)``), which documentation sites
@@ -127,7 +140,7 @@ _NAV_MAX_TEASER_CHARS = 400
 # 20,000 dashes.
 _LINK_ONLY = re.compile(r"\[[^\]]*\]\([^)#]*\)")
 _LINE_FURNITURE = " \t>*-+#|_"
-_LIST_NUMBER = re.compile(r"\d+[.)]")
+_LIST_NUMBER = re.compile(r"^\d+[.)]")
 
 
 def _is_link_only_line(line: str) -> bool:
@@ -135,10 +148,11 @@ def _is_link_only_line(line: str) -> bool:
     return _LINK_ONLY.fullmatch(core) is not None
 
 
-def _navigation_prose_chars(text_without_images: str) -> int:
-    """Characters of writing on the page, with teasers after link-only lines set aside."""
+def _navigation_measure(text_without_images: str) -> tuple[int, float]:
+    """Characters of writing on the page, teasers set aside, and the prose its links claim."""
     total = 0
     run = 0
+    claimed = 0.0
     after_link_only = False
 
     def close_run() -> int:
@@ -150,9 +164,18 @@ def _navigation_prose_chars(text_without_images: str) -> int:
             total += close_run() + prose
             run = 0
             after_link_only = True
-        else:
-            run += prose
-    return total + close_run()
+            claimed += _NAV_MAX_PROSE_PER_LINK
+            continue
+        run += prose
+        links = _MD_LINK.findall(line)
+        for link in links:
+            label = "".join(link[1 : link.index("](")].split())
+            claimed += (
+                min(_NAV_MAX_PROSE_PER_LINK, _NAV_PROSE_PER_LABEL_CHAR * len(label))
+                if label and len(links) >= _NAV_MIN_LINKS_IN_ROW
+                else _NAV_MAX_PROSE_PER_LINK
+            )
+    return total + close_run(), claimed
 
 
 def enrichment_skip_reason(
@@ -215,9 +238,9 @@ def graph_episode_skip_reason(document_text: str | None) -> str | None:
     if not document_text:
         return None
     without_images = _MD_IMAGE.sub(" ", document_text)
-    links = len(_MD_LINK.findall(without_images))
-    if links < _NAV_MIN_LINKS:
+    if len(_MD_LINK.findall(without_images)) < _NAV_MIN_LINKS:
         return None
-    if _navigation_prose_chars(without_images) < links * _NAV_MAX_PROSE_PER_LINK:
+    prose_chars, claimed = _navigation_measure(without_images)
+    if prose_chars < claimed:
         return "navigation_page"
     return None
