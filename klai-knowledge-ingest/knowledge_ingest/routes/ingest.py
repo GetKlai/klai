@@ -937,7 +937,9 @@ async def ingest_document(
             extra_payload.get("anchor_texts") or [],
         )
     )
-    enrichment_skip = enrichment_skip_reason(chunk_count=len(texts), extra_payload=extra_payload)
+    enrichment_skip = enrichment_skip_reason(
+        chunk_count=len(texts), extra_payload=extra_payload, document_text=indexable_content
+    )
     is_direct_file_upload = req.source_connector_id is None and req.source_type in {
         "file",
         "upload",

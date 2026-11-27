@@ -317,6 +317,22 @@ async def test_a_document_too_large_to_enrich_is_not_applicable(jobs, monkeypatc
     )
 
 
+async def test_a_listing_page_is_not_enriched_and_makes_no_llm_call(jobs) -> None:
+    listing = "\n".join(
+        f"  {i}. ### [Result {i}](https://example.com/articles/{i})\n"
+        + "Excerpt of the result. " * 7
+        for i in range(1, 21)
+    )
+    artifact = await jobs.insert({"document_text": listing}, active=True)
+
+    # Any LLM call would raise and fail the test instead of ending the job.
+    await _enrich(jobs, artifact, error=AssertionError("the LLM was called"))
+
+    assert await _state(jobs.conn, artifact, "enrichment") == ProductState(
+        "not_applicable", "navigation_page"
+    )
+
+
 async def test_a_queue_outage_leaves_the_document_failed_and_raises(jobs) -> None:
     from knowledge_ingest.derived_state import queue_derived_work
 

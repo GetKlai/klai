@@ -234,6 +234,7 @@ async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
     prechunked_skip = enrichment_skip_reason(
         chunk_count=int(extra.get("docling_chunk_count") or 0),
         extra_payload=extra,
+        document_text=document_text,
     )
     if prechunked_skip is not None:
         logger.info(
@@ -262,7 +263,9 @@ async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
         document_text, child_size=child_chunk_chars(artifact["content_type"] or "unknown")
     )
     chunks_text = [c.text for c in children]
-    derived_skip = enrichment_skip_reason(chunk_count=len(chunks_text), extra_payload=extra)
+    derived_skip = enrichment_skip_reason(
+        chunk_count=len(chunks_text), extra_payload=extra, document_text=document_text
+    )
     if derived_skip is not None:
         logger.info(
             "enrichment_aborted_by_policy",

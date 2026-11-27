@@ -92,12 +92,74 @@ _NAV_MIN_LINKS = 8
 # not end in ASCII "." scores zero and is discarded. The question is "does this
 # page contain writing", so measure the writing.
 _NAV_MAX_PROSE_PER_LINK = 40
+#
+# Listing pages with excerpts broke that measure. A crawled search-result list
+# is a numbered list of results, each a heading holding one link followed by one
+# line of excerpt; it scored ~170 characters of prose per link and passed as an
+# article, so ~950 such pages of one help site were rewritten on most crawls at
+# the cost of enrichment and graph extraction. The excerpt is the page pointing
+# at another page, so the text after a link-only line is set aside as a teaser
+# when it is at most this long, and a longer run counts as writing in full.
+# Measured on fit markdown (2026-11-27), per link before -> after teasers:
+#
+#   search-result list, 20 results     23 links   3907 prose   169.9 ->  26.0
+#   category archive with excerpts    102 links  26482 prose   259.6 ->   0.0
+#   blog index with teasers            31 links   3958 prose   127.7 ->  37.3
+#   encyclopedia article              418 links  23092 prose    55.2 ->  55.3
+#   help article, many links           50 links   4940 prose    98.8 ->  86.1
+#   guide                              22 links   2387 prose   108.5 ->  89.1
+#   how-to                             16 links   4369 prose   273.1 -> 273.1
+#   reference article                  62 links  27106 prose   437.2 -> 436.3
+#
+# The run after a link-only line is median 164 / p90 175 on the search list,
+# 284 / 315 on the category archive and 113 / 264 on the blog index, against a
+# median of 299 to 651 in articles. 400 sits above every listing p90. The margin
+# is thin on one side: the blog index lands at 37.3 against the limit of 40,
+# the nearest article at 55.3. Not caught: listings whose items are not
+# link-only lines, such as card layouts.
+_NAV_MAX_TEASER_CHARS = 400
+# A line that is one link to another page once list and heading furniture, a
+# list number and emphasis marks are stripped. A target with a fragment is a
+# heading's own anchor (``## [Section](#section)``), which documentation sites
+# put on every heading: the short section under it is writing, not a teaser.
+# Stripped with str.strip, not matched by one pattern: the furniture and
+# emphasis sets overlap, and a pattern with both took 0.87 s on a line of
+# 20,000 dashes.
+_LINK_ONLY = re.compile(r"\[[^\]]*\]\([^)#]*\)")
+_LINE_FURNITURE = " \t>*-+#|_"
+_LIST_NUMBER = re.compile(r"\d+[.)]")
+
+
+def _is_link_only_line(line: str) -> bool:
+    core = _LIST_NUMBER.sub("", line.strip(_LINE_FURNITURE), count=1).strip(_LINE_FURNITURE)
+    return _LINK_ONLY.fullmatch(core) is not None
+
+
+def _navigation_prose_chars(text_without_images: str) -> int:
+    """Characters of writing on the page, with teasers after link-only lines set aside."""
+    total = 0
+    run = 0
+    after_link_only = False
+
+    def close_run() -> int:
+        return run if run > _NAV_MAX_TEASER_CHARS or not after_link_only else 0
+
+    for line in text_without_images.splitlines():
+        prose = len("".join(_LIST_FURNITURE.sub(" ", _MD_LINK.sub(" ", line)).split()))
+        if _is_link_only_line(line):
+            total += close_run() + prose
+            run = 0
+            after_link_only = True
+        else:
+            run += prose
+    return total + close_run()
 
 
 def enrichment_skip_reason(
     *,
     chunk_count: int,
     extra_payload: Mapping[str, Any] | None,
+    document_text: str | None = None,
 ) -> str | None:
     """Return a machine-readable reason when LLM enrichment should not run at all.
 
@@ -108,6 +170,11 @@ def enrichment_skip_reason(
     is refused, and it keeps its raw chunks, which already carry the dense and
     the sparse vector. ``docling_chunk_count`` counts the chunks of a truncated
     upload, whose stored text is only a preview.
+
+    A navigation page (``graph_episode_skip_reason``) is refused too, when the
+    caller passes the text: it exists to point at other pages, so enrichment
+    would pay LLM calls for context sentences about a list of links. It keeps
+    its raw chunks, as a ``too_many_chunks`` document does.
     """
     extra = extra_payload or {}
     try:
@@ -117,7 +184,7 @@ def enrichment_skip_reason(
     hard_max = _hard_max_chunks()
     if hard_max > 0 and max(chunk_count, docling_chunk_count) > hard_max:
         return "too_many_chunks"
-    return None
+    return graph_episode_skip_reason(document_text)
 
 
 def graph_episode_skip_reason(document_text: str | None) -> str | None:
@@ -151,8 +218,6 @@ def graph_episode_skip_reason(document_text: str | None) -> str | None:
     links = len(_MD_LINK.findall(without_images))
     if links < _NAV_MIN_LINKS:
         return None
-    prose = _LIST_FURNITURE.sub(" ", _MD_LINK.sub(" ", without_images))
-    prose_chars = len("".join(prose.split()))
-    if prose_chars < links * _NAV_MAX_PROSE_PER_LINK:
+    if _navigation_prose_chars(without_images) < links * _NAV_MAX_PROSE_PER_LINK:
         return "navigation_page"
     return None
