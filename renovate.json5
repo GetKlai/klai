@@ -832,7 +832,8 @@
         this entry can go once deploy/docker-compose.yml runs a newer version.',
       matchDepNames: ['falkordb/falkordb'],
       // 6.2.0: failed gate datastore-shadow on falkordb, run https://github.com/GetKlai/klai/actions/runs/45713594465, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
-      allowedVersions: '!/^v?(6\\.2\\.0)$/',
+      // 6.2.1: failed gate datastore-shadow on falkordb, run https://github.com/GetKlai/klai/actions/runs/45999223860, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
+      allowedVersions: '!/^v?(6\\.2\\.0|6\\.2\\.1)$/',
     },
     // End of the rolled-back versions: scripts/renovate-revert-after-rollback.py inserts above this line.
   ],
