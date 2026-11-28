@@ -10,7 +10,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     # Ceiling: 1.19.0 removed search/search_batch/recommend (measured 2026-09-10); no silent major.
     "qdrant-client>=1.12,<2.0",
-    "graphiti-core[falkordb]>=0.31,<0.32",
+    "graphiti-core[falkordb]>=0.32,<0.33",
     "klai-graphiti-compat",
     "structlog>=25.0",
     "prometheus-client>=0.21",

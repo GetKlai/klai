@@ -559,10 +559,11 @@ wheels = [
 
 [[package]]
 name = "graphiti-core"
-version = "0.31.2"
+version = "0.32.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
+    { name = "httpx" },
     { name = "neo4j" },
     { name = "numpy" },
     { name = "openai" },
@@ -571,9 +572,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/f5/1e0b758bdfa15f5bc971b97e326d6dfcf979b66024e7e7a82a08798d7413/graphiti_core-0.31.2.tar.gz", hash = "sha256:cee47010d440ae015646c722b18272c3b2e659e38ab7ed6a0fd165a15282f451", size = 7142697, upload-time = "2026-10-20T17:25:56.472Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/d2/aa2d36b5233170811786ae2acc629990050bfe0880c9a608f2f0ef7d99d1/graphiti_core-0.32.1.tar.gz", hash = "sha256:bc197f7bd8c5e18302f30c0edfadbe051cf20ee297e213dd0761d5761962ae7e", size = 7287570, upload-time = "2026-11-24T16:30:09.081Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/73/a0957ba4de14bfc69cb201db9b147f5835564838411e147c4c63e4967d0b/graphiti_core-0.31.2-py3-none-any.whl", hash = "sha256:b26e1f350482266aec24beb1cd4c58d5e32ede1a897af8fa25b10800a16bbb8d", size = 403350, upload-time = "2026-10-20T17:25:54.496Z" },
+    { url = "https://files.pythonhosted.org/packages/61/50/2689ddf65b7dad40d96c1ff3be80c9eca797e3a8d91b58690cc8654e8f1a/graphiti_core-0.32.1-py3-none-any.whl", hash = "sha256:0f6f8e8b46daf20e93a4c5a420fc19e7cedff7f9c80b69824c67bd626082e818", size = 469324, upload-time = "2026-11-24T16:30:07.307Z" },
 ]
 
 [package.optional-dependencies]
@@ -1004,7 +1005,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "graphiti-core", extras = ["falkordb"], specifier = ">=0.31,<0.32" },
+    { name = "graphiti-core", extras = ["falkordb"], specifier = ">=0.32,<0.33" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
@@ -1669,7 +1670,7 @@ dev = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "graphiti-core", extras = ["falkordb"], specifier = ">=0.31,<0.32" },
+    { name = "graphiti-core", extras = ["falkordb"], specifier = ">=0.32,<0.33" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "klai-chat-prompts", editable = "../klai-libs/chat-prompts" },
