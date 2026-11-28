@@ -320,7 +320,7 @@ services:
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
     logging: *log-rotation
-    image: ghcr.io/zitadel/zitadel:v4.20.5
+    image: ghcr.io/zitadel/zitadel:v4.20.6
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -1580,7 +1580,7 @@ services:
 
   docling-serve:
     logging: *log-rotation
-    image: ghcr.io/docling-project/docling-serve:v1.39.0
+    image: ghcr.io/docling-project/docling-serve:v1.40.0
     restart: unless-stopped
     environment:
       # Portal-api may need to retry /v1/result after a transient
@@ -2274,7 +2274,7 @@ services:
   #   - Web endpoint on :3902 (anonymous reads via Caddy /kb-images/ route)
   garage:
     logging: *log-rotation
-    image: dxflrs/garage:v2.5.0
+    image: dxflrs/garage:v2.6.0
     restart: unless-stopped
     volumes:
       - /opt/klai/garage-meta:/var/lib/garage/meta
@@ -2461,7 +2461,7 @@ services:
 
   firecrawl-api:
     logging: *log-rotation
-    image: ghcr.io/firecrawl/firecrawl:2.11.831
+    image: ghcr.io/firecrawl/firecrawl:2.11.880
     restart: unless-stopped
     environment:
       PORT: "3002"
@@ -2690,7 +2690,7 @@ services:
   # health check.
   fider:
     logging: *log-rotation
-    image: getfider/fider:v0.40.0
+    image: getfider/fider:v0.41.0
     restart: unless-stopped
     environment:
       BASE_URL: https://feedback.${DOMAIN}
